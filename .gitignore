@@ -1,0 +1,8 @@
+web/build/
+web/.svelte-kit/
+core/target/
+
+node_modules/
+
+__pycache__/
+*.pyc

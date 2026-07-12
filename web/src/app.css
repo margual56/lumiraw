@@ -1,0 +1,125 @@
+/* Design tokens, page chrome and the form primitives shared by every step.
+   Anything that belongs to one component lives in that component instead. */
+
+:root {
+  /* Height left for a preview once the header, footer and page padding are
+     accounted for.  Previews fit inside it instead of pushing the page. */
+  --fit: calc(100vh - 190px);
+  --bg: #0d0e10;
+  --panel: #16181c;
+  --panel-2: #1d2026;
+  --line: #2a2e35;
+  --ink: #e8e9ea;
+  --muted: #8d939c;
+  --accent: #e5a03c;
+  --accent-ink: #17130a;
+  --ok: #6fca8b;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.shell { display: flex; flex-direction: column; height: 100%; }
+
+header {
+  display: flex; align-items: center; gap: 28px;
+  padding: 14px 22px; border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.brand { font-weight: 650; letter-spacing: .2px; }
+.brand span {
+  display: block; font-weight: 400; font-size: 11.5px;
+  color: var(--muted); letter-spacing: .3px;
+}
+
+main { flex: 1; overflow: auto; padding: 22px; }
+
+footer {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 12px 22px; border-top: 1px solid var(--line); background: var(--panel);
+}
+.file-label { color: var(--muted); font-size: 12.5px; }
+
+button {
+  background: var(--accent); color: var(--accent-ink); border: 0;
+  padding: 9px 18px; border-radius: 8px; font: inherit; font-weight: 600;
+  cursor: pointer;
+}
+button:hover { filter: brightness(1.08); }
+button:disabled { opacity: .4; cursor: default; filter: none; }
+button.ghost {
+  background: transparent; color: var(--muted);
+  border: 1px solid var(--line); font-weight: 500;
+}
+button.ghost:hover { color: var(--ink); border-color: var(--muted); filter: none; }
+
+.field { margin: 18px 0; }
+.field .row { display: flex; justify-content: space-between; align-items: baseline; }
+.field label { font-size: 12.5px; color: var(--muted); }
+.field output { font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--ink); }
+
+select {
+  width: 100%; margin-top: 6px; background: var(--panel-2); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit;
+}
+
+input[type=range] {
+  width: 100%; margin-top: 8px; -webkit-appearance: none; appearance: none;
+  height: 4px; border-radius: 3px; background: var(--line); outline: none;
+}
+input[type=range].temp { background: linear-gradient(90deg,#5b8fd8,#3a3f46,#e0a24c); }
+input[type=range].tint { background: linear-gradient(90deg,#c67fd1,#3a3f46,#7fd18a); }
+input[type=range].vib  { background: linear-gradient(90deg,#4a4f57,#3a3f46,#4fbfb0); }
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 15px; height: 15px; border-radius: 50%;
+  background: var(--ink); border: 2px solid var(--bg); cursor: grab;
+}
+input[type=range]::-moz-range-thumb {
+  width: 15px; height: 15px; border-radius: 50%;
+  background: var(--ink); border: 2px solid var(--bg); cursor: grab;
+}
+
+.stage {
+  display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 22px;
+  align-items: start;
+}
+@media (max-width: 900px) { .stage { grid-template-columns: 1fr; } }
+
+aside {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 18px;
+}
+aside h2 { margin: 0 0 8px; font-size: 15px; font-weight: 650; }
+.lede { color: var(--muted); font-size: 12.8px; margin: 0 0 4px; }
+.lede em { color: var(--ink); font-style: italic; }
+.hint {
+  display: block; margin-top: 10px; font-style: normal;
+  font-size: 12px; color: var(--muted); min-height: 18px;
+}
+.pagetitle { margin: 0 0 14px; font-size: 15px; font-weight: 650; }
+
+/* a labelled checkbox in a side panel */
+.check {
+  display: flex; gap: 10px; align-items: flex-start; cursor: pointer;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 12px; margin: 18px 0 10px;
+}
+.check:hover { border-color: var(--muted); }
+.check input {
+  accent-color: var(--accent); width: 15px; height: 15px;
+  margin: 1px 0 0; flex: 0 0 auto; cursor: pointer;
+}
+.check span { font-size: 12.5px; line-height: 1.35; }
+.check em {
+  display: block; margin-top: 2px; font-style: normal;
+  font-size: 11.5px; color: var(--muted);
+}

@@ -1,0 +1,5 @@
+# The compiled pipeline is committed on purpose: the Cloudflare Pages build
+# image has no Rust toolchain, so the site has to build from this artefact.
+# Rebuild it with tools/build.sh whenever core/ changes.
+web/static/autoraw_core.wasm binary
+web/static/lensfun.json -diff

@@ -14,14 +14,17 @@ export default {
   'nav.back': 'Atrás',
   'nav.continue': 'Continuar',
 
+  'privacy.title': 'Tus fotografías nunca salen de este dispositivo',
+  'privacy.body': 'No hay ningún servidor al que subirlas. Tu archivo raw se abre, se descodifica y se revela aquí mismo, con el propio procesado: está compilado a WebAssembly y se ejecuta dentro de esta pestaña. No se transmite nada, no se guarda nada en ninguna parte y no hace falta ninguna cuenta. Al cerrar la pestaña no queda ni rastro de la imagen.',
+  'privacy.downloads': 'Lo único que esta página descarga es su propio código, el módulo de WebAssembly y la base de datos de correcciones de objetivos. Puedes comprobarlo en el panel de red del navegador: después de eso no hay más tráfico.',
   'upload.drop': 'Arrastra aquí un archivo raw',
-  'upload.formats': 'ARW de tu a5000, o CR2 / NEF / RAF / DNG — todo lo que lea LibRaw',
+  'upload.formats': 'ARW de tu a5000, o CR2 / NEF / RAF / DNG, y casi cualquier otro formato raw',
   'upload.sending': 'Enviando {file} ({size} MB)…',
-  'upload.sendingPct': 'Enviando {file} — {percent} %',
+  'upload.sendingPct': 'Enviando {file}, {percent} %',
   'upload.decoding': 'Descodificando {file}…',
 
   'framing.title': 'Encuadre',
-  'framing.lede': 'Endereza el horizonte, corrige las verticales convergentes y arrastra un recuadro para recortar. Todo lo que viene después — la medición, el balance de blancos, los niveles automáticos — solo ve lo que conservas.',
+  'framing.lede': 'Endereza el horizonte, corrige las verticales convergentes y arrastra un recuadro para recortar. Todo lo que viene después, incluidas la medición, el balance de blancos y los niveles automáticos, solo ve lo que conservas.',
   'framing.tilt': 'Inclinación',
   'framing.shiftV': 'Descentramiento · vertical',
   'framing.shiftH': 'Descentramiento · horizontal',
@@ -70,7 +73,7 @@ export default {
   'download.many': '{count} imágenes ({names}), en un archivo zip.',
   'download.button': 'Revelar y descargar',
   'download.working': 'Revelando…',
-  'download.saved': 'Guardado {name} — {size} MB en {seconds} s.',
+  'download.saved': 'Guardado {name}, {size} MB en {seconds} s.',
 
   'group.lens': 'Objetivo',
   'group.colour': 'Color',
@@ -94,7 +97,7 @@ export default {
   'detail.vignetting.plain': '{lens} a {aperture}',
   'detail.lens': '{lens} @ {focal}',
   'detail.white_balance': 'de {source}, ganancias {gains}',
-  'detail.white_balance.extreme': 'de {source}, ganancias {gains} — fuerte; ¿esa zona es realmente neutra?',
+  'detail.white_balance.extreme': 'de {source}, ganancias {gains}. Es una corrección fuerte; ¿esa zona es realmente neutra?',
   'detail.exposure': '{ev} EV, de {source}',
   'detail.tone_map': '{stops} pasos → base ×{compression}',
   'detail.levels': 'negro {black}, blanco {white}',
@@ -191,6 +194,6 @@ export default {
   'stage.packaging': 'empaquetando',
   'stage.ready': 'listo',
 
-  'error.not_a_raw': '{suffix} no es un formato raw — autoraw lee {known} y otros, no JPEG ni PNG.',
-  'error.undecodable': 'No se ha podido descodificar {file}: parece dañado, o es un formato que LibRaw no admite.',
+  'error.not_a_raw': '{suffix} no es un formato raw. autoraw lee {known} y otros, pero no JPEG ni PNG.',
+  'error.undecodable': 'No se ha podido descodificar {file}: parece dañado, o es un formato que el descodificador no admite.',
 };

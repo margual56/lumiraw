@@ -1,0 +1,9 @@
+{
+  "name": "lumiraw",
+  "private": true,
+  "scripts": {
+    "build": "cd web && npm ci --no-audit --no-fund && npm run build",
+    "dev": "cd web && npm run dev",
+    "preview": "python3 -m http.server -d web/build 8790"
+  }
+}

@@ -2,6 +2,7 @@
   import Stepper from '$lib/components/Stepper.svelte';
   import Progress from '$lib/components/Progress.svelte';
   import Dropzone from '$lib/components/Dropzone.svelte';
+  import Privacy from '$lib/components/Privacy.svelte';
   import Framing from '$lib/steps/Framing.svelte';
   import Brightness from '$lib/steps/Brightness.svelte';
   import WhiteBalance from '$lib/steps/WhiteBalance.svelte';
@@ -166,7 +167,10 @@
 
   <main>
     {#if app.step === UPLOAD}
-      <Dropzone onpick={pick} />
+      <div class="intro">
+        <Privacy />
+        <Dropzone onpick={pick} />
+      </div>
     {:else if app.step === FRAME}
       <Framing />
     {:else if app.step === EXPOSURE}
@@ -194,3 +198,15 @@
     </button>
   </footer>
 </div>
+
+<style>
+  /*
+   * The privacy notice sits above the drop zone, which then takes whatever
+   * height is left rather than insisting on a full page of its own.
+   */
+  .intro {
+    display: flex; flex-direction: column; height: 100%;
+    max-width: 1080px; margin-inline: auto;
+  }
+  .intro :global(.drop) { flex: 1; height: auto; min-height: 260px; }
+</style>

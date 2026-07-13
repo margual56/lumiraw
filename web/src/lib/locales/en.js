@@ -14,14 +14,17 @@ export default {
   'nav.back': 'Back',
   'nav.continue': 'Continue',
 
+  'privacy.title': 'Your photographs never leave this device',
+  'privacy.body': 'There is no server to upload to. Your raw file is opened, decoded and developed right here, by the pipeline itself: it is compiled to WebAssembly and runs inside this browser tab. Nothing is transmitted, nothing is stored anywhere, and no account is involved. Close the tab and every trace of the picture is gone.',
+  'privacy.downloads': 'The only things this page fetches are its own code, the WebAssembly module and the lens-correction database. You can confirm that in your browser\u2019s network panel: after those, there is no traffic.',
   'upload.drop': 'Drop a raw file here',
-  'upload.formats': 'ARW from your a5000, or CR2 / NEF / RAF / DNG — anything LibRaw reads',
+  'upload.formats': 'ARW from your a5000, or CR2 / NEF / RAF / DNG, and most other raw formats',
   'upload.sending': 'Sending {file} ({size} MB)…',
-  'upload.sendingPct': 'Sending {file} — {percent}%',
+  'upload.sendingPct': 'Sending {file}, {percent}%',
   'upload.decoding': 'Decoding {file}…',
 
   'framing.title': 'Framing',
-  'framing.lede': 'Straighten the horizon, pull converging verticals back upright, and drag a box to crop. Everything after this — metering, white balance, the auto levels — only ever sees what you keep.',
+  'framing.lede': 'Straighten the horizon, pull converging verticals back upright, and drag a box to crop. Everything after this step, including metering, white balance and the auto levels, only ever sees what you keep.',
   'framing.tilt': 'Tilt',
   'framing.shiftV': 'Shift · vertical',
   'framing.shiftH': 'Shift · horizontal',
@@ -38,12 +41,12 @@ export default {
   'framing.reset': 'Reset framing',
 
   'brightness.title': 'Brightness',
-  'brightness.lede': 'Drag a box over what must be correctly exposed — a face, the subject, whatever the picture is <em>about</em>. That region is metered to middle grey and the rest of the frame follows.',
+  'brightness.lede': 'Drag a box over what must be correctly exposed: a face, the subject, whatever the picture is <em>about</em>. That region is metered to middle grey and the rest of the frame follows.',
   'brightness.fine': 'Fine tune',
   'brightness.clear': 'Clear · meter the whole frame',
 
   'wb.title': 'White balance',
-  'wb.lede': 'Drag a box over something that should come out neutral — grey concrete, a white shirt, paper. Avoid anything blown out.',
+  'wb.lede': 'Drag a box over something that should come out neutral, like grey concrete, a white shirt or paper. Avoid anything blown out.',
   'wb.temperature': 'Temperature',
   'wb.tint': 'Tint',
   'wb.clear': 'Clear · estimate automatically',
@@ -70,7 +73,7 @@ export default {
   'download.many': '{count} images ({names}), delivered as a zip.',
   'download.button': 'Develop & download',
   'download.working': 'Developing…',
-  'download.saved': 'Saved {name} — {size} MB in {seconds}s.',
+  'download.saved': 'Saved {name}, {size} MB in {seconds}s.',
 
   'group.lens': 'Lens',
   'group.colour': 'Colour',
@@ -94,7 +97,7 @@ export default {
   'detail.vignetting.plain': '{lens} at {aperture}',
   'detail.lens': '{lens} @ {focal}',
   'detail.white_balance': 'from {source}, gains {gains}',
-  'detail.white_balance.extreme': 'from {source}, gains {gains} — strong; is that patch really neutral?',
+  'detail.white_balance.extreme': 'from {source}, gains {gains}. That is a strong correction; is the patch really neutral?',
   'detail.exposure': '{ev} EV from {source}',
   'detail.tone_map': '{stops} stops → base ×{compression}',
   'detail.levels': 'black {black}, white {white}',
@@ -191,6 +194,6 @@ export default {
   'stage.packaging': 'packaging',
   'stage.ready': 'ready',
 
-  'error.not_a_raw': '{suffix} is not a raw format — autoraw reads {known} and others, not JPEG or PNG.',
-  'error.undecodable': '{file} could not be decoded — it looks damaged, or it is a format LibRaw does not support.',
+  'error.not_a_raw': '{suffix} is not a raw format. autoraw reads {known} and others, but not JPEG or PNG.',
+  'error.undecodable': '{file} could not be decoded. It looks damaged, or it is a format the decoder does not support.',
 };

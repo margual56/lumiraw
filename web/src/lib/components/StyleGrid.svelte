@@ -40,7 +40,9 @@
 <style>
   .grid {
     display: grid; gap: 16px;
-    grid-template-columns: repeat(auto-fill, minmax(560px, 1fr));
+    /* min() so the track can never be wider than the column it is in:
+       at 560px flat, a phone got one tile cropped at both edges. */
+    grid-template-columns: repeat(auto-fill, minmax(min(560px, 100%), 1fr));
   }
   .tile {
     border: 1.5px solid var(--line); border-radius: var(--radius); overflow: hidden;
@@ -62,4 +64,9 @@
   .skeleton .shim { width: 100%; aspect-ratio: 3 / 2; background: var(--panel-2); }
   @keyframes pulse { 0%, 100% { opacity: .55; } 50% { opacity: .95; } }
   @media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
+
+  @media (max-width: 700px) {
+    .grid { gap: 12px; }
+    .cap { padding: 9px 11px; }
+  }
 </style>

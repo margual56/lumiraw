@@ -3,9 +3,17 @@
   import { t } from '$lib/i18n.svelte.js';
 
   let { onstep } = $props();
+  let nav = $state(null);
+
+  // On a phone the steps are a horizontal strip, so the one you are on has to
+  // be brought into view when it changes.
+  $effect(() => {
+    const current = nav?.children[app.step];
+    current?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  });
 </script>
 
-<nav>
+<nav bind:this={nav}>
   {#each STEPS as label, i}
     <button
       type="button"
@@ -28,4 +36,16 @@
     background: var(--accent); color: var(--accent-ink); font-weight: 600;
   }
   nav button:disabled { opacity: .38; cursor: default; }
+
+  @media (max-width: 700px) {
+    /* A full-width strip on its own row, scrolled rather than wrapped: eight
+       steps stacked vertically took a third of the screen. */
+    nav {
+      order: 3; width: 100%; flex-wrap: nowrap; gap: 4px;
+      overflow-x: auto; overscroll-behavior-x: contain;
+      scrollbar-width: none; scroll-snap-type: x proximity;
+    }
+    nav::-webkit-scrollbar { display: none; }
+    nav button { scroll-snap-align: center; padding: 8px 12px; min-height: 0; }
+  }
 </style>

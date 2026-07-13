@@ -123,3 +123,53 @@ aside h2 { margin: 0 0 8px; font-size: 15px; font-weight: 650; }
   display: block; margin-top: 2px; font-style: normal;
   font-size: 11.5px; color: var(--muted);
 }
+
+/*
+ * ---------------------------------------------------------------------------
+ * Phones and narrow windows.
+ */
+@media (max-width: 700px) {
+  :root {
+    /*
+     * dvh rather than vh: mobile browsers measure vh against the viewport with the
+     * address bar hidden, so a picture sized in vh pushes its own controls off the
+     * bottom of the screen until you scroll.
+     */
+    --fit: calc(100dvh - 220px);
+  }
+
+  /* The header becomes two rows: identity and language on top, the steps as a
+     strip underneath (see Stepper.svelte, which makes that strip scroll). */
+  header { flex-wrap: wrap; gap: 8px 12px; padding: 10px 12px; }
+  .brand { font-size: 15px; }
+  .brand span { display: none; }
+
+  main { padding: 12px; }
+  .stage { gap: 14px; }
+  aside { padding: 14px; }
+  .pagetitle { margin-bottom: 10px; }
+
+  /* The file summary moves to its own line so the two buttons keep their
+     width, and is clipped rather than allowed to wrap to four lines. */
+  footer { flex-wrap: wrap; padding: 10px 12px 12px; gap: 8px 12px; }
+  .file-label {
+    order: 3; width: 100%; text-align: center; font-size: 11px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* Touch targets.  A 34px button is fine with a mouse and a nuisance with a
+     thumb; the range thumbs matter most, since those are dragged. */
+  button { padding: 11px 18px; min-height: 44px; }
+  select { min-height: 42px; padding: 10px; }
+  .field { margin: 20px 0; }
+  input[type=range] { height: 6px; margin-top: 12px; }
+  input[type=range]::-webkit-slider-thumb { width: 22px; height: 22px; }
+  input[type=range]::-moz-range-thumb { width: 22px; height: 22px; }
+  .check { padding: 12px; }
+  .check input { width: 18px; height: 18px; }
+}
+
+/* Very small phones: the summary line is the first thing worth losing. */
+@media (max-width: 420px) {
+  .file-label { display: none; }
+}

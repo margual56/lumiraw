@@ -42,7 +42,12 @@ export default {
 
   'brightness.title': 'Luminosidad',
   'brightness.lede': 'Arrastra un recuadro sobre lo que debe quedar bien expuesto: una cara, el sujeto, aquello de lo que <em>trata</em> la fotografía. Esa zona se mide al gris medio y el resto del fotograma la sigue.',
-  'brightness.fine': 'Ajuste fino',
+  'brightness.fine': 'Luminosidad general',
+  'brightness.fineHint': 'Sube o baja toda la fotografía. Los tres de abajo actúan sobre ella, cada uno en su propio rango de tonos.',
+  'brightness.shadows': 'Sombras',
+  'brightness.midtones': 'Medios',
+  'brightness.highlights': 'Luces',
+  'brightness.zonesReset': 'Restablecer las tres zonas',
   'brightness.clear': 'Quitar · medir todo el fotograma',
 
   'wb.title': 'Balance de blancos',

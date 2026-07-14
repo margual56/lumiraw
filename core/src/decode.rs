@@ -106,6 +106,7 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, String> {
     h = h.min(fh - y0);
 
     let mut cam = demosaic(&cfa_plane, &raw.cfa, x0, y0, w, h);
+    reconstruct_highlights(&mut cam, &wb);
 
     // --- camera RGB -> linear sRGB ---------------------------------------
     let m = cam_to_srgb(&raw.xyz_to_cam);
@@ -117,6 +118,23 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, String> {
     }
 
     Ok(Decoded { img: orient(&cam, raw.orientation), meta })
+}
+
+/// Recover blown highlights to neutral instead of magenta.
+fn reconstruct_highlights(img: &mut Image, wb: &[f32; 3]) {
+    // Where recovery starts, as a fraction of each channel's own ceiling.
+    const ONSET: f32 = 0.96;
+
+    for px in img.d.chunks_exact_mut(3) {
+        let ceiling = px[0].max(px[1]).max(px[2]);
+        for c in 0..3 {
+            let saturation = wb[c].max(1e-6);
+            let blown = crate::ops::smoothstep(ONSET * saturation, saturation, px[c]);
+            if blown > 0.0 {
+                px[c] = px[c] * (1.0 - blown) + px[c].max(ceiling) * blown;
+            }
+        }
+    }
 }
 
 /// dcraw's `cam_xyz_coeff`: compose with the sRGB primaries, normalise each
@@ -350,4 +368,34 @@ fn read_exif(bytes: &[u8]) -> Meta {
         m.orientation = v as u16;
     }
     m
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A highlight that clipped in every channel must come out neutral, not
+    /// tinted by the inverse of the white balance.
+    #[test]
+    fn blown_highlights_go_white() {
+        let wb = [1.0f32, 0.37, 0.52];
+        let mut img = Image::new(3, 1);
+        // fully clipped: each channel sitting on its own ceiling
+        img.d[0..3].copy_from_slice(&[1.0, 0.37, 0.52]);
+        // a genuinely red subject: only red is at its limit
+        img.d[3..6].copy_from_slice(&[1.0, 0.05, 0.04]);
+        // an ordinary midtone, nowhere near any ceiling
+        img.d[6..9].copy_from_slice(&[0.30, 0.12, 0.18]);
+        reconstruct_highlights(&mut img, &wb);
+
+        let spread = |px: &[f32]| {
+            px[0].max(px[1]).max(px[2]) / px[0].min(px[1]).min(px[2]).max(1e-6)
+        };
+        assert!(spread(&img.d[0..3]) < 1.02, "clipped pixel still tinted: {:?}", &img.d[0..3]);
+        assert!(img.d[0] > 0.98, "clipped pixel should be white: {:?}", &img.d[0..3]);
+        // the red subject keeps its colour
+        assert!(img.d[4] < 0.1 && img.d[5] < 0.1, "red subject was neutralised: {:?}", &img.d[3..6]);
+        // and an ordinary pixel is untouched
+        assert_eq!(&img.d[6..9], &[0.30, 0.12, 0.18]);
+    }
 }

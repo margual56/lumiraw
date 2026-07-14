@@ -102,6 +102,10 @@ pub struct Settings {
     pub temperature: f32,
     pub tint: f32,
     pub vibrance: f32,
+    /// Tone zones, -1..1 each, riding on top of `exposure_bias`.
+    pub shadows: f32,
+    pub midtones: f32,
+    pub highlights: f32,
     pub preset: String,
     pub render_scale: f32,
     pub enabled: HashMap<String, bool>,
@@ -117,6 +121,9 @@ impl Default for Settings {
             temperature: 0.0,
             tint: 0.0,
             vibrance: 0.0,
+            shadows: 0.0,
+            midtones: 0.0,
+            highlights: 0.0,
             preset: "natural".into(),
             render_scale: 1.0,
             enabled: HashMap::new(),
@@ -153,6 +160,9 @@ impl Settings {
         s.temperature = f("temperature").unwrap_or(0.0);
         s.tint = f("tint").unwrap_or(0.0);
         s.vibrance = f("vibrance").unwrap_or(0.0);
+        s.shadows = f("shadows").unwrap_or(0.0).clamp(-1.0, 1.0);
+        s.midtones = f("midtones").unwrap_or(0.0).clamp(-1.0, 1.0);
+        s.highlights = f("highlights").unwrap_or(0.0).clamp(-1.0, 1.0);
         if let Some(p) = obj.get("preset").and_then(|x| x.as_str()) {
             s.preset = p.to_string();
         }
@@ -187,7 +197,7 @@ impl Settings {
             self.enabled.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
         flags.sort();
         format!(
-            "{}|{:?}|{:?}|{:.4}|{:.4}|{:.4}|{:.4}|{}|{}",
+            "{}|{:?}|{:?}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{}|{}",
             self.framing.key(),
             self.exposure_rect,
             self.wb_rect,
@@ -195,6 +205,9 @@ impl Settings {
             self.temperature,
             self.tint,
             self.vibrance,
+            self.shadows,
+            self.midtones,
+            self.highlights,
             self.preset,
             flags.join(",")
         )
@@ -442,6 +455,27 @@ pub fn s_curve(x: f32, amount: f32, pivot: f32) -> f32 {
     ((1.0 - amount) * t + amount * shaped).powf(1.0 / g)
 }
 
+/// The most any one tone zone may move a lightness.
+pub const ZONE_RANGE: f32 = 0.14;
+
+/// How strongly each slider owns a given display lightness.
+#[inline]
+fn zone_weights(l: f32) -> (f32, f32, f32) {
+    let shadow = 1.0 - ops::smoothstep(0.0, 0.5, l);
+    let highlight = ops::smoothstep(0.5, 1.0, l);
+    (shadow, 1.0 - shadow - highlight, highlight)
+}
+
+/// Shift one lightness by the three zone sliders.
+#[inline]
+pub fn apply_zones(l: f32, shadows: f32, midtones: f32, highlights: f32) -> f32 {
+    if shadows == 0.0 && midtones == 0.0 && highlights == 0.0 {
+        return l;
+    }
+    let (ws, wm, wh) = zone_weights(l);
+    (l + ZONE_RANGE * (shadows * ws + midtones * wm + highlights * wh)).clamp(0.0, 1.0)
+}
+
 fn skin_protection(hue: f32, chroma: f32, skin: f32) -> f32 {
     let mut d = (hue - skin).abs();
     while d > std::f32::consts::PI {
@@ -520,6 +554,21 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
             o.insert("reason".into(), json!("switched_off"));
         }
         report.add("contrast", off);
+    }
+
+    // --- tone zones -------------------------------------------------------
+    // The user's own shadows/midtones/highlights, on top of whatever the
+    // automatic curve decided.
+    if s.shadows != 0.0 || s.midtones != 0.0 || s.highlights != 0.0 {
+        for i in 0..n {
+            light_new.d[i] = apply_zones(light_new.d[i], s.shadows, s.midtones, s.highlights);
+        }
+        report.add("tone zones", json!({"applied": true,
+            "shadows": round_to(s.shadows, 3), "midtones": round_to(s.midtones, 3),
+            "highlights": round_to(s.highlights, 3),
+            "range": round_to(ZONE_RANGE, 3)}));
+    } else {
+        report.add("tone zones", json!({"applied": false, "reason": "not_needed"}));
     }
 
     // Lifting shadows leaves their colour behind; track the lightness change so
@@ -777,12 +826,83 @@ mod tests {
         assert!(img.d.iter().all(|v| *v >= 0.0 && *v <= 1.0));
     }
 
+    /// The whole point of capping ZONE_RANGE.
+    #[test]
+    fn tone_zones_stay_monotonic() {
+        let steps = [-1.0f32, -0.5, 0.0, 0.5, 1.0];
+        for &sh in &steps {
+            for &mid in &steps {
+                for &hi in &steps {
+                    let mut previous = f32::NEG_INFINITY;
+                    for i in 0..=1000 {
+                        let l = i as f32 / 1000.0;
+                        let out = apply_zones(l, sh, mid, hi);
+                        assert!(out >= previous - 1e-6,
+                            "curve folded back at l={} for ({}, {}, {}): {} after {}",
+                            l, sh, mid, hi, out, previous);
+                        previous = out;
+                    }
+                }
+            }
+        }
+    }
+
+    /// The weights are a partition of unity, so three equal sliders are a plain
+    /// uniform lift. If this drifts, the zones have started double counting.
+    #[test]
+    fn equal_zones_are_a_uniform_lift() {
+        for &amount in &[-1.0f32, -0.4, 0.4, 1.0] {
+            for i in 1..10 {
+                let l = i as f32 / 10.0;
+                let expected = (l + ZONE_RANGE * amount).clamp(0.0, 1.0);
+                let got = apply_zones(l, amount, amount, amount);
+                assert!((got - expected).abs() < 1e-5,
+                    "l={} amount={}: got {} want {}", l, amount, got, expected);
+            }
+        }
+    }
+
+    /// Zero has to mean *exactly* untouched, not nearly: every frame is
+    /// developed through this path whether or not the sliders were moved.
+    #[test]
+    fn zero_zones_are_the_identity() {
+        for i in 0..=100 {
+            let l = i as f32 / 100.0;
+            assert_eq!(apply_zones(l, 0.0, 0.0, 0.0), l);
+        }
+    }
+
+    /// Each slider has to own its end of the range and leave the other alone,
+    /// which is what "isolate the parts of the picture" means in practice.
+    #[test]
+    fn zones_isolate_their_own_tones() {
+        let (dark, mid, bright) = (0.08f32, 0.5, 0.92);
+        let moved = |a: f32, b: f32| (a - b).abs();
+
+        let sh = |l: f32| apply_zones(l, 1.0, 0.0, 0.0);
+        assert!(moved(sh(dark), dark) > 0.10, "shadows slider did not lift the shadows");
+        assert!(moved(sh(bright), bright) < 0.01, "shadows slider disturbed the highlights");
+
+        let hi = |l: f32| apply_zones(l, 0.0, 0.0, -1.0);
+        assert!(moved(hi(bright), bright) > 0.10, "highlights slider did not pull the highlights");
+        assert!(moved(hi(dark), dark) < 0.01, "highlights slider disturbed the shadows");
+
+        let md = |l: f32| apply_zones(l, 0.0, 1.0, 0.0);
+        assert!(moved(md(mid), mid) > 0.10, "midtones slider did not move the midtones");
+        assert!(moved(md(dark), dark) < 0.02 && moved(md(bright), bright) < 0.02,
+                "midtones slider reached the ends of the range");
+    }
+
     #[test]
     fn settings_parse_from_the_wire() {
         let v = serde_json::json!({
             "framing": {"angle": 2.5, "auto_fit": false, "crop": [0.1, 0.1, 0.5, 0.5]},
-            "vibrance": 0.4, "preset": "punchy", "enabled": {"sharpen": false}});
+            "vibrance": 0.4, "shadows": 0.6, "midtones": -0.2, "highlights": 4.0,
+            "preset": "punchy", "enabled": {"sharpen": false}});
         let s = Settings::from_json(&v);
+        assert_eq!(s.shadows, 0.6);
+        assert_eq!(s.midtones, -0.2);
+        assert_eq!(s.highlights, 1.0, "out-of-range slider was not clamped");
         assert_eq!(s.framing.angle, 2.5);
         assert_eq!(s.framing.auto_fit, false);
         assert_eq!(s.framing.crop, Some((0.1, 0.1, 0.5, 0.5)));

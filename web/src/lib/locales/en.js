@@ -42,7 +42,12 @@ export default {
 
   'brightness.title': 'Brightness',
   'brightness.lede': 'Drag a box over what must be correctly exposed: a face, the subject, whatever the picture is <em>about</em>. That region is metered to middle grey and the rest of the frame follows.',
-  'brightness.fine': 'Fine tune',
+  'brightness.fine': 'Overall brightness',
+  'brightness.fineHint': 'Lifts or lowers the whole picture. The three below work on top of it, each on its own range of tones.',
+  'brightness.shadows': 'Shadows',
+  'brightness.midtones': 'Midtones',
+  'brightness.highlights': 'Highlights',
+  'brightness.zonesReset': 'Reset the three zones',
   'brightness.clear': 'Clear · meter the whole frame',
 
   'wb.title': 'White balance',

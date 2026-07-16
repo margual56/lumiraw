@@ -1,6 +1,6 @@
 //! Raw decoding: file bytes -> linear sRGB, plus the EXIF the pipeline reasons about.
 
-use crate::ops::{Image, Plane};
+use crate::ops::{smoothstep, Image, Plane};
 
 #[derive(Default, Clone, Debug)]
 pub struct Meta {
@@ -125,14 +125,19 @@ fn reconstruct_highlights(img: &mut Image, wb: &[f32; 3]) {
     // Where recovery starts, as a fraction of each channel's own ceiling.
     const ONSET: f32 = 0.96;
 
+    // Each channel's ceiling is where the white balance put its saturation
+    // point, and these do not vary per pixel, so work them out once.
+    let limit = [wb[0].max(1e-6), wb[1].max(1e-6), wb[2].max(1e-6)];
+    let onset = [ONSET * limit[0], ONSET * limit[1], ONSET * limit[2]];
+
     for px in img.d.chunks_exact_mut(3) {
         let ceiling = px[0].max(px[1]).max(px[2]);
         for c in 0..3 {
-            let saturation = wb[c].max(1e-6);
-            let blown = crate::ops::smoothstep(ONSET * saturation, saturation, px[c]);
-            if blown > 0.0 {
-                px[c] = px[c] * (1.0 - blown) + px[c].max(ceiling) * blown;
-            }
+            // `ceiling` is the largest of the three by construction, so the gap
+            // is never negative and a channel already holding the ceiling is
+            // left exactly where it is.
+            let blown = smoothstep(onset[c], limit[c], px[c]);
+            px[c] += blown * (ceiling - px[c]);
         }
     }
 }
@@ -397,5 +402,63 @@ mod tests {
         assert!(img.d[4] < 0.1 && img.d[5] < 0.1, "red subject was neutralised: {:?}", &img.d[3..6]);
         // and an ordinary pixel is untouched
         assert_eq!(&img.d[6..9], &[0.30, 0.12, 0.18]);
+    }
+
+    /// The same thing through the real Bayer path.
+    #[test]
+    fn blown_bayer_region_develops_to_white() {
+        let wb = [1.0f32, 0.37, 0.52];
+        let cfa = rawloader::CFA::new("RGGB");
+        let (w, h) = (96usize, 32usize);
+        let grey = 0.2f32;
+
+        // Three vertical bands: a blown neutral, a well-exposed neutral, and a
+        // genuinely saturated red that happens to blow only its red channel.
+        let mut plane = Plane::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let c = cfa.color_at(y, x).min(2);
+                plane.d[y * w + x] = if x < 32 {
+                    wb[c] // every photosite on its own ceiling
+                } else if x < 64 {
+                    grey // neutral: equal after the white balance, by definition
+                } else {
+                    [1.0, 0.05, 0.04][c] // red at its limit, the rest nowhere near
+                };
+            }
+        }
+
+        let mut img = demosaic(&plane, &cfa, 0, 0, w, h);
+        let at = |img: &Image, x: usize| {
+            let i = ((h / 2) * w + x) * 3;
+            [img.d[i], img.d[i + 1], img.d[i + 2]]
+        };
+        let cast = |p: [f32; 3]| p[0].max(p[1]).max(p[2]) / p[0].min(p[1]).min(p[2]).max(1e-6);
+
+        let blown_before = at(&img, 16);
+        assert!(cast(blown_before) > 2.5,
+                "the bug this fixes did not reproduce: {blown_before:?}");
+
+        reconstruct_highlights(&mut img, &wb);
+        let blown = at(&img, 16);
+        let neutral = at(&img, 48);
+        let red = at(&img, 80);
+
+        assert!(cast(blown) < 1.02, "blown region still tinted: {blown:?}");
+        assert!(blown.iter().all(|v| *v > 0.98), "blown region is not white: {blown:?}");
+        assert!(neutral.iter().all(|v| (*v - grey).abs() < 1e-3),
+                "a well-exposed neutral was altered: {neutral:?}");
+        assert!(red[0] > 0.9 && red[1] < 0.1 && red[2] < 0.1,
+                "a saturated red subject was neutralised: {red:?}");
+
+        // White in the camera's own space is only white in the picture because
+        // the matrix carries neutrals through unchanged.
+        let sony = [[0.6912, -0.1503, -0.0645], [-0.4472, 1.2370, 0.2313],
+                    [-0.0819, 0.1706, 0.5785], [0.0, 0.0, 0.0]];
+        let m = cam_to_srgb(&sony);
+        let out = [m[0][0] + m[0][1] + m[0][2],
+                   m[1][0] + m[1][1] + m[1][2],
+                   m[2][0] + m[2][1] + m[2][2]];
+        assert!(cast(out) < 1.01, "camera neutral drifted through the matrix: {out:?}");
     }
 }

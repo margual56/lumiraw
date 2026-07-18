@@ -6,7 +6,7 @@ Emscripten for what is ultimately polynomial evaluation.  The *data* is the
 valuable part, so we take that and evaluate the models ourselves (see
 core/src/lensdb.rs).  Run this whenever the system database is updated:
 
-    python tools/bake_lensfun.py /usr/share/lensfun/version_1 web/static/lensfun.json
+    python tools/bake_lensfun.py /usr/share/lensfun/version_1 web/src/lib/wasm/lensfun.json
 """
 from __future__ import annotations
 
@@ -97,5 +97,5 @@ def fnum_text(node, tag, default):
 
 if __name__ == "__main__":
     src = Path(sys.argv[1] if len(sys.argv) > 1 else "/usr/share/lensfun/version_1")
-    dst = Path(sys.argv[2] if len(sys.argv) > 2 else "web/static/lensfun.json")
+    dst = Path(sys.argv[2] if len(sys.argv) > 2 else "web/src/lib/wasm/lensfun.json")
     main(src, dst)

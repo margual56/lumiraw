@@ -10,8 +10,8 @@ fn main() {
 
     // The baked database lives with the web assets; find it whether we were
     // started from the crate or from the repository root.
-    let db_bytes = ["web/static/lensfun.json", "../web/static/lensfun.json",
-                    "../../web/static/lensfun.json"]
+    let db_bytes = ["web/src/lib/wasm/lensfun.json", "../web/src/lib/wasm/lensfun.json",
+                    "../../web/src/lib/wasm/lensfun.json"]
         .iter()
         .find_map(|p| std::fs::read(p).ok());
     let db = db_bytes.as_ref().and_then(|b| Database::parse(b).ok());
@@ -46,7 +46,7 @@ fn main() {
     }));
 
     let t2 = std::time::Instant::now();
-    let png = output::save(&img, "png8", 92).expect("encode");
+    let png = output::save(&img, "png8", 92, &dev.exif).expect("encode");
     std::fs::write(&out_path, &png).expect("write");
     println!("png {:.2}s, {} bytes -> {}", t2.elapsed().as_secs_f32(), png.len(), out_path);
     println!("total {:.2}s", t0.elapsed().as_secs_f32());

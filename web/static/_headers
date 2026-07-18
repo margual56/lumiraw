@@ -1,10 +1,9 @@
 # Cloudflare Pages applies these to the static responses.
-/autoraw_core.wasm
-  Content-Type: application/wasm
-  Cache-Control: public, max-age=31536000, immutable
-
-/lensfun.json
-  Cache-Control: public, max-age=604800
+#
+# Only fingerprinted paths may be immutable. The wasm module and the lens
+# database are imported through the bundler precisely so they land here with a
+# content hash in the name; anything served from a fixed path must be allowed
+# to go stale, or a deploy leaves browsers mixing old and new halves.
 
 /_app/immutable/*
   Cache-Control: public, max-age=31536000, immutable

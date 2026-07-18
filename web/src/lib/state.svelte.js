@@ -23,6 +23,7 @@ export const defaultSettings = () => ({
 
 export const app = $state({
   id: null,
+  version: __APP_VERSION__,   // stamped in at build time, from core/Cargo.toml
   info: null,
   step: UPLOAD,
   settings: defaultSettings(),

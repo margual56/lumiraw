@@ -14,6 +14,8 @@ pub struct Development {
     pub filename: String,
     pub linear: Image,
     pub meta: Meta,
+    /// The original file's own metadata, kept so the export can carry it.
+    pub exif: Vec<crate::exif::Entry>,
     pub profile: CaptureProfile,
     pub lens_match: Option<LensMatch>,
     cache: Vec<(String, Image, Option<Rect>, Map<String, Value>)>,
@@ -39,6 +41,7 @@ impl Development {
             filename: filename.to_string(),
             linear: d.img,
             meta: d.meta,
+            exif: decode::collect_exif(bytes),
             profile: prof,
             lens_match,
             cache: Vec::new(),

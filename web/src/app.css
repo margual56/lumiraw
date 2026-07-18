@@ -36,7 +36,9 @@ header {
   background: var(--panel);
 }
 .brand { font-weight: 650; letter-spacing: .2px; }
-.brand span {
+/* The direct child only: the sub-line holds the tagline and the version, and
+   those two sit beside each other rather than stacking. */
+.brand > span {
   display: block; font-weight: 400; font-size: 11.5px;
   color: var(--muted); letter-spacing: .3px;
 }
@@ -142,7 +144,7 @@ aside h2 { margin: 0 0 8px; font-size: 15px; font-weight: 650; }
      strip underneath (see Stepper.svelte, which makes that strip scroll). */
   header { flex-wrap: wrap; gap: 8px 12px; padding: 10px 12px; }
   .brand { font-size: 15px; }
-  .brand span { display: none; }
+  /* The tagline goes on a phone, the version stays: see +page.svelte. */
 
   main { padding: 12px; }
   .stage { gap: 14px; }

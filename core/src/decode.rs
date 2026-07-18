@@ -462,3 +462,90 @@ mod tests {
         assert!(cast(out) < 1.01, "camera neutral drifted through the matrix: {out:?}");
     }
 }
+
+/// Everything in the original file worth carrying into the exported one.
+pub fn collect_exif(bytes: &[u8]) -> Vec<crate::exif::Entry> {
+    use crate::exif::{Entry, Ifd, Value};
+
+    // Tags describing the raw's storage, or that we write ourselves.
+    const SKIP_PRIMARY: &[u16] = &[
+        0x0100, 0x0101, 0x0102, 0x0103, 0x0106, 0x0107, 0x0111, 0x0112, 0x0115, 0x0116,
+        0x0117, 0x011C, 0x0118, 0x0119, 0x013D, 0x0142, 0x0143, 0x0144, 0x0145, 0x014A,
+        0x0201, 0x0202, 0x828D, 0x828E, 0x8769, 0x8825, 0xC61A, 0xC61B, 0xC61C, 0xC61D,
+        0xC61E, 0xC61F, 0xC620, 0xC621, 0xC622, 0xC623, 0xC624, 0xC625, 0xC626, 0xC627,
+    ];
+    // MakerNote and the interoperability pointer: both position dependent.
+    const SKIP_EXIF: &[u16] = &[0x927C, 0xA005, 0xA002, 0xA003];
+    // A value larger than this is a thumbnail or a vendor blob, not metadata.
+    const MAX_VALUE: usize = 64 * 1024;
+
+    let mut out = Vec::new();
+    let mut cursor = std::io::Cursor::new(bytes);
+    let parsed = match exif::Reader::new().read_from_container(&mut cursor) {
+        Ok(e) => e,
+        Err(_) => return out,
+    };
+
+    for field in parsed.fields() {
+        // The thumbnail directory describes a picture we are not writing.
+        if field.ifd_num != exif::In::PRIMARY {
+            continue;
+        }
+        let ifd = match field.tag.0 {
+            exif::Context::Tiff => Ifd::Primary,
+            exif::Context::Exif => Ifd::Exif,
+            exif::Context::Gps => Ifd::Gps,
+            _ => continue,
+        };
+        let tag = field.tag.number();
+        let skip = match ifd {
+            Ifd::Primary => SKIP_PRIMARY,
+            Ifd::Exif => SKIP_EXIF,
+            Ifd::Gps => &[][..],
+        };
+        if skip.contains(&tag) {
+            continue;
+        }
+        let value = match &field.value {
+            exif::Value::Byte(v) => Value::Byte(v.clone()),
+            exif::Value::Ascii(v) => {
+                let text = v.first().map(|b| String::from_utf8_lossy(b).to_string())
+                    .unwrap_or_default();
+                let text = text.trim_end_matches('\0').trim().to_string();
+                if text.is_empty() {
+                    continue;
+                }
+                Value::Ascii(text)
+            }
+            exif::Value::Short(v) => Value::Short(v.clone()),
+            exif::Value::Long(v) => Value::Long(v.clone()),
+            exif::Value::Rational(v) => {
+                Value::Rational(v.iter().map(|r| (r.num, r.denom)).collect())
+            }
+            exif::Value::SShort(v) => Value::SShort(v.clone()),
+            exif::Value::SLong(v) => Value::SLong(v.clone()),
+            exif::Value::SRational(v) => {
+                Value::SRational(v.iter().map(|r| (r.num, r.denom)).collect())
+            }
+            exif::Value::Undefined(v, _) => Value::Undefined(v.clone()),
+            // Float and Double are not EXIF types; anything else is unknown to
+            // the reader and would be a guess to re-encode.
+            _ => continue,
+        };
+        let size = match &value {
+            Value::Byte(v) | Value::Undefined(v) => v.len(),
+            Value::Ascii(s) => s.len(),
+            Value::Short(v) => v.len() * 2,
+            Value::SShort(v) => v.len() * 2,
+            Value::Long(v) => v.len() * 4,
+            Value::SLong(v) => v.len() * 4,
+            Value::Rational(v) => v.len() * 8,
+            Value::SRational(v) => v.len() * 8,
+        };
+        if size > MAX_VALUE {
+            continue;
+        }
+        out.push(Entry::new(ifd, tag, value));
+    }
+    out
+}

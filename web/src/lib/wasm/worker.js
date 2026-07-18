@@ -6,8 +6,12 @@ let ready = null;         // the init promise
 let current = null;       // id of the call in flight, for progress messages
 let queue = Promise.resolve();   // one request at a time: one wasm session
 
-/** Static assets sit at the site root, not next to the bundled worker. */
-const asset = (name) => new URL(`/${name}`, location.origin).href;
+import { withExif } from './webp.js';
+
+// Imported rather than fetched from a fixed path so the bundler fingerprints
+// them.
+import wasmUrl from './autoraw_core.wasm?url';
+import databaseUrl from './lensfun.json?url';
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
@@ -18,21 +22,32 @@ function hostProgress(fraction, ptr, len) {
   if (current !== null) postMessage({ type: 'progress', id: current, fraction, code });
 }
 
+/** Streaming compilation needs the server to say `application/wasm`; not every
+ *  host does, so fall back to compiling from the bytes rather than failing. */
+async function compile(url, imports) {
+  try {
+    return await WebAssembly.instantiateStreaming(fetch(url), imports);
+  } catch {
+    const bytes = await (await fetch(url)).arrayBuffer();
+    return WebAssembly.instantiate(bytes, imports);
+  }
+}
+
 async function init() {
   const [module, db] = await Promise.all([
-    WebAssembly.instantiateStreaming(fetch(asset('autoraw_core.wasm')), {
-      env: { host_progress: hostProgress },
-    }),
-    fetch(asset('lensfun.json')).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null),
+    compile(wasmUrl, { env: { host_progress: hostProgress } }),
+    fetch(databaseUrl).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null),
   ]);
   wasm = module.instance.exports;
   memory = wasm.memory;
+  wasm.ar_version();
+  const { version } = readJson();
   if (db) {
     const ptr = copyIn(new Uint8Array(db));
     wasm.ar_set_database(ptr, db.byteLength);
     wasm.ar_free(ptr, db.byteLength);
   }
-  return { lenses: db ? readJson().lenses : 0 };
+  return { version, lenses: db ? readJson().lenses : 0 };
 }
 
 /** Copy bytes into wasm memory and return the pointer (freed by the caller). */
@@ -187,6 +202,9 @@ async function exportImage({ settings, styles: chosen, format, quality, max_size
       // encoder finishes the job.
       const { w, h, pixels } = primary();
       blob = await toBlob(pixels, w, h, 'image/webp', (quality ?? 92) / 100);
+      if (info.exif) {
+        blob = await withExif(blob, encodedBytes(), w, h);
+      }
     } else {
       blob = new Blob([encodedBytes()], { type: info.mime });
     }

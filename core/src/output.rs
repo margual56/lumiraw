@@ -1,5 +1,6 @@
 //! Quantisation and delivery formats.
 
+use crate::exif::{self, Entry, Ifd};
 use crate::ops::{self, Image};
 
 /// Display-linear -> sRGB integers.
@@ -61,18 +62,23 @@ pub fn format_spec(id: &str) -> &'static Format {
     FORMATS.iter().find(|f| f.id == id).unwrap_or(&FORMATS[0])
 }
 
-/// Encode the finished image.  `webp` is handled by the browser (the canvas
-/// encoder), so it never reaches here.
-pub fn save(img: &Image, fmt: &str, quality: u8) -> Result<Vec<u8>, String> {
+/// Encode the finished image, carrying the original's metadata with it.
+pub fn save(img: &Image, fmt: &str, quality: u8, meta: &[Entry]) -> Result<Vec<u8>, String> {
+    let block = exif::build(meta, img.w as u32, img.h as u32, crate::SOFTWARE);
     match fmt {
-        "png16" => png_bytes(img, 16),
-        "jpeg" => jpeg_bytes(img, quality),
-        "tiff" => tiff_bytes(img),
-        _ => png_bytes(img, 8),
+        "png16" => png_bytes(img, 16, &block, meta),
+        "jpeg" => jpeg_bytes(img, quality, &block),
+        "tiff" => tiff_bytes(img, meta),
+        _ => png_bytes(img, 8, &block, meta),
     }
 }
 
-fn png_bytes(img: &Image, bits: u8) -> Result<Vec<u8>, String> {
+/// The EXIF block on its own, for the formats encoded outside Rust.
+pub fn exif_block(img: &Image, meta: &[Entry]) -> Vec<u8> {
+    exif::build(meta, img.w as u32, img.h as u32, crate::SOFTWARE)
+}
+
+fn png_bytes(img: &Image, bits: u8, block: &[u8], meta: &[Entry]) -> Result<Vec<u8>, String> {
     let mut buf: Vec<u8> = Vec::new();
     {
         let mut enc = png::Encoder::new(&mut buf, img.w as u32, img.h as u32);
@@ -80,7 +86,25 @@ fn png_bytes(img: &Image, bits: u8) -> Result<Vec<u8>, String> {
         enc.set_depth(if bits == 16 { png::BitDepth::Sixteen } else { png::BitDepth::Eight });
         enc.set_compression(png::Compression::Fast);
         enc.set_srgb(png::SrgbRenderingIntent::Perceptual);
+        // PNG's own text chunks as well as the EXIF block: plenty of viewers
+        // show these and never look at EXIF in a PNG.
+        let _ = enc.add_text_chunk("Software".into(), crate::SOFTWARE.into());
+        if let Some(when) = exif::captured_at(meta) {
+            let _ = enc.add_text_chunk("Creation Time".into(), when);
+        }
+        for (keyword, tag, ifd) in [
+            ("Source", 0x0110u16, Ifd::Primary),       // camera model
+            ("Author", 0x013B, Ifd::Primary),          // artist
+            ("Copyright", 0x8298, Ifd::Primary),
+            ("Description", 0x010E, Ifd::Primary),
+        ] {
+            if let Some(text) = exif::text_of(meta, ifd, tag) {
+                let _ = enc.add_text_chunk(keyword.into(), text);
+            }
+        }
         let mut writer = enc.write_header().map_err(|e| e.to_string())?;
+        // eXIf has to precede the image data, which is where this lands.
+        writer.write_chunk(png::chunk::ChunkType(*b"eXIf"), block).map_err(|e| e.to_string())?;
         if bits == 16 {
             let data = encode16(img);
             let mut bytes = Vec::with_capacity(data.len() * 2);
@@ -95,27 +119,146 @@ fn png_bytes(img: &Image, bits: u8) -> Result<Vec<u8>, String> {
     Ok(buf)
 }
 
-fn jpeg_bytes(img: &Image, quality: u8) -> Result<Vec<u8>, String> {
+fn jpeg_bytes(img: &Image, quality: u8, block: &[u8]) -> Result<Vec<u8>, String> {
     let mut buf: Vec<u8> = Vec::new();
     let mut enc = jpeg_encoder::Encoder::new(&mut buf, quality);
     // 4:4:4, like the Python version: no colour smearing.
     enc.set_sampling_factor(jpeg_encoder::SamplingFactor::F_1_1);
     enc.set_progressive(true);
+    // APP1, introduced by the "Exif\0\0" identifier the spec requires.
+    let mut app1 = Vec::with_capacity(block.len() + 6);
+    app1.extend_from_slice(b"Exif\0\0");
+    app1.extend_from_slice(block);
+    enc.add_app_segment(1, &app1).map_err(|e| e.to_string())?;
     enc.encode(&encode8(img, true), img.w as u16, img.h as u16, jpeg_encoder::ColorType::Rgb)
         .map_err(|e| e.to_string())?;
     Ok(buf)
 }
 
-fn tiff_bytes(img: &Image) -> Result<Vec<u8>, String> {
+/// TIFF is itself a directory format, so the descriptive tags go in at the top
+/// level where any reader will find them.
+fn tiff_bytes(img: &Image, meta: &[Entry]) -> Result<Vec<u8>, String> {
+    use tiff::tags::Tag;
     let mut buf = std::io::Cursor::new(Vec::new());
     {
         let mut enc = tiff::encoder::TiffEncoder::new(&mut buf).map_err(|e| e.to_string())?;
-        enc.write_image::<tiff::encoder::colortype::RGB8>(
-            img.w as u32,
-            img.h as u32,
-            &encode8(img, true),
-        )
-        .map_err(|e| e.to_string())?;
+        let mut image = enc
+            .new_image::<tiff::encoder::colortype::RGB8>(img.w as u32, img.h as u32)
+            .map_err(|e| e.to_string())?;
+        {
+            let dir = image.encoder();
+            let _ = dir.write_tag(Tag::Software, crate::SOFTWARE);
+            let _ = dir.write_tag(Tag::Orientation, 1u16);
+            for (tag, number) in [
+                (Tag::Make, 0x010Fu16),
+                (Tag::Model, 0x0110),
+                (Tag::Artist, 0x013B),
+                (Tag::Copyright, 0x8298),
+                (Tag::ImageDescription, 0x010E),
+                (Tag::DateTime, 0x0132),
+            ] {
+                if let Some(text) = exif::text_of(meta, Ifd::Primary, number) {
+                    let _ = dir.write_tag(tag, text.as_str());
+                }
+            }
+            // The capture time is in the Exif directory of the original, but
+            // it is the most useful date a TIFF reader could show.
+            if exif::text_of(meta, Ifd::Primary, 0x0132).is_none() {
+                if let Some(when) = exif::captured_at(meta) {
+                    let _ = dir.write_tag(Tag::DateTime, when.as_str());
+                }
+            }
+        }
+        image.write_data(&encode8(img, true)).map_err(|e| e.to_string())?;
     }
     Ok(buf.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::exif::Value;
+
+    fn frame() -> Image {
+        let mut img = Image::new(8, 8);
+        for (i, v) in img.d.iter_mut().enumerate() {
+            *v = (i % 7) as f32 / 7.0;
+        }
+        img
+    }
+
+    /// What the camera recorded about the photograph, as it would arrive from
+    /// `decode::collect_exif`.
+    fn recorded() -> Vec<Entry> {
+        vec![
+            Entry::new(Ifd::Primary, 0x010F, Value::Ascii("SONY".into())),
+            Entry::new(Ifd::Primary, 0x0110, Value::Ascii("ILCE-5000".into())),
+            Entry::new(Ifd::Primary, 0x013B, Value::Ascii("Marcos".into())),
+            Entry::new(Ifd::Exif, 0x829A, Value::Rational(vec![(1, 125)])),
+            Entry::new(Ifd::Exif, 0x829D, Value::Rational(vec![(71, 10)])),
+            Entry::new(Ifd::Exif, 0x8827, Value::Short(vec![100])),
+            Entry::new(Ifd::Exif, 0x920A, Value::Rational(vec![(103, 1)])),
+            Entry::new(Ifd::Exif, 0xA434, Value::Ascii("E 55-210mm F4.5-6.3 OSS".into())),
+            Entry::new(Ifd::Exif, 0x9003, Value::Ascii("2026:09:22 15:04:05".into())),
+            Entry::new(Ifd::Gps, 0x0001, Value::Ascii("N".into())),
+            Entry::new(Ifd::Gps, 0x0002, Value::Rational(vec![(43, 1), (15, 1), (0, 1)])),
+        ]
+    }
+
+    fn read_back(bytes: &[u8]) -> ::exif::Exif {
+        ::exif::Reader::new()
+            .read_from_container(&mut std::io::Cursor::new(bytes))
+            .expect("the exported file should carry readable metadata")
+    }
+
+    /// The whole point of the feature.
+    #[test]
+    fn exports_carry_the_cameras_metadata() {
+        use ::exif::{In, Tag};
+        for format in ["png8", "png16", "jpeg", "tiff"] {
+            let bytes = save(&frame(), format, 92, &recorded()).expect("encode");
+            let read = read_back(&bytes);
+            let text = |tag: Tag| {
+                read.get_field(tag, In::PRIMARY)
+                    .map(|f| f.display_value().to_string().replace('"', ""))
+            };
+            assert_eq!(text(Tag::Make).as_deref(), Some("SONY"), "{format}: make lost");
+            assert_eq!(text(Tag::Model).as_deref(), Some("ILCE-5000"), "{format}: model lost");
+            assert_eq!(text(Tag::Artist).as_deref(), Some("Marcos"), "{format}: artist lost");
+            assert_eq!(text(Tag::Software).as_deref(), Some(crate::SOFTWARE),
+                       "{format}: not stamped");
+
+            // TIFF gets the descriptive tags only: the encoder owns its own
+            // directory and will not carry an Exif sub-IFD.
+            if format == "tiff" {
+                continue;
+            }
+            assert_eq!(text(Tag::ExposureTime).as_deref(), Some("1/125"), "{format}");
+            assert_eq!(text(Tag::FNumber).as_deref(), Some("7.1"), "{format}");
+            assert_eq!(text(Tag::PhotographicSensitivity).as_deref(), Some("100"), "{format}");
+            assert_eq!(text(Tag::FocalLength).as_deref(), Some("103"), "{format}");
+            assert_eq!(text(Tag::LensModel).as_deref(), Some("E 55-210mm F4.5-6.3 OSS"),
+                       "{format}");
+            assert_eq!(text(Tag::DateTimeOriginal).as_deref(), Some("2026-09-22 15:04:05"),
+                       "{format}: capture time lost");
+            assert!(read.get_field(Tag::GPSLatitude, In::PRIMARY).is_some(),
+                    "{format}: where it was taken was lost");
+            // Ours, describing the file we actually wrote.
+            assert_eq!(text(Tag::PixelXDimension).as_deref(), Some("8"), "{format}");
+            assert_eq!(text(Tag::Orientation).as_deref(),
+                       Some("row 0 at top and column 0 at left"), "{format}");
+        }
+    }
+
+    /// A frame with no metadata at all still has to produce a valid file.
+    #[test]
+    fn exports_without_metadata_still_decode() {
+        for format in ["png8", "png16", "jpeg", "tiff"] {
+            let bytes = save(&frame(), format, 92, &[]).expect("encode");
+            assert!(bytes.len() > 32, "{format}: produced nothing");
+            let read = read_back(&bytes);
+            use ::exif::{In, Tag};
+            assert!(read.get_field(Tag::Software, In::PRIMARY).is_some(), "{format}");
+        }
+    }
 }

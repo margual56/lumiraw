@@ -47,8 +47,14 @@ function ensure() {
       call.reject(new Error(event.message || 'the pipeline worker stopped'));
     }
   };
-  worker.postMessage({ type: 'init', id: 0 });
   return worker;
+}
+
+/** Resolves once the module is loaded, with what the build reports about itself. */
+let readyPromise = null;
+export function ready() {
+  if (!readyPromise) readyPromise = call('init');
+  return readyPromise;
 }
 
 function call(type, body = {}, hooks = {}, transfer = []) {
@@ -73,7 +79,7 @@ export function setProgressListener(fn) {
 
 /** Warm the module up while the user is still looking at the drop zone. */
 export function preload() {
-  ensure();
+  ready().catch(() => {});
 }
 
 export async function upload(file, onProgress) {

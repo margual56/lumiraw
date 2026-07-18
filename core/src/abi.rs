@@ -328,25 +328,30 @@ pub extern "C" fn ar_export(settings_ptr: *const u8, settings_len: usize, style_
     let fmt = String::from_utf8_lossy(unsafe { slice(fmt_ptr, fmt_len) }).to_string();
     let edge = if long_edge > 0 { Some(long_edge as usize) } else { None };
 
-    let img = with_dev(|dev| {
+    let developed = with_dev(|dev| {
         let mut cb = |f: f32, code: &str| progress(f * 0.8, code);
         let (img, _) = dev.render(&settings, &style, edge, true, Some(&mut cb));
-        img
+        (img, dev.exif.clone())
     });
-    let img = match img {
-        Some(i) => i,
+    let (img, meta) = match developed {
+        Some(pair) => pair,
         None => return set_error("no image open", "no_session"),
     };
     progress(0.85, "encoding");
     // WebP has no pure-Rust encoder we want to carry, so the worker asks the
     // browser's own canvas encoder for it; everything else is encoded here.
     if fmt == "webp" {
+        // The browser encodes the picture.
+        let block = output::exif_block(&img, &meta);
+        let n = block.len();
+        BYTES.with(|b| *b.borrow_mut() = block);
         store(&img);
-        set_json(json!({"width": img.w, "height": img.h, "canvas": true, "format": "webp"}));
+        set_json(json!({"width": img.w, "height": img.h, "canvas": true, "format": "webp",
+                        "exif": n}));
         progress(1.0, "done");
         return 0;
     }
-    match output::save(&img, &fmt, quality.clamp(1, 100) as u8) {
+    match output::save(&img, &fmt, quality.clamp(1, 100) as u8, &meta) {
         Ok(bytes) => {
             let n = bytes.len();
             BYTES.with(|b| *b.borrow_mut() = bytes);
@@ -358,6 +363,14 @@ pub extern "C" fn ar_export(settings_ptr: *const u8, settings_len: usize, style_
         }
         Err(e) => set_error(&e, "encode"),
     }
+}
+
+/// Which build this is. Read once at start-up so the interface can show it
+/// and so every exported file can be stamped with the same string.
+#[no_mangle]
+pub extern "C" fn ar_version() -> i32 {
+    set_json(json!({"version": crate::VERSION, "software": crate::SOFTWARE}));
+    0
 }
 
 /// Free the decoded frame (a new upload, or the tab going idle).

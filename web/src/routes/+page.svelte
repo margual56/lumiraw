@@ -37,7 +37,14 @@
   $effect(() => {
     // Fetch the wasm module and the lens database while the drop zone is still
     // on screen, so the first render does not pay for them.
-    api.preload();
+    api.ready()
+      .then((info) => {
+        if (info?.version && info.version !== app.version) {
+          console.warn(`autoraw: page is ${app.version} but the pipeline is `
+                       + `${info.version}; a stale cached module is in play`);
+        }
+      })
+      .catch(() => {});
   });
 
   async function pick(file) {
@@ -159,7 +166,13 @@
 
 <div class="shell">
   <header>
-    <div class="brand">autoraw<span>{t('app.tagline')}</span></div>
+    <div class="brand">
+      autoraw
+      <span>
+        <span class="tagline">{t('app.tagline')}</span>
+        {#if app.version}<span class="ver">v{app.version}</span>{/if}
+      </span>
+    </div>
     <Stepper onstep={go} />
     <LocalePicker />
   </header>
@@ -200,6 +213,16 @@
 </div>
 
 <style>
+  /*
+   * The version sits under the name, quiet enough to ignore and specific enough
+   * to quote in a bug report.
+   */
+  .ver { color: var(--line); font-variant-numeric: tabular-nums; }
+  .tagline + .ver { margin-left: 6px; }
+  @media (max-width: 700px) {
+    .tagline { display: none; }
+  }
+
   /*
    * The privacy notice sits above the drop zone, which then takes whatever
    * height is left rather than insisting on a full page of its own.

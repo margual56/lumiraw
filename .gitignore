@@ -1,3 +1,14 @@
+*.ARW
+*.arw
+*.CR2
+*.cr2
+*.NEF
+*.nef
+*.DNG
+*.dng
+*.RAF
+*.raf
+
 web/build/
 web/.svelte-kit/
 core/target/

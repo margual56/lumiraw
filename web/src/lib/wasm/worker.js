@@ -6,6 +6,7 @@ let ready = null;         // the init promise
 let current = null;       // id of the call in flight, for progress messages
 let queue = Promise.resolve();   // one request at a time: one wasm session
 
+import { stamp } from './stamp.js';
 import { withExif } from './webp.js';
 
 // Imported rather than fetched from a fixed path so the bundler fingerprints
@@ -185,6 +186,8 @@ async function styles({ settings, size }) {
 }
 
 async function exportImage({ settings, styles: chosen, format, quality, max_size, original_name }) {
+  // One time for the whole export, so several looks saved together agree.
+  const now = stamp();
   const wanted = chosen?.length ? chosen : ['original'];
   const stem = (original_name || 'photo').replace(/\.[^.]+$/, '');
   const files = [];
@@ -192,8 +195,9 @@ async function exportImage({ settings, styles: chosen, format, quality, max_size
     const rc = settingsPointer(settings, (sp, sl) =>
       withString(style, (yp, yl) =>
         withString(format, (fp, fl) =>
-          wasm.ar_export(sp, sl, yp, yl, fp, fl, quality ?? 92,
-                         max_size ? Number(max_size) : 0))));
+          withString(now, (np, nl) =>
+            wasm.ar_export(sp, sl, yp, yl, fp, fl, quality ?? 92,
+                           max_size ? Number(max_size) : 0, np, nl)))));
     const info = readJson();
     if (rc !== 0) fail(info);
     let blob;

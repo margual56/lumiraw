@@ -1,4 +1,5 @@
 /** Does the WebP export still decode, and does it carry the metadata? */
+import { stamp } from '../web/src/lib/wasm/stamp.js';
 import { withExif } from '../web/src/lib/wasm/webp.js';
 
 const ascii = (text) => Uint8Array.from(text, (c) => c.charCodeAt(0));
@@ -67,5 +68,11 @@ check('odd-sized chunks stay word aligned',
 const again = await withExif(out, exif, 4000, 3000);
 check('it refuses to add a second EXIF chunk',
   (await again.arrayBuffer()).byteLength === bytes.length);
+
+// The export time the pipeline stamps into every file.
+const when = stamp(new Date(2026, 8, 22, 16, 30, 5));
+check('the timestamp is EXIF shaped', /^\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/.test(when));
+check('it is local time, not UTC', when.startsWith('2026:09:22 16:30:05'));
+check('single digits are padded', stamp(new Date(2026, 0, 2, 3, 4, 5)).startsWith('2026:01:02 03:04:05'));
 
 process.exit(failures ? 1 : 0);

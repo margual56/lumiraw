@@ -46,7 +46,7 @@ fn main() {
     }));
 
     let t2 = std::time::Instant::now();
-    let png = output::save(&img, "png8", 92, &dev.exif).expect("encode");
+    let png = output::save(&img, "png8", 92, &dev.exif, None).expect("encode");
     std::fs::write(&out_path, &png).expect("write");
     println!("png {:.2}s, {} bytes -> {}", t2.elapsed().as_secs_f32(), png.len(), out_path);
     println!("total {:.2}s", t0.elapsed().as_secs_f32());

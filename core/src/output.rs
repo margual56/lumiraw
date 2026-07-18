@@ -63,29 +63,43 @@ pub fn format_spec(id: &str) -> &'static Format {
 }
 
 /// Encode the finished image, carrying the original's metadata with it.
-pub fn save(img: &Image, fmt: &str, quality: u8, meta: &[Entry]) -> Result<Vec<u8>, String> {
-    let block = exif::build(meta, img.w as u32, img.h as u32, crate::SOFTWARE);
+pub fn save(img: &Image, fmt: &str, quality: u8, meta: &[Entry], modified: Option<&str>)
+    -> Result<Vec<u8>, String> {
+    let block = exif::build(meta, img.w as u32, img.h as u32, crate::SOFTWARE, modified);
     match fmt {
-        "png16" => png_bytes(img, 16, &block, meta),
+        "png16" => png_bytes(img, 16, &block, meta, modified),
         "jpeg" => jpeg_bytes(img, quality, &block),
-        "tiff" => tiff_bytes(img, meta),
-        _ => png_bytes(img, 8, &block, meta),
+        "tiff" => tiff_bytes(img, meta, modified),
+        _ => png_bytes(img, 8, &block, meta, modified),
     }
 }
 
 /// The EXIF block on its own, for the formats encoded outside Rust.
-pub fn exif_block(img: &Image, meta: &[Entry]) -> Vec<u8> {
-    exif::build(meta, img.w as u32, img.h as u32, crate::SOFTWARE)
+pub fn exif_block(img: &Image, meta: &[Entry], modified: Option<&str>) -> Vec<u8> {
+    exif::build(meta, img.w as u32, img.h as u32, crate::SOFTWARE, modified)
 }
 
-fn png_bytes(img: &Image, bits: u8, block: &[u8], meta: &[Entry]) -> Result<Vec<u8>, String> {
+/// `YYYY:MM:DD HH:MM:SS` into its parts, for the formats that want numbers
+/// rather than a string.
+fn parts_of(stamp: &str) -> Option<(u16, u8, u8, u8, u8, u8)> {
+    let bytes = stamp.as_bytes();
+    if bytes.len() < 19 {
+        return None;
+    }
+    let n = |from: usize, to: usize| stamp.get(from..to)?.trim().parse::<u32>().ok();
+    Some((n(0, 4)? as u16, n(5, 7)? as u8, n(8, 10)? as u8,
+          n(11, 13)? as u8, n(14, 16)? as u8, n(17, 19)? as u8))
+}
+
+fn png_bytes(img: &Image, bits: u8, block: &[u8], meta: &[Entry], modified: Option<&str>)
+    -> Result<Vec<u8>, String> {
     let mut buf: Vec<u8> = Vec::new();
     {
         let mut enc = png::Encoder::new(&mut buf, img.w as u32, img.h as u32);
         enc.set_color(png::ColorType::Rgb);
         enc.set_depth(if bits == 16 { png::BitDepth::Sixteen } else { png::BitDepth::Eight });
         enc.set_compression(png::Compression::Fast);
-        enc.set_srgb(png::SrgbRenderingIntent::Perceptual);
+        enc.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
         // PNG's own text chunks as well as the EXIF block: plenty of viewers
         // show these and never look at EXIF in a PNG.
         let _ = enc.add_text_chunk("Software".into(), crate::SOFTWARE.into());
@@ -105,6 +119,12 @@ fn png_bytes(img: &Image, bits: u8, block: &[u8], meta: &[Entry]) -> Result<Vec<
         let mut writer = enc.write_header().map_err(|e| e.to_string())?;
         // eXIf has to precede the image data, which is where this lands.
         writer.write_chunk(png::chunk::ChunkType(*b"eXIf"), block).map_err(|e| e.to_string())?;
+        // tIME is PNG's own last-modified field, and this file was made now.
+        if let Some((y, mo, d, h, mi, sec)) = modified.and_then(parts_of) {
+            let when = [(y >> 8) as u8, y as u8, mo, d, h, mi, sec];
+            writer.write_chunk(png::chunk::ChunkType(*b"tIME"), &when)
+                .map_err(|e| e.to_string())?;
+        }
         if bits == 16 {
             let data = encode16(img);
             let mut bytes = Vec::with_capacity(data.len() * 2);
@@ -137,7 +157,8 @@ fn jpeg_bytes(img: &Image, quality: u8, block: &[u8]) -> Result<Vec<u8>, String>
 
 /// TIFF is itself a directory format, so the descriptive tags go in at the top
 /// level where any reader will find them.
-fn tiff_bytes(img: &Image, meta: &[Entry]) -> Result<Vec<u8>, String> {
+fn tiff_bytes(img: &Image, meta: &[Entry], modified: Option<&str>)
+    -> Result<Vec<u8>, String> {
     use tiff::tags::Tag;
     let mut buf = std::io::Cursor::new(Vec::new());
     {
@@ -155,18 +176,19 @@ fn tiff_bytes(img: &Image, meta: &[Entry]) -> Result<Vec<u8>, String> {
                 (Tag::Artist, 0x013B),
                 (Tag::Copyright, 0x8298),
                 (Tag::ImageDescription, 0x010E),
-                (Tag::DateTime, 0x0132),
             ] {
                 if let Some(text) = exif::text_of(meta, Ifd::Primary, number) {
                     let _ = dir.write_tag(tag, text.as_str());
                 }
             }
-            // The capture time is in the Exif directory of the original, but
-            // it is the most useful date a TIFF reader could show.
-            if exif::text_of(meta, Ifd::Primary, 0x0132).is_none() {
-                if let Some(when) = exif::captured_at(meta) {
-                    let _ = dir.write_tag(Tag::DateTime, when.as_str());
-                }
+            // DateTime is when the file was written, which is now.
+            if let Some(stamp) = modified {
+                let _ = dir.write_tag(Tag::DateTime, &stamp[..stamp.len().min(19)]);
+            } else if let Some(when) = exif::captured_at(meta) {
+                let _ = dir.write_tag(Tag::DateTime, when.as_str());
+            }
+            if let Some(when) = exif::captured_at(meta) {
+                let _ = dir.write_tag(Tag::Unknown(0x9003), when.as_str());
             }
         }
         image.write_data(&encode8(img, true)).map_err(|e| e.to_string())?;
@@ -216,7 +238,7 @@ mod tests {
     fn exports_carry_the_cameras_metadata() {
         use ::exif::{In, Tag};
         for format in ["png8", "png16", "jpeg", "tiff"] {
-            let bytes = save(&frame(), format, 92, &recorded()).expect("encode");
+            let bytes = save(&frame(), format, 92, &recorded(), None).expect("encode");
             let read = read_back(&bytes);
             let text = |tag: Tag| {
                 read.get_field(tag, In::PRIMARY)
@@ -250,11 +272,54 @@ mod tests {
         }
     }
 
+    /// Two different times, and they must not be confused: the photograph was
+    /// taken when the camera says, and the file was written when we say.
+    #[test]
+    fn capture_time_and_edit_time_stay_apart() {
+        use ::exif::{In, Tag};
+        let edited = "2026:09:22 16:30:00+02:00";
+        for format in ["png8", "png16", "jpeg", "tiff"] {
+            let bytes = save(&frame(), format, 92, &recorded(), Some(edited)).expect("encode");
+            let read = read_back(&bytes);
+            let text = |tag: Tag| {
+                read.get_field(tag, In::PRIMARY)
+                    .map(|f| f.display_value().to_string().replace('"', ""))
+            };
+            assert_eq!(text(Tag::DateTime).as_deref(), Some("2026-09-22 16:30:00"),
+                       "{format}: the file's own time should be when it was written");
+            if format == "tiff" {
+                continue;
+            }
+            assert_eq!(text(Tag::DateTimeOriginal).as_deref(), Some("2026-09-22 15:04:05"),
+                       "{format}: the capture time was overwritten");
+            assert_eq!(text(Tag::OffsetTime).as_deref(), Some("+02:00"), "{format}");
+        }
+    }
+
+    /// A raw that only recorded a plain DateTime still knows when it was taken,
+    /// and that must survive being replaced by the edit stamp.
+    #[test]
+    fn a_plain_date_is_kept_as_the_capture_time() {
+        use ::exif::{In, Tag};
+        let only_a_file_date = vec![
+            Entry::new(Ifd::Primary, 0x0132, Value::Ascii("2019:04:01 08:00:00".into())),
+        ];
+        let bytes = save(&frame(), "jpeg", 92, &only_a_file_date,
+                         Some("2026:09:22 16:30:00")).expect("encode");
+        let read = read_back(&bytes);
+        let text = |tag: Tag| {
+            read.get_field(tag, In::PRIMARY).map(|f| f.display_value().to_string())
+        };
+        assert_eq!(text(Tag::DateTimeOriginal).as_deref(), Some("2019-04-01 08:00:00"),
+                   "the only record of when it was taken was lost");
+        assert_eq!(text(Tag::DateTime).as_deref(), Some("2026-09-22 16:30:00"));
+    }
+
     /// A frame with no metadata at all still has to produce a valid file.
     #[test]
     fn exports_without_metadata_still_decode() {
         for format in ["png8", "png16", "jpeg", "tiff"] {
-            let bytes = save(&frame(), format, 92, &[]).expect("encode");
+            let bytes = save(&frame(), format, 92, &[], None).expect("encode");
             assert!(bytes.len() > 32, "{format}: produced nothing");
             let read = read_back(&bytes);
             use ::exif::{In, Tag};

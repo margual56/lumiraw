@@ -47,6 +47,8 @@ pub const TAG_PIXEL_X: u16 = 0xA002;
 pub const TAG_PIXEL_Y: u16 = 0xA003;
 pub const TAG_DATE_TIME: u16 = 0x0132;
 pub const TAG_DATE_TIME_ORIGINAL: u16 = 0x9003;
+pub const TAG_DATE_TIME_DIGITIZED: u16 = 0x9004;
+pub const TAG_OFFSET_TIME: u16 = 0x9010;
 
 fn type_code(v: &Value) -> u16 {
     match v {
@@ -121,11 +123,44 @@ fn take(entries: &[Entry], ifd: Ifd, skip: &[u16]) -> Vec<Entry> {
 }
 
 /// Build the EXIF block for an exported image.
-pub fn build(entries: &[Entry], width: u32, height: u32, software: &str) -> Vec<u8> {
-    let mut primary = take(entries, Ifd::Primary,
-                           &[TAG_ORIENTATION, TAG_SOFTWARE, TAG_EXIF_POINTER, TAG_GPS_POINTER]);
-    let mut exif = take(entries, Ifd::Exif, &[TAG_PIXEL_X, TAG_PIXEL_Y, TAG_COLOR_SPACE]);
+pub fn build(entries: &[Entry], width: u32, height: u32, software: &str,
+             modified: Option<&str>) -> Vec<u8> {
+    // When the photograph was taken, read before anything is rewritten.
+    let captured = captured_at(entries);
+
+    let mut drop_primary = vec![TAG_ORIENTATION, TAG_SOFTWARE, TAG_EXIF_POINTER, TAG_GPS_POINTER];
+    if modified.is_some() {
+        drop_primary.push(TAG_DATE_TIME);
+    }
+    let mut drop_exif = vec![TAG_PIXEL_X, TAG_PIXEL_Y, TAG_COLOR_SPACE];
+    if modified.is_some() {
+        drop_exif.push(TAG_OFFSET_TIME);
+    }
+    let mut primary = take(entries, Ifd::Primary, &drop_primary);
+    let mut exif = take(entries, Ifd::Exif, &drop_exif);
     let gps = take(entries, Ifd::Gps, &[]);
+
+    if let Some(stamp) = modified {
+        // DateTime is the file's own last-changed time, and this file was
+        // changed now. The capture time lives in DateTimeOriginal, untouched.
+        let (when, offset) = split_offset(stamp);
+        primary.push(Entry::new(Ifd::Primary, TAG_DATE_TIME, Value::Ascii(when.to_string())));
+        if let Some(offset) = offset {
+            // OffsetTime belongs to the Exif directory even though the
+            // DateTime it qualifies sits in the primary one.
+            exif.push(Entry::new(Ifd::Exif, TAG_OFFSET_TIME, Value::Ascii(offset.to_string())));
+        }
+    }
+    // A raw that recorded only a plain DateTime still knows when it was taken;
+    // keep that as the capture time rather than losing it to the edit stamp.
+    if let Some(when) = captured {
+        if !exif.iter().any(|e| e.tag == TAG_DATE_TIME_ORIGINAL) {
+            exif.push(Entry::new(Ifd::Exif, TAG_DATE_TIME_ORIGINAL, Value::Ascii(when.clone())));
+        }
+        if !exif.iter().any(|e| e.tag == TAG_DATE_TIME_DIGITIZED) {
+            exif.push(Entry::new(Ifd::Exif, TAG_DATE_TIME_DIGITIZED, Value::Ascii(when)));
+        }
+    }
 
     // The frame was rotated upright during decoding, so a viewer must not
     // rotate it again.
@@ -190,6 +225,16 @@ fn write_ifd(out: &mut Vec<u8>, entries: &[Entry], data: &mut Vec<u8>, data_star
     out.extend(0u32.to_le_bytes()); // no directory after this one
 }
 
+/// Split `2026:09:22 16:30:00+02:00` into the timestamp and its UTC offset.
+fn split_offset(stamp: &str) -> (&str, Option<&str>) {
+    if stamp.len() > 19 {
+        let (when, offset) = stamp.split_at(19);
+        (when, Some(offset))
+    } else {
+        (stamp, None)
+    }
+}
+
 /// The value of a tag, if the original file carried it, as text.
 pub fn text_of(entries: &[Entry], ifd: Ifd, tag: u16) -> Option<String> {
     entries.iter().find(|e| e.ifd == ifd && e.tag == tag).and_then(|e| match &e.value {
@@ -227,7 +272,7 @@ mod tests {
                        Value::Ascii("2026:09:22 15:04:05".into())),
             Entry::new(Ifd::Gps, 0x0002, Value::Rational(vec![(40, 1), (25, 1), (0, 1)])),
         ];
-        let block = build(&entries, 4000, 3000, "autoraw 0.3.0");
+        let block = build(&entries, 4000, 3000, "autoraw 0.3.0", None);
         let read = parse(&block);
 
         use exif::{In, Tag};
@@ -259,7 +304,7 @@ mod tests {
             Entry::new(Ifd::Primary, TAG_SOFTWARE, Value::Ascii("the camera".into())),
             Entry::new(Ifd::Exif, TAG_PIXEL_X, Value::Long(vec![5470])),
         ];
-        let read = parse(&build(&entries, 800, 600, "autoraw 0.3.0"));
+        let read = parse(&build(&entries, 800, 600, "autoraw 0.3.0", None));
         use exif::{In, Tag};
         let value = |tag: Tag| read.get_field(tag, In::PRIMARY).unwrap().display_value().to_string();
         assert_eq!(value(Tag::Orientation), "row 0 at top and column 0 at left");
@@ -271,7 +316,7 @@ mod tests {
     /// nothing at all must still produce a block a reader accepts.
     #[test]
     fn copes_with_nothing_to_copy() {
-        let block = build(&[], 10, 10, "autoraw");
+        let block = build(&[], 10, 10, "autoraw", None);
         let read = parse(&block);
         use exif::{In, Tag};
         assert!(read.get_field(Tag::GPSLatitude, In::PRIMARY).is_none());

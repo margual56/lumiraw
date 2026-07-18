@@ -404,6 +404,21 @@ mod tests {
         assert_eq!(&img.d[6..9], &[0.30, 0.12, 0.18]);
     }
 
+    /// Anything that is really a file offset has to be left behind: it points
+    /// into the raw, and the export is not the raw.
+    #[test]
+    fn offsets_into_the_original_are_not_copied() {
+        // A Sony ARW header carrying DNGPrivateData and a MakerNote, both of
+        // which are positions in the file rather than facts about the picture.
+        let entries = collect_exif(include_bytes!("testdata/offsets.exif"));
+        for tag in [0xC634u16, 0x927C] {
+            assert!(!entries.iter().any(|e| e.tag == tag),
+                    "tag 0x{tag:04X} is a file offset and must not be copied");
+        }
+        // and the ordinary description of the photograph is still there
+        assert!(entries.iter().any(|e| e.tag == 0x010F), "the make was lost");
+    }
+
     /// The same thing through the real Bayer path.
     #[test]
     fn blown_bayer_region_develops_to_white() {
@@ -473,6 +488,9 @@ pub fn collect_exif(bytes: &[u8]) -> Vec<crate::exif::Entry> {
         0x0117, 0x011C, 0x0118, 0x0119, 0x013D, 0x0142, 0x0143, 0x0144, 0x0145, 0x014A,
         0x0201, 0x0202, 0x828D, 0x828E, 0x8769, 0x8825, 0xC61A, 0xC61B, 0xC61C, 0xC61D,
         0xC61E, 0xC61F, 0xC620, 0xC621, 0xC622, 0xC623, 0xC624, 0xC625, 0xC626, 0xC627,
+        // DNGPrivateData: four bytes that are an *offset* into the raw, where
+        // the vendor's private block lives.
+        0xC634,
     ];
     // MakerNote and the interoperability pointer: both position dependent.
     const SKIP_EXIF: &[u16] = &[0x927C, 0xA005, 0xA002, 0xA003];

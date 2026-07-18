@@ -739,7 +739,7 @@ pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut
     let mut img = src.clone();
     let mut progress = args.progress;
     let mut mark = 0usize;
-    let mut step = |progress: &mut Option<&mut dyn FnMut(f32, &str)>, mark: &mut usize| {
+    let step = |progress: &mut Option<&mut dyn FnMut(f32, &str)>, mark: &mut usize| {
         if let Some(cb) = progress {
             let (f, code) = STAGE_MARKS[*mark];
             cb(f, code);

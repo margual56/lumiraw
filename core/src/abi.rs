@@ -320,13 +320,16 @@ pub extern "C" fn ar_style_tile(index: i32) -> i32 {
 #[no_mangle]
 pub extern "C" fn ar_export(settings_ptr: *const u8, settings_len: usize, style_ptr: *const u8,
                             style_len: usize, fmt_ptr: *const u8, fmt_len: usize, quality: i32,
-                            long_edge: i32) -> i32 {
+                            long_edge: i32, now_ptr: *const u8, now_len: usize) -> i32 {
     let settings_json: serde_json::Value =
         serde_json::from_slice(unsafe { slice(settings_ptr, settings_len) }).unwrap_or(json!({}));
     let settings = Settings::from_json(&settings_json);
     let style = String::from_utf8_lossy(unsafe { slice(style_ptr, style_len) }).to_string();
     let fmt = String::from_utf8_lossy(unsafe { slice(fmt_ptr, fmt_len) }).to_string();
     let edge = if long_edge > 0 { Some(long_edge as usize) } else { None };
+    // There is no clock in this target, so the host passes the time in.
+    let now = String::from_utf8_lossy(unsafe { slice(now_ptr, now_len) }).to_string();
+    let modified = if now.is_empty() { None } else { Some(now.as_str()) };
 
     let developed = with_dev(|dev| {
         let mut cb = |f: f32, code: &str| progress(f * 0.8, code);
@@ -342,7 +345,7 @@ pub extern "C" fn ar_export(settings_ptr: *const u8, settings_len: usize, style_
     // browser's own canvas encoder for it; everything else is encoded here.
     if fmt == "webp" {
         // The browser encodes the picture.
-        let block = output::exif_block(&img, &meta);
+        let block = output::exif_block(&img, &meta, modified);
         let n = block.len();
         BYTES.with(|b| *b.borrow_mut() = block);
         store(&img);
@@ -351,7 +354,7 @@ pub extern "C" fn ar_export(settings_ptr: *const u8, settings_len: usize, style_
         progress(1.0, "done");
         return 0;
     }
-    match output::save(&img, &fmt, quality.clamp(1, 100) as u8, &meta) {
+    match output::save(&img, &fmt, quality.clamp(1, 100) as u8, &meta, modified) {
         Ok(bytes) => {
             let n = bytes.len();
             BYTES.with(|b| *b.borrow_mut() = bytes);

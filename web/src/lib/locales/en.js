@@ -62,7 +62,7 @@ export default {
   'vibrance.auto': 'auto',
 
   'compare.title': 'Automatic corrections',
-  'compare.lede': 'Drag the divider to compare. <em>Before</em> is your framing, exposure and white balance only; everything else on this list was decided from the file and its EXIF. Click any one to switch it off.',
+  'compare.lede': 'Drag the divider to compare. <em>Before</em> is the frame as the camera recorded it, with only your own framing and adjustments kept; everything on this list was decided from the file and its EXIF, including the exposure and the white balance. Click any one to switch it off.',
   'compare.before': 'Before',
   'compare.after': 'After',
 
@@ -110,6 +110,12 @@ export default {
   'detail.vibrance': 'chroma ×{boost}',
   'detail.denoise': 'blend {blend}, radius {radius} px',
   'detail.sharpen': 'amount {amount} at {radius} px',
+  'auto.applied': 'Already applied:',
+  'auto.ev': '{ev} EV',
+  'auto.gains': 'red ×{r} · green ×{g} · blue ×{b}',
+  'auto.from.automatic': 'measured from the whole frame. The slider below adjusts it.',
+  'auto.from.selection': 'measured from the area you drew. The slider below adjusts it.',
+  'auto.off': 'This correction is switched off, so nothing was applied.',
   'source.selection': 'your selection',
   'source.automatic': 'automatic',
 

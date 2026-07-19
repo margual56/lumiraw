@@ -8,6 +8,9 @@ use std::collections::HashMap;
 
 pub const EPS: f32 = 1e-6;
 
+/// The most the automatic white balance may move one channel, in stops.
+pub const WB_LIMIT_EV: f32 = 0.8;
+
 /// Taste knobs.  The *decisions* stay automatic; these scale them.
 #[derive(Clone, Debug)]
 pub struct Preset {
@@ -29,8 +32,8 @@ impl Default for Preset {
     fn default() -> Self {
         Preset {
             name: "natural".into(),
-            wb_strength: 0.55,
-            exposure_strength: 0.85,
+            wb_strength: 1.0,
+            exposure_strength: 1.0,
             target_key: 0.13,
             comfortable_stops: 6.5,
             detail_boost: 1.15,
@@ -61,7 +64,8 @@ pub fn preset_by_name(name: &str) -> Preset {
         },
         "flat" => Preset {
             name: "flat".into(),
-            exposure_strength: 0.7,
+            wb_strength: 0.8,
+            exposure_strength: 0.85,
             comfortable_stops: 8.0,
             detail_boost: 1.0,
             levels_strength: 0.35,
@@ -302,7 +306,7 @@ pub fn apply_white_balance(img: &mut Image, thumb: &Image, s: &Settings, report:
             }
         }
     }
-    let (gains, mut info) = analyze::auto_white_balance(thumb, s.preset_obj().wb_strength, 0.55);
+    let (gains, mut info) = analyze::auto_white_balance(thumb, s.preset_obj().wb_strength, WB_LIMIT_EV);
     if let Some(o) = info.as_object_mut() {
         o.insert("source".into(), json!("automatic"));
     }

@@ -71,6 +71,7 @@ pub fn auto_white_balance(thumb: &Image, strength: f32, limit_ev: f32) -> ([f32;
     let weighted: f32 = (0..3).map(|c| log_gain[c] * lw[c]).sum::<f32>() / lw.iter().sum::<f32>();
     let mut gains = [0f32; 3];
     for c in 0..3 {
+        // Restraint belongs in the soft limit, not in a flat multiplier.
         log_gain[c] = soft_limit((log_gain[c] - weighted) * strength, limit_ev);
         gains[c] = log_gain[c].exp2();
     }

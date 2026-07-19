@@ -62,7 +62,7 @@ export default {
   'vibrance.auto': 'automática',
 
   'compare.title': 'Correcciones automáticas',
-  'compare.lede': 'Arrastra el divisor para comparar. <em>Antes</em> es solo tu encuadre, exposición y balance de blancos; todo lo demás de esta lista se decidió a partir del archivo y sus datos EXIF. Pulsa cualquiera para desactivarla.',
+  'compare.lede': 'Arrastra el divisor para comparar. <em>Antes</em> es el fotograma tal como lo registró la cámara, conservando solo tu encuadre y tus ajustes; todo lo de esta lista se decidió a partir del archivo y su EXIF, incluidas la exposición y el balance de blancos. Pulsa cualquiera para desactivarlo.',
   'compare.before': 'Antes',
   'compare.after': 'Después',
 
@@ -110,6 +110,12 @@ export default {
   'detail.vibrance': 'croma ×{boost}',
   'detail.denoise': 'mezcla {blend}, radio {radius} px',
   'detail.sharpen': 'cantidad {amount} con radio {radius} px',
+  'auto.applied': 'Ya aplicado:',
+  'auto.ev': '{ev} EV',
+  'auto.gains': 'rojo ×{r} · verde ×{g} · azul ×{b}',
+  'auto.from.automatic': 'medido sobre todo el fotograma. El control de abajo lo ajusta.',
+  'auto.from.selection': 'medido sobre la zona que marcaste. El control de abajo lo ajusta.',
+  'auto.off': 'Esta corrección está desactivada, así que no se aplicó nada.',
   'source.selection': 'tu selección',
   'source.automatic': 'estimación automática',
 

@@ -1,6 +1,7 @@
 <script>
   import Viewer from '$lib/components/Viewer.svelte';
   import Slider from '$lib/components/Slider.svelte';
+  import AutoAmount from '$lib/components/AutoAmount.svelte';
   import { app } from '$lib/state.svelte.js';
   import { t, signed } from '$lib/i18n.svelte.js';
 
@@ -20,6 +21,7 @@
     <h2>{t('brightness.title')}</h2>
     <p class="lede">{@html t('brightness.lede')}</p>
 
+    <AutoAmount id="exposure" />
     <Slider label={t('brightness.fine')} bind:value={app.settings.exposure_bias}
             min={-3} max={3} step={0.1} format={(v) => `${signed(v, 1)} EV`} />
     <p class="lede zonehint">{t('brightness.fineHint')}</p>

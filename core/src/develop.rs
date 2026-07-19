@@ -188,7 +188,13 @@ impl Development {
         let mut flat = settings.clone();
         flat.enabled.clear();
         for (key, _, _) in TOGGLES.iter() {
-            let keep = *key == "white_balance" || *key == "exposure";
+            // Hold on to what the user asked for themselves, drop what was
+            // decided for them.
+            let keep = match *key {
+                "white_balance" => settings.wb_rect.is_some(),
+                "exposure" => settings.exposure_rect.is_some(),
+                _ => false,
+            };
             flat.enabled.insert(key.to_string(), if keep { settings.on(key) } else { false });
         }
         let key = format!(

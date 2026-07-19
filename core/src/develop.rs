@@ -16,6 +16,8 @@ pub struct Development {
     pub meta: Meta,
     /// The original file's own metadata, kept so the export can carry it.
     pub exif: Vec<crate::exif::Entry>,
+    /// The capture's noise floor, measured once from the full-resolution frame.
+    noise_floor: Option<f32>,
     pub profile: CaptureProfile,
     pub lens_match: Option<LensMatch>,
     cache: Vec<(String, Image, Option<Rect>, Map<String, Value>)>,
@@ -42,12 +44,32 @@ impl Development {
             linear: d.img,
             meta: d.meta,
             exif: decode::collect_exif(bytes),
+            noise_floor: None,
             profile: prof,
             lens_match,
             cache: Vec::new(),
             baseline_key: String::new(),
             baseline_img: None,
         })
+    }
+
+    /// The noise floor of this capture, at native resolution.
+    fn native_noise_floor(&mut self) -> f32 {
+        if let Some(floor) = self.noise_floor {
+            return floor;
+        }
+        let crop = {
+            let w = 640.min(self.linear.w);
+            let h = 640.min(self.linear.h);
+            self.linear.crop((self.linear.w - w) / 2, (self.linear.h - h) / 2, w, h)
+        };
+        let mut sqrt_luma = ops::luminance(&crop);
+        for v in sqrt_luma.d.iter_mut() {
+            *v = v.max(0.0).sqrt();
+        }
+        let floor = crate::analyze::noise_floor(&sqrt_luma);
+        self.noise_floor = Some(floor);
+        floor
     }
 
     pub fn width(&self) -> usize {
@@ -143,12 +165,14 @@ impl Development {
             None => None,
         };
 
+        let native_noise_floor = Some(self.native_noise_floor());
         let args = ProcessArgs {
             iso: self.profile.iso,
             sharpen_sigma: self.profile.sharpen_sigma,
             noise_prior: self.profile.noise_prior,
             stats_rect,
             preset: Some(tuned),
+            native_noise_floor,
             progress: boxed.take(),
         };
         let mut rgb = grade::process(&src, &s, args, &mut report);

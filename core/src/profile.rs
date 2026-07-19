@@ -33,6 +33,12 @@ pub struct CaptureProfile {
     pub notes: Vec<Value>,
 }
 
+/// A smooth 0 to 1 ramp between two edges.
+fn smooth(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = ((x - edge0) / (edge1 - edge0).max(1e-9)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 fn r(v: f32, places: i32) -> f64 {
     let f = 10f64.powi(places);
     ((v as f64) * f).round() / f
@@ -127,8 +133,11 @@ pub fn derive(meta: &Meta, w: usize, h: usize, crop_factor: Option<f32>) -> Capt
     }
 
     // --- camera shake -----------------------------------------------------
+    // The hand-holding rule only describes a hand.
     if p.shutter_s > 0.0 && p.focal35_mm > 0.0 {
-        p.shake_risk = ((p.shutter_s * p.focal35_mm).log2() / 2.0).clamp(0.0, 1.0);
+        let handheld = 1.0 - smooth(0.5, 2.0, p.shutter_s);
+        p.shake_risk =
+            ((p.shutter_s * p.focal35_mm).log2() / 2.0).clamp(0.0, 1.0) * handheld;
         if p.shake_risk > 0.3 {
             p.notes.push(json!({"code": "shake", "params": {
                 "shutter_s": p.shutter_s, "focal35": p.focal35_mm.round() as i64}}));
@@ -169,4 +178,36 @@ pub fn tune(preset: &Preset, p: &CaptureProfile) -> Preset {
     sharpen *= 1.0 - 0.45 * p.noise_prior;
     out.sharpen = sharpen.clamp(0.0, 1.2);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::decode::Meta;
+
+    fn shot(shutter_s: f32, focal_mm: f32) -> Meta {
+        Meta { shutter_s, focal_mm, iso: 200.0, aperture: 5.6, ..Default::default() }
+    }
+
+    /// Nobody hand-holds a thirty second exposure, so it must not be treated
+    /// as a shaky one and stripped of its sharpening.
+    #[test]
+    fn a_long_exposure_is_a_supported_one() {
+        let handheld = derive(&shot(1.0 / 8.0, 200.0), 6000, 4000, Some(1.5));
+        let tripod = derive(&shot(30.0, 50.0), 6000, 4000, Some(1.5));
+        assert!(handheld.shake_risk > 0.5,
+                "an eighth of a second at 200mm is a shaky frame: {}", handheld.shake_risk);
+        assert_eq!(tripod.shake_risk, 0.0,
+                   "a thirty second frame is on a tripod, not a hand");
+    }
+
+    /// The taper has to be gradual: a second and a half is genuinely ambiguous.
+    #[test]
+    fn the_handheld_assumption_fades_rather_than_switches() {
+        let quick = derive(&shot(0.4, 50.0), 6000, 4000, Some(1.5)).shake_risk;
+        let middling = derive(&shot(1.2, 50.0), 6000, 4000, Some(1.5)).shake_risk;
+        let long = derive(&shot(3.0, 50.0), 6000, 4000, Some(1.5)).shake_risk;
+        assert!(quick > middling && middling > long, "{quick} {middling} {long}");
+        assert_eq!(long, 0.0);
+    }
 }

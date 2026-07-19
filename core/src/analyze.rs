@@ -5,6 +5,23 @@ use serde_json::{json, Map, Value};
 
 pub const EPS: f32 = 1e-6;
 
+/// Scene light dim enough that nothing survives to the exported file.
+pub const DISPLAY_FLOOR: f32 = 0.016;
+
+/// How much of a frame may be given up to black before the exposure is treated
+/// as too dark rather than deliberately dark.
+pub const CRUSH_BUDGET: f32 = 0.10;
+
+/// The most the rescue may add on top of the soft limit. Bounded because
+/// lifting shadows lifts their noise with them.
+pub const MAX_RESCUE_EV: f32 = 3.5;
+
+/// Oklab lightness that still reaches the first code value of an 8-bit file.
+/// Below this a pixel is black however much detail it holds.
+pub const BLACK_LIGHTNESS: f32 = 0.0534;
+
+const THIRD_STOP: f32 = 1.259_921_f32;
+
 /// Smoothly saturate at ±limit instead of clipping hard.
 pub fn soft_limit(x: f32, limit: f32) -> f32 {
     limit * (x / limit).tanh()
@@ -83,6 +100,18 @@ pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f3
     let delta = soft_limit((target_key / key.max(EPS)).log2() * strength, limit_ev);
     let mut gain = delta.exp2();
 
+    // --- rescue, rather than restraint ------------------------------------
+    // The soft limit above keeps a deliberately dark frame dark, which is right
+    // for a night portrait and wrong for a frame that is simply underexposed.
+    let buried = |g: f32| {
+        y.d.iter().filter(|v| **v * g < DISPLAY_FLOOR).count() as f32 / y.d.len() as f32
+    };
+    let mut rescue_ev = 0.0f32;
+    while rescue_ev < MAX_RESCUE_EV && buried(gain) > CRUSH_BUDGET {
+        gain *= THIRD_STOP;
+        rescue_ev += 1.0 / 3.0;
+    }
+
     let clipped = y.d.iter().filter(|v| **v >= 0.99).count() as f32 / y.d.len() as f32;
     let mut guard: Option<f32> = None;
     if clipped < 0.005 {
@@ -93,11 +122,15 @@ pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f3
             gain = cap;
         }
     }
-    gain = gain.clamp(0.125, 8.0);
+    // The ceiling has to leave room for the rescue; the highlight guard above
+    // is what stops it running away, not this clamp.
+    gain = gain.clamp(0.125, 2f32.powf(limit_ev + MAX_RESCUE_EV));
     (
         gain,
         json!({"applied": true, "key": round_to(key, 5), "gain_ev": round_to(gain.log2(), 3),
                "highlight_guard_ev": guard.map(|g| round_to((g / gain).log2(), 3)),
+               "rescue_ev": round_to(rescue_ev, 2),
+               "buried_after": round_to(buried(gain), 4),
                "clipped_fraction": round_to(clipped, 5)}),
     )
 }
@@ -126,8 +159,14 @@ pub fn auto_tone_compression(thumb: &Image, comfortable_stops: f32, floor: f32) 
 /// Robust black/white point from percentiles, moved only part of the way.
 pub fn auto_levels(lightness: &Plane, strength: f32, clip_pct: f64) -> (f32, f32, Value) {
     let p = ops::percentiles(&lightness.d, &[clip_pct, 100.0 - clip_pct]);
-    let black = p[0] * strength;
+    let wanted = p[0] * strength;
     let white = p[1] + (1.0 - p[1]) * strength;
+
+    // A black point read off a percentile assumes the shadows are spread out.
+    let budget_level = ops::percentile(&lightness.d, (CRUSH_BUDGET * 100.0) as f64);
+    let ceiling = (budget_level - BLACK_LIGHTNESS * white) / (1.0 - BLACK_LIGHTNESS);
+    let black = wanted.min(ceiling).max(0.0);
+
     if white - black < 0.25 {
         return (0.0, 1.0, json!({"applied": false}));
     }
@@ -135,6 +174,7 @@ pub fn auto_levels(lightness: &Plane, strength: f32, clip_pct: f64) -> (f32, f32
         black,
         white,
         json!({"applied": true, "black": round_to(black, 4), "white": round_to(white, 4),
+               "wanted_black": round_to(wanted, 4),
                "stretch": round_to(1.0 / (white - black), 3)}),
     )
 }
@@ -177,6 +217,12 @@ pub fn auto_vibrance(chroma: &Plane, lightness: &Plane, target_chroma: f32, max_
 
 /// Noise level in [0,1].
 pub fn estimate_noise(lightness: &Plane, iso: f32, prior: f32) -> (f32, Value) {
+    noise_from_floor(noise_floor(lightness), iso, prior)
+}
+
+/// The noise floor of a frame: the local variation left where the picture is
+/// flattest, which is the one place the signal cannot be mistaken for texture.
+pub fn noise_floor(lightness: &Plane) -> f32 {
     let blurred = ops::gaussian_blur(lightness, 1.0);
     let mut sq = Plane::new(lightness.w, lightness.h);
     for i in 0..sq.d.len() {
@@ -185,7 +231,12 @@ pub fn estimate_noise(lightness: &Plane, iso: f32, prior: f32) -> (f32, Value) {
     }
     let local = ops::box_blur(&sq, 4);
     let rms: Vec<f32> = local.d.iter().map(|v| v.max(0.0).sqrt()).collect();
-    let floor = ops::percentile(&rms, 8.0);
+    ops::percentile(&rms, 8.0)
+}
+
+/// Turn a measured floor into the level the rest of the pipeline reasons
+/// about, bounded by what the sensor and ISO make physically plausible.
+pub fn noise_from_floor(floor: f32, iso: f32, prior: f32) -> (f32, Value) {
     let measured = (floor * 55.0).clamp(0.0, 1.0);
     let level = prior.max(measured.min(prior + 0.35)).clamp(0.0, 1.0);
     (
@@ -226,5 +277,72 @@ impl Report {
             out.insert(k.clone(), self.stages[k].clone());
         }
         Value::Object(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(luminance: f32, spread: f32, w: usize, h: usize) -> Image {
+        let mut img = Image::new(w, h);
+        for i in 0..w * h {
+            // A gentle ramp, so percentiles have something to bite on.
+            let v = luminance * (1.0 + spread * ((i % 97) as f32 / 97.0 - 0.5));
+            for c in 0..3 {
+                img.d[i * 3 + c] = v;
+            }
+        }
+        img
+    }
+
+    /// An underexposed frame has to be lifted past the usual restraint, or the
+    /// part of it below the display's floor is lost for good.
+    #[test]
+    fn a_buried_frame_is_rescued() {
+        let dark = frame(0.0004, 0.6, 120, 90);
+        let (gain, info) = auto_exposure(&dark, 0.13, 0.85, 3.2);
+        assert!(info["rescue_ev"].as_f64().unwrap() > 1.0,
+                "an underexposed frame should be rescued: {info}");
+        assert!(gain.log2() > 3.2,
+                "the rescue should reach past the soft limit, got {} EV", gain.log2());
+    }
+
+    /// A properly exposed frame must come out exactly as it did before the
+    /// rescue existed: the guard is for emergencies, not for everyone.
+    #[test]
+    fn a_well_exposed_frame_is_left_alone() {
+        let ordinary = frame(0.13, 0.9, 120, 90);
+        let (_, info) = auto_exposure(&ordinary, 0.13, 0.85, 3.2);
+        assert_eq!(info["rescue_ev"].as_f64().unwrap(), 0.0,
+                   "nothing to rescue here: {info}");
+    }
+
+    /// A dense band of shadow just above the black point is the case that used
+    /// to lose half a frame to flat black.
+    #[test]
+    fn the_black_point_cannot_swallow_the_shadows() {
+        // Two thirds of the frame piled into a narrow dark band.
+        let mut dark = Plane::new(300, 100);
+        for (i, v) in dark.d.iter_mut().enumerate() {
+            *v = if i % 3 == 0 { 0.55 + (i % 7) as f32 * 0.01 }
+                 else { 0.11 + (i % 5) as f32 * 0.002 };
+        }
+        let (black, white, info) = auto_levels(&dark, 0.6, 0.15);
+        let survives = |l: f32| (l - black) / (white - black) > BLACK_LIGHTNESS;
+        let lost = dark.d.iter().filter(|l| !survives(**l)).count() as f32 / dark.d.len() as f32;
+        assert!(lost <= CRUSH_BUDGET + 0.02,
+                "the black point pinned {:.1}% of the frame: {info}", lost * 100.0);
+    }
+
+    /// The floor is a property of the capture, so the same floor has to give
+    /// the same answer whatever resolution asked for it.
+    #[test]
+    fn the_noise_level_follows_the_floor_not_the_scale() {
+        let (a, _) = noise_from_floor(0.004, 200.0, 0.1);
+        let (b, _) = noise_from_floor(0.004, 200.0, 0.1);
+        assert_eq!(a, b);
+        let (more, _) = noise_from_floor(0.008, 200.0, 0.1);
+        assert!(more > a, "a noisier floor should read noisier");
     }
 }

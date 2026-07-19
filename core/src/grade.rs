@@ -336,11 +336,13 @@ fn apply_temp_tint(img: &mut Image, s: &Settings, report: &mut Report) {
     img.scale_channels(gains);
 }
 
-pub fn apply_exposure(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset, report: &mut Report) {
+pub fn apply_exposure(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
+                      report: &mut Report) -> f32 {
     if !s.on("exposure") {
         report.add("exposure", json!({"applied": false, "reason": "switched_off"}));
-        img.scale(s.exposure_bias.exp2());
-        return;
+        let gain = s.exposure_bias.exp2();
+        img.scale(gain);
+        return gain;
     }
     if let Some(rect) = s.exposure_rect {
         if let Some(patch) = sample_rect(img, rect) {
@@ -358,7 +360,7 @@ pub fn apply_exposure(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset, 
                     "patch_level": round_to(level, 5), "gain_ev": round_to(gain.log2(), 3),
                     "bias_ev": round_to(s.exposure_bias, 2)}));
                 img.scale(gain);
-                return;
+                return gain;
             }
         }
     }
@@ -371,6 +373,7 @@ pub fn apply_exposure(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset, 
     }
     report.add("exposure", info);
     img.scale(gain);
+    gain
 }
 
 /// Compress the scene's range on the low-frequency layer only.
@@ -628,6 +631,12 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
         p.target_chroma,
         p.max_boost,
     );
+    // Chroma noise rides up with the colour.
+    let restraint = (1.0 - 0.6 * noise).clamp(0.3, 1.0);
+    boost = 1.0 + (boost - 1.0) * restraint;
+    if let Some(o) = info.as_object_mut() {
+        o.insert("noise_restraint".into(), json!(round_to(restraint, 3)));
+    }
     boost = (boost * (1.0 + 0.55 * s.vibrance)).clamp(0.45, 2.4);
     if let Some(o) = info.as_object_mut() {
         o.insert("user".into(), json!(round_to(s.vibrance, 3)));
@@ -730,6 +739,8 @@ pub struct ProcessArgs<'a> {
     pub noise_prior: f32,
     pub stats_rect: Option<Rect>,
     pub preset: Option<Preset>,
+    /// The noise floor measured once at full resolution.
+    pub native_noise_floor: Option<f32>,
     pub progress: Option<&'a mut dyn FnMut(f32, &str)>,
 }
 
@@ -754,19 +765,24 @@ pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut
     apply_white_balance(&mut img, &thumb, settings, report);
     step(&mut progress, &mut mark);
     let thumb = measure(&img, args.stats_rect);
-    apply_exposure(&mut img, &thumb, settings, &p, report);
+    let exposure_gain = apply_exposure(&mut img, &thumb, settings, &p, report);
     step(&mut progress, &mut mark);
 
     let thumb = measure(&img, args.stats_rect);
-    // Noise must be measured at native resolution: downsampling averages it
-    // away, so a thumbnail always looks clean.  A centre crop is enough.
-    let view = stats_view_img(&img, args.stats_rect);
-    let crop = centre_crop(&view, 640);
-    let mut sqrt_luma = ops::luminance(&crop);
-    for v in sqrt_luma.d.iter_mut() {
-        *v = v.max(0.0).sqrt();
-    }
-    let (noise, info) = analyze::estimate_noise(&sqrt_luma, args.iso, args.noise_prior);
+    // Noise must be measured at native resolution.
+    let (noise, info) = match args.native_noise_floor {
+        Some(floor) => analyze::noise_from_floor(floor * exposure_gain.max(1e-6).sqrt(),
+                                                 args.iso, args.noise_prior),
+        None => {
+            let view = stats_view_img(&img, args.stats_rect);
+            let crop = centre_crop(&view, 640);
+            let mut sqrt_luma = ops::luminance(&crop);
+            for v in sqrt_luma.d.iter_mut() {
+                *v = v.max(0.0).sqrt();
+            }
+            analyze::estimate_noise(&sqrt_luma, args.iso, args.noise_prior)
+        }
+    };
     report.add("noise", info);
 
     step(&mut progress, &mut mark);

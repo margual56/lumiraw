@@ -293,6 +293,12 @@ async function mergeAdd({ name, buffer }) {
   return info;
 }
 
+/** What is odd about the bracket so far, from the metadata alone. */
+function mergeCheck() {
+  wasm.ar_merge_check();
+  return readJson();
+}
+
 function mergeRemove({ index }) {
   wasm.ar_merge_remove(index);
   return {};
@@ -312,7 +318,7 @@ async function mergeFinish({ align, deghost }) {
 }
 
 const HANDLERS = { open, render, compare, styles, export: exportImage,
-                   mergeAdd, mergeRemove, mergeReset, mergeFinish };
+                   mergeAdd, mergeRemove, mergeReset, mergeFinish, mergeCheck };
 
 async function handle({ type, id, ...rest }) {
   try {

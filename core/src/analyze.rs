@@ -115,12 +115,17 @@ pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f3
 
     let clipped = y.d.iter().filter(|v| **v >= 0.99).count() as f32 / y.d.len() as f32;
     let mut guard: Option<f32> = None;
+    let mut waived = false;
     if clipped < 0.005 {
         let hi = ops::percentile(&y.d, 99.5);
         let cap = 1.20 / hi.max(EPS);
         if cap < gain {
             guard = Some(gain);
-            gain = cap;
+            // The guard and the rescue want opposite things, and on a frame
+            // that needed rescuing the guard used to win and undo it.
+            let floor = if rescue_ev > 0.0 { gain } else { 0.0 };
+            gain = cap.max(floor);
+            waived = gain > cap;
         }
     }
     // The ceiling has to leave room for the rescue; the highlight guard above
@@ -130,6 +135,7 @@ pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f3
         gain,
         json!({"applied": true, "key": round_to(key, 5), "gain_ev": round_to(gain.log2(), 3),
                "highlight_guard_ev": guard.map(|g| round_to((g / gain).log2(), 3)),
+               "highlight_guard_waived": waived,
                "rescue_ev": round_to(rescue_ev, 2),
                "buried_after": round_to(buried(gain), 4),
                "clipped_fraction": round_to(clipped, 5)}),

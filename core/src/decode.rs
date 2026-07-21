@@ -120,7 +120,7 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, String> {
     Ok(Decoded { img: orient(&cam, raw.orientation), meta })
 }
 
-/// Recover blown highlights to neutral instead of magenta.
+/// Recover blown highlights to neutral instead of a colour.
 fn reconstruct_highlights(img: &mut Image, wb: &[f32; 3]) {
     // Where recovery starts, as a fraction of each channel's own ceiling.
     const ONSET: f32 = 0.96;
@@ -131,13 +131,29 @@ fn reconstruct_highlights(img: &mut Image, wb: &[f32; 3]) {
     let onset = [ONSET * limit[0], ONSET * limit[1], ONSET * limit[2]];
 
     for px in img.d.chunks_exact_mut(3) {
-        let ceiling = px[0].max(px[1]).max(px[2]);
-        for c in 0..3 {
-            // `ceiling` is the largest of the three by construction, so the gap
-            // is never negative and a channel already holding the ceiling is
-            // left exactly where it is.
-            let blown = smoothstep(onset[c], limit[c], px[c]);
-            px[c] += blown * (ceiling - px[c]);
+        let blown = [
+            smoothstep(onset[0], limit[0], px[0]),
+            smoothstep(onset[1], limit[1], px[1]),
+            smoothstep(onset[2], limit[2], px[2]),
+        ];
+        if blown[0] + blown[1] + blown[2] <= 0.0 {
+            continue;
+        }
+
+        // Green first, and from the average of the other two rather than from
+        // the brightest of them.
+        let mid = 0.5 * (px[0] + px[2]);
+        px[1] += blown[1] * (mid - px[1]).max(0.0);
+
+        // How far gone the pixel is overall.
+        let mut order = blown;
+        order.sort_by(|a, b| b.partial_cmp(a).unwrap());
+        let core = order[1];
+        if core > 0.0 {
+            let hi = px[0].max(px[1]).max(px[2]);
+            for c in 0..3 {
+                px[c] += core * (hi - px[c]);
+            }
         }
     }
 }

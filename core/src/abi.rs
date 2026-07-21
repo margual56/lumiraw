@@ -371,6 +371,16 @@ pub extern "C" fn ar_export(settings_ptr: *const u8, settings_len: usize, style_
 
 // -- merging a bracket -----------------------------------------------------
 
+/// What is wrong with the bracket so far, from the metadata alone.
+#[no_mangle]
+pub extern "C" fn ar_merge_check() -> i32 {
+    let findings = BRACKET.with(|b| crate::merge::inspect(&b.borrow()));
+    set_json(json!({"findings": findings.iter().map(|f| json!({
+        "code": f.code, "frames": f.frames, "value": (f.value * 100.0).round() / 100.0,
+    })).collect::<Vec<_>>()}));
+    0
+}
+
 /// Start a new bracket, forgetting any frames already gathered.
 #[no_mangle]
 pub extern "C" fn ar_merge_reset() {
@@ -404,10 +414,14 @@ pub extern "C" fn ar_merge_add(name_ptr: *const u8, name_len: usize, ptr: *const
             let exposure = frame.exposure();
             let (iso, shutter, aperture) =
                 (frame.meta.iso, frame.meta.shutter_s, frame.meta.aperture);
+            let comp = frame.meta.exposure_comp;
             BRACKET.with(|b| b.borrow_mut().push(frame));
             let count = BRACKET.with(|b| b.borrow().len());
             set_json(json!({"name": name, "width": w, "height": h, "count": count,
                             "iso": iso, "shutter_s": shutter, "aperture": aperture,
+                            // What the dial was set to, which is not always
+                            // what the camera managed to do.
+                            "exposure_comp": comp,
                             "exposure": exposure}));
             progress(1.0, "done");
             0
@@ -448,14 +462,28 @@ pub extern "C" fn ar_merge_finish(align: i32, deghost: f32) -> i32 {
         o.insert("styles".into(), json!(styles::STYLES.iter()
             .map(|s| json!({"id": s.id, "label": s.label, "description": s.description}))
             .collect::<Vec<_>>()));
+        let ev = |v: f32| (v * 100.0).round() / 100.0;
         o.insert("merge".into(), json!({
             "frames": notes.stops.len(),
             "reference": notes.reference,
-            "stops": notes.stops.iter().map(|v| (v * 100.0).round() / 100.0).collect::<Vec<_>>(),
-            "range_stops": (notes.range_stops * 100.0).round() / 100.0,
+            "stops": notes.stops.iter().map(|v| ev(*v)).collect::<Vec<_>>(),
+            "range_stops": ev(notes.range_stops),
             "shifts": notes.shifts.iter().map(|(x, y)| vec![*x, *y]).collect::<Vec<_>>(),
             "ghosted": (notes.ghosted * 10000.0).round() / 10000.0,
             "uncovered": (notes.uncovered * 10000.0).round() / 10000.0,
+            // What the photographer asked for, against what the frames turned
+            // out to be. These differ when the camera ran out of shutter.
+            "bias": notes.bias.iter().map(|v| ev(*v)).collect::<Vec<_>>(),
+            "intended_range_stops": ev(notes.intended_range_stops),
+            // Everything the merge decided or found odd, for the interface to
+            // put into words.
+            "findings": notes.findings.iter().map(|f| json!({
+                "code": f.code, "frames": f.frames, "value": ev(f.value),
+            })).collect::<Vec<_>>(),
+            // Where the pixels put each frame, and whether that had to be used
+            // in place of metadata that could not be right.
+            "measured": notes.measured.iter().map(|v| v.map(ev)).collect::<Vec<_>>(),
+            "remeasured": notes.remeasured,
         }));
     }
     DEV.with(|d| *d.borrow_mut() = Some(dev));

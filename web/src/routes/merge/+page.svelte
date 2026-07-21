@@ -46,6 +46,29 @@
     (reference && frame.exposure > 0 && reference.exposure > 0)
       ? Math.log2(frame.exposure / reference.exposure) : 0;
 
+  /** What the module makes of the bracket so far. */
+  let findings = $state([]);
+
+  async function check() {
+    try {
+      const out = await api.mergeCheck();
+      findings = out.findings ?? [];
+    } catch {
+      findings = [];
+    }
+  }
+
+  // Which frames a finding is about, named rather than numbered.
+  const named = (finding) =>
+    finding.frames.map((i) => frames[i]?.name).filter(Boolean).join(', ');
+
+  // Both frames of a pair are named in the finding, since the pair is what is
+  // wrong.
+  const dialIgnored = $derived(new Set(
+    findings.filter((f) => f.code === 'dial_ignored')
+      .flatMap((f) => f.frames)
+      .filter((i) => Math.abs(frames[i]?.exposure_comp ?? 0) > 0.05)));
+
   async function add(files) {
     over = false;
     error = '';
@@ -62,6 +85,7 @@
       try {
         const info = await api.mergeAdd(file);
         frames = [...frames, { ...info, file: file.name, uid: ++uid }];
+        await check();
       } catch (err) {
         error = errorText(err);
       } finally {
@@ -78,6 +102,7 @@
     result = null;
     await api.mergeRemove(index).catch(() => {});
     frames = frames.filter((_, i) => i !== index);
+    await check();
   }
 
   async function clear() {
@@ -85,6 +110,7 @@
     result = null;
     await api.mergeReset().catch(() => {});
     frames = [];
+    findings = [];
   }
 
   async function run() {
@@ -97,8 +123,13 @@
       const info = await api.mergeFinish({ align, deghost });
       // The module hands its frames to the merge and keeps nothing, so the list
       // has to go with them.
-      result = { ...info, referenceName: frames[info.merge?.reference]?.name ?? info.file };
+      result = {
+        ...info,
+        referenceName: frames[info.merge?.reference]?.name ?? info.file,
+        findings: (info.merge?.findings ?? []).map((f) => ({ ...f, names: named(f) })),
+      };
       frames = [];
+      findings = [];
     } catch (err) {
       error = errorText(err);
     } finally {
@@ -185,6 +216,11 @@
                 <span class="name">
                   {frame.name}
                   {#if frame === reference}<em>{t('merge.reference')}</em>{/if}
+                  {#if dialIgnored.has(frames.indexOf(frame))}
+                    <em class="warn" title={t('merge.unhonouredWhy')}>
+                      {t('merge.dialled', { ev: signed(frame.exposure_comp ?? 0, 1) })}
+                    </em>
+                  {/if}
                 </span>
                 <span class="shot">
                   {t('merge.exposureOf', {
@@ -203,6 +239,15 @@
             <p class="range">{t('merge.range', { stops: n(range, 1) })}</p>
           {:else}
             <p class="range">{t('merge.needTwo')}</p>
+          {/if}
+          {#if findings.length}
+            <ul class="findings">
+              {#each findings as finding (finding.code + finding.frames)}
+                <li>{t(`merge.found.${finding.code}`,
+                       { frames: named(finding), value: n(Math.abs(finding.value), 1),
+                         count: finding.frames.length })}</li>
+              {/each}
+            </ul>
           {/if}
         </section>
 
@@ -248,6 +293,11 @@
             {#if result.merge.ghosted > 0}
               <li>{t('merge.ghosted', { percent: percent(result.merge.ghosted) })}</li>
             {/if}
+            {#each result.findings as finding (finding.code + finding.frames)}
+              <li class="warn">{t(`merge.found.${finding.code}`,
+                                  { frames: finding.names, value: n(Math.abs(finding.value), 1),
+                                    count: finding.frames.length })}</li>
+            {/each}
             {#if result.merge.uncovered > 0.0005}
               <li class="warn">{t('merge.uncovered',
                 { percent: percent(result.merge.uncovered) })}</li>
@@ -352,6 +402,8 @@
     em {
       margin-left: 6px; font-style: normal; font-size: 11px; text-transform: uppercase;
       letter-spacing: .04em; color: var(--color-accent);
+      /* The dial setting, shown only on a frame that did not get what it asked for. */
+      &.warn { text-transform: none; font-size: 11.5px; cursor: help; }
     }
   }
   .shot {
@@ -360,7 +412,19 @@
   }
 
   button.small { padding: 4px 10px; min-height: 0; font-size: 12px; }
-  .range { margin: 10px 2px 0; font-size: 13px; color: var(--color-muted); }
+  /* Everything the module found odd, under the frames it is about. */
+  .findings {
+    margin: 8px 0 0; padding-left: 18px;
+    font-size: 13px; line-height: 1.5; color: var(--color-accent);
+    li { margin: 4px 0; }
+  }
+
+  .range {
+    margin: 10px 2px 0; font-size: 13px; color: var(--color-muted);
+    /* A bracket the camera could not deliver is worth more than a remark, so
+       it is the one line here that is allowed to be loud. */
+    &.warn { color: var(--color-accent); }
+  }
 
 
   .option {

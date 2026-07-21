@@ -111,6 +111,7 @@ export async function styles(body, ontile) {
  *  combine them. The result replaces whatever the wizard was developing. */
 export const mergeReset = () => call('mergeReset');
 export const mergeRemove = (index) => call('mergeRemove', { index });
+export const mergeCheck = () => call('mergeCheck');
 
 export async function mergeAdd(file) {
   const buffer = await file.arrayBuffer();

@@ -128,20 +128,20 @@
 
 <div class="shell">
   <header>
-    <div class="brand">
+    <a class="brand" href="{base}/">
       autoraw
       <span>
         <span class="tagline">{t('merge.title')}</span>
         {#if app.version}<span class="ver">v{app.version}</span>{/if}
       </span>
-    </div>
+    </a>
     <a class="back" href="{base}/">{t('merge.back')}</a>
     <LocalePicker />
   </header>
   <Progress />
 
   <main>
-    <div class="column">
+    <div class="mx-auto grid max-w-[880px] gap-4">
       <p class="lead">{t('merge.lead')}</p>
 
       <details class="how">
@@ -174,7 +174,7 @@
 
       {#if frames.length}
         <section class="panel">
-          <div class="panel-head">
+          <div class="flex items-center justify-between">
             <h2>{t('merge.frames')}</h2>
             <button class="ghost small" onclick={clear}>{t('merge.clear')}</button>
           </div>
@@ -208,7 +208,7 @@
 
         <section class="panel">
           <h2>{t('merge.options')}</h2>
-          <label class="option">
+          <label class="option flex items-start gap-2.5">
             <input type="checkbox" bind:checked={align} />
             <span>
               <strong>{t('merge.align')}</strong>
@@ -253,7 +253,7 @@
                 { percent: percent(result.merge.uncovered) })}</li>
             {/if}
           </ul>
-          <div class="actions">
+          <div class="flex flex-wrap gap-2.5">
             <button onclick={develop}>{t('merge.develop')}</button>
             <button class="ghost" onclick={clear}>{t('merge.again')}</button>
           </div>
@@ -263,103 +263,129 @@
   </main>
 </div>
 
-<style>
-  .ver { color: var(--line); font-variant-numeric: tabular-nums; }
-  .tagline + .ver { margin-left: 6px; }
-  /* The way back and the language sit together at the right, so the header
-     reads as a name on one side and controls on the other. */
-  header .back {
-    margin-left: auto; color: var(--muted); text-decoration: none; font-size: 13px;
+<style lang="scss">
+  @use '../../styles/breakpoints' as *;
+  @use '../../styles/surfaces' as *;
+
+  /* The name is the way home, which is where anyone looks for it. */
+  a.brand {
+    color: inherit; text-decoration: none;
+    &:hover {
+      color: var(--color-accent);
+      .tagline, .ver { color: var(--color-muted); }
+    }
   }
-  header :global(.picker) { margin-left: 0; }
-  header .back:hover { color: var(--ink); }
 
-  .column { max-width: 880px; margin-inline: auto; display: grid; gap: 16px; }
-  .lead { margin: 0; font-size: 15px; line-height: 1.6; color: var(--muted); }
+  header {
+    /* The way back and the language sit together at the right, so the header
+       reads as a name on one side and controls on the other. */
+    .back {
+      margin-left: auto; color: var(--color-muted); text-decoration: none; font-size: 13px;
+      &:hover { color: var(--color-ink); }
+      @include card { font-size: 12px; }
+    }
+    :global(.picker) { margin-left: 0; }
+  }
 
-  .how { font-size: 13.5px; color: var(--muted); }
-  .how summary { cursor: pointer; color: var(--accent); }
-  .how p { margin: 8px 0 0; line-height: 1.6; }
+  .lead { margin: 0; font-size: 15px; line-height: 1.6; color: var(--color-muted); }
 
+  .how {
+    font-size: 13.5px; color: var(--color-muted);
+    summary { cursor: pointer; color: var(--color-accent); }
+    p { margin: 8px 0 0; line-height: 1.6; }
+  }
+
+  /* A shorter target than the upload step's, and shorter again once there are
+     frames listed under it.  The rest of `.drop` is in app.scss. */
   .drop {
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 8px; min-height: 200px; cursor: pointer;
-    border: 1.5px dashed var(--line); border-radius: 16px; background: var(--panel);
-    transition: border-color .15s, background .15s;
+    min-height: 200px;
+    &.compact { min-height: 110px; }
+    strong { font-size: 18px; }
+    span { text-align: center; padding: 0 12px; }
   }
-  .drop.compact { min-height: 110px; }
-  .drop:hover, .drop.over { border-color: var(--accent); background: var(--panel-2); }
-  .drop input { display: none; }
-  .drop strong { font-size: 18px; font-weight: 600; }
-  .drop span { color: var(--muted); font-size: 13px; text-align: center; padding: 0 12px; }
 
   .error {
     margin: 0; padding: 10px 12px; border-radius: 8px;
-    border: 1px solid var(--accent);
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
-    color: var(--ink); font-size: 13.5px;
+    border: 1px solid var(--color-accent);
+    background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+    color: var(--color-ink); font-size: 13.5px;
   }
 
   .panel {
-    padding: 16px 18px; border: 1px solid var(--line); border-radius: var(--radius);
-    background: var(--panel);
+    @include surface;
+    padding: 16px 18px;
+    h2 { margin: 0 0 10px; font-size: 15px; font-weight: 650; }
+    /* Merged: the same panel, in the colour that says it worked. */
+    &.done {
+      border-color: var(--color-ok);
+      h2 { color: var(--color-ok); }
+      p { margin: 0 0 8px; font-size: 14px; }
+    }
   }
-  .panel h2 { margin: 0 0 10px; font-size: 15px; font-weight: 650; }
-  .panel-head { display: flex; align-items: center; justify-content: space-between; }
-  .panel-head h2 { margin: 0 0 10px; }
 
-  .frames { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-  .frames li {
-    display: grid; grid-template-columns: 76px 1fr auto auto;
-    align-items: center; gap: 12px;
-    padding: 8px 10px; border-radius: 8px; font-size: 13.5px;
+  .frames {
+    list-style: none; margin: 0; padding: 0; display: grid; gap: 2px;
+    li {
+      display: grid; grid-template-columns: 76px 1fr auto auto;
+      align-items: center; gap: 12px;
+      padding: 8px 10px; border-radius: 8px; font-size: 13.5px;
+      &:nth-child(odd) { background: var(--color-panel-2); }
+      &.is-reference { box-shadow: inset 2px 0 0 var(--color-accent); }
+      /* Too narrow for four columns: the exposure drops under the filename
+         and the two of them share the middle. */
+      @include card {
+        grid-template-columns: 62px 1fr auto;
+        grid-template-areas: 'stops name remove' 'stops shot remove';
+        row-gap: 2px;
+        button { grid-area: remove; }
+      }
+    }
   }
-  .frames li:nth-child(odd) { background: var(--panel-2); }
-  .frames li.is-reference { box-shadow: inset 2px 0 0 var(--accent); }
   .stops {
     font-variant-numeric: tabular-nums; font-weight: 600;
-    color: var(--ink); text-align: right;
+    color: var(--color-ink); text-align: right;
+    @include card { grid-area: stops; }
   }
-  .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .name em {
-    margin-left: 6px; font-style: normal; font-size: 11px; text-transform: uppercase;
-    letter-spacing: .04em; color: var(--accent);
+  .name {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    @include card { grid-area: name; }
+    em {
+      margin-left: 6px; font-style: normal; font-size: 11px; text-transform: uppercase;
+      letter-spacing: .04em; color: var(--color-accent);
+    }
   }
-  .shot { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .shot {
+    color: var(--color-muted); font-size: 12.5px; font-variant-numeric: tabular-nums;
+    @include card { grid-area: shot; }
+  }
+
   button.small { padding: 4px 10px; min-height: 0; font-size: 12px; }
+  .range { margin: 10px 2px 0; font-size: 13px; color: var(--color-muted); }
 
-  .range { margin: 10px 2px 0; font-size: 13px; color: var(--muted); }
 
-  .option { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 14px; }
-  .option span { display: grid; gap: 2px; }
-  .option strong { font-size: 14px; font-weight: 600; }
-  .option small { color: var(--muted); font-size: 12.5px; line-height: 1.5; }
-  .option input[type='checkbox'] { margin-top: 3px; width: 16px; height: 16px; accent-color: var(--accent); }
-  .slider { display: block; }
-  .slider .row { display: flex; justify-content: space-between; align-items: baseline; }
-  .slider .value { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
-  .slider input[type='range'] { width: 100%; margin: 6px 0 2px; accent-color: var(--accent); }
-  .slider small { display: block; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+  .option {
+    margin-bottom: 14px;
+    span { display: grid; gap: 2px; }
+    strong { font-size: 14px; font-weight: 600; }
+    small { color: var(--color-muted); font-size: 12.5px; line-height: 1.5; }
+    input[type='checkbox'] {
+      margin-top: 3px; width: 16px; height: 16px; accent-color: var(--color-accent);
+    }
+  }
+  .slider {
+    .row { display: flex; justify-content: space-between; align-items: baseline; }
+    .value {
+      color: var(--color-muted); font-size: 12.5px; font-variant-numeric: tabular-nums;
+    }
+    input[type='range'] { width: 100%; margin: 6px 0 2px; accent-color: var(--color-accent); }
+    small { display: block; }
+  }
   .run { margin-top: 4px; }
 
-  .done { border-color: var(--ok); }
-  .done h2 { color: var(--ok); }
-  .done p { margin: 0 0 8px; font-size: 14px; }
-  .notes { margin: 0 0 14px; padding-left: 18px; color: var(--muted); font-size: 13px; }
-  .notes li { margin: 4px 0; line-height: 1.5; }
-  .notes .warn { color: var(--ink); }
-  .actions { display: flex; gap: 10px; flex-wrap: wrap; }
-
-  @media (max-width: 640px) {
-    header .back { font-size: 12px; }
-    .frames li {
-      grid-template-columns: 62px 1fr auto;
-      grid-template-areas: 'stops name remove' 'stops shot remove';
-      row-gap: 2px;
-    }
-    .stops { grid-area: stops; }
-    .name { grid-area: name; }
-    .shot { grid-area: shot; }
-    .frames li button { grid-area: remove; }
+  .notes {
+    margin: 0 0 14px; padding-left: 18px; color: var(--color-muted); font-size: 13px;
+    li { margin: 4px 0; line-height: 1.5; }
+    /* The one note that is a warning rather than a remark. */
+    .warn { color: var(--color-ink); }
   }
 </style>

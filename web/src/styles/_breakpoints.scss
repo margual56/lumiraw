@@ -1,0 +1,18 @@
+// The widths the layout changes at, and the queries that go with them.
+$tiny: 420px;
+$card: 640px;
+$phone: 700px;
+$wide: 900px;
+
+// Narrow windows and phones. Everything outside these blocks is the desktop
+// layout, which is left exactly as it was; a mixin only ever adds to it.
+@mixin tiny { @media (max-width: $tiny) { @content; } }
+@mixin phone { @media (max-width: $phone) { @content; } }
+@mixin narrow { @media (max-width: $wide) { @content; } }
+
+// `card` is a different question from `phone` and deliberately a different
+// number.
+@mixin card { @media (max-width: $card) { @content; } }
+
+// For people who have asked their system to stop things moving.
+@mixin still { @media (prefers-reduced-motion: reduce) { @content; } }

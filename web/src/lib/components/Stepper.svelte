@@ -24,28 +24,29 @@
   {/each}
 </nav>
 
-<style>
-  nav { display: flex; gap: 6px; flex-wrap: wrap; }
-  nav button {
-    background: none; border: 0; color: var(--muted);
-    font: inherit; font-size: 12.5px; padding: 5px 11px;
-    border-radius: 999px; cursor: pointer; white-space: nowrap;
-  }
-  nav button:hover:not(:disabled) { color: var(--ink); background: var(--panel-2); }
-  nav button[aria-current="true"] {
-    background: var(--accent); color: var(--accent-ink); font-weight: 600;
-  }
-  nav button:disabled { opacity: .38; cursor: default; }
+<style lang="scss">
+  @use '../../styles/breakpoints' as *;
 
-  @media (max-width: 700px) {
-    /* A full-width strip on its own row, scrolled rather than wrapped: eight
-       steps stacked vertically took a third of the screen. */
-    nav {
+  nav {
+    display: flex; gap: 6px; flex-wrap: wrap;
+    /* A full-width strip on its own row on a phone, scrolled rather than
+       wrapped: eight steps stacked vertically took a third of the screen. */
+    @include phone {
       order: 3; width: 100%; flex-wrap: nowrap; gap: 4px;
       overflow-x: auto; overscroll-behavior-x: contain;
       scrollbar-width: none; scroll-snap-type: x proximity;
+      &::-webkit-scrollbar { display: none; }
     }
-    nav::-webkit-scrollbar { display: none; }
-    nav button { scroll-snap-align: center; padding: 8px 12px; min-height: 0; }
+    button {
+      background: none; border: 0; color: var(--color-muted);
+      font: inherit; font-size: 12.5px; padding: 5px 11px;
+      border-radius: 999px; cursor: pointer; white-space: nowrap;
+      &:hover:not(:disabled) { color: var(--color-ink); background: var(--color-panel-2); }
+      &[aria-current="true"] {
+        background: var(--color-accent); color: var(--color-accent-ink); font-weight: 600;
+      }
+      &:disabled { opacity: .38; cursor: default; }
+      @include phone { scroll-snap-align: center; padding: 8px 12px; min-height: 0; }
+    }
   }
 </style>

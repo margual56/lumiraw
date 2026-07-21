@@ -217,14 +217,15 @@
   </footer>
 </div>
 
-<style>
+<style lang="scss">
+  @use '../styles/breakpoints' as *;
+  @use '../styles/surfaces' as *;
+
   /*
-   * The version sits under the name, quiet enough to ignore and specific enough
-   * to quote in a bug report.
+   * The tagline goes on a phone and the version stays, since the version is the
+   * half worth the screen space.
    */
-  .ver { color: var(--line); font-variant-numeric: tabular-nums; }
-  .tagline + .ver { margin-left: 6px; }
-  @media (max-width: 700px) {
+  @include phone {
     .tagline { display: none; }
   }
 
@@ -235,17 +236,17 @@
   .intro {
     display: flex; flex-direction: column; height: 100%;
     max-width: 1080px; margin-inline: auto;
+    :global(.drop) { flex: 1; height: auto; min-height: 260px; }
   }
-  .intro :global(.drop) { flex: 1; height: auto; min-height: 260px; }
 
   /* The way out to the other tool, under the drop zone rather than beside it. */
   .merge-link {
+    @include surface;
     display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;
     margin-top: 12px; padding: 12px 14px;
-    border: 1px solid var(--line); border-radius: var(--radius);
-    background: var(--panel); text-decoration: none; color: var(--ink);
+    text-decoration: none; color: var(--color-ink);
+    &:hover { border-color: var(--color-accent); background: var(--color-panel-2); }
+    strong { font-size: 14px; font-weight: 600; color: var(--color-accent); }
+    span { color: var(--color-muted); font-size: 13px; }
   }
-  .merge-link:hover { border-color: var(--accent); background: var(--panel-2); }
-  .merge-link strong { font-size: 14px; font-weight: 600; color: var(--accent); }
-  .merge-link span { color: var(--muted); font-size: 13px; }
 </style>

@@ -33,30 +33,36 @@
   {/each}
 </div>
 
-<style>
+<style lang="scss">
   .toggles { margin-top: 12px; }
-  .tgroup { margin-bottom: 14px; }
-  .tgroup > h3 {
-    margin: 0 0 6px; font-size: 10.5px; text-transform: uppercase;
-    letter-spacing: .09em; color: var(--muted); font-weight: 600;
+  .tgroup {
+    margin-bottom: 14px;
+    > h3 {
+      margin: 0 0 6px; font-size: 10.5px; text-transform: uppercase;
+      letter-spacing: .09em; color: var(--color-muted); font-weight: 600;
+    }
   }
   .chip {
     display: flex; width: 100%; gap: 10px; align-items: flex-start;
-    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+    background: var(--color-panel-2); border: 1px solid var(--color-line); border-radius: 8px;
     padding: 8px 10px; margin-bottom: 6px; cursor: pointer;
-    color: var(--ink); font: inherit; font-weight: 400; text-align: left;
+    color: var(--color-ink); font: inherit; font-weight: 400; text-align: left;
+    &:hover { border-color: var(--color-muted); filter: none; }
+    &:disabled { opacity: .45; cursor: default; }
+    /* On, and off: the dot lights up and the name is struck through, so the
+       state reads without depending on colour alone. */
+    &[aria-pressed="true"] {
+      border-color: #33413a;
+      .dot { background: var(--color-ok); box-shadow: 0 0 7px rgb(111 202 139 / 50%); }
+    }
+    &[aria-pressed="false"] .txt b { color: var(--color-muted); text-decoration: line-through; }
   }
-  .chip:hover { border-color: var(--muted); filter: none; }
   .dot {
     width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; flex: 0 0 auto;
-    background: var(--line); box-shadow: inset 0 0 0 1px var(--line);
+    background: var(--color-line); box-shadow: inset 0 0 0 1px var(--color-line);
   }
-  .chip[aria-pressed="true"] .dot {
-    background: var(--ok); box-shadow: 0 0 7px rgba(111,202,139,.5);
+  .txt {
+    b { display: block; font-size: 12.5px; font-weight: 600; }
+    span { color: var(--color-muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
   }
-  .chip[aria-pressed="true"] { border-color: #33413a; }
-  .txt b { display: block; font-size: 12.5px; font-weight: 600; }
-  .txt span { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
-  .chip[aria-pressed="false"] .txt b { color: var(--muted); text-decoration: line-through; }
-  .chip:disabled { opacity: .45; cursor: default; }
 </style>

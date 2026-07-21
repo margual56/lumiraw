@@ -1,5 +1,7 @@
 <script>
-  import '../app.css';
+  // The tokens and Tailwind first, then everything written in terms of them.
+  import '../theme.css';
+  import '../app.scss';
   import { detectLocale, setLocale } from '$lib/i18n.svelte.js';
 
   let { children } = $props();

@@ -32,55 +32,47 @@
   <div class="divider"><i></i></div>
 </div>
 
-<style>
+<style lang="scss">
+  @use '../../styles/photo' as *;
+
   .compare {
-    position: relative; border-radius: var(--radius); overflow: hidden;
+    position: relative; border-radius: var(--radius-panel); overflow: hidden;
     background: #000; user-select: none; touch-action: none; cursor: ew-resize;
     width: fit-content; max-width: 100%; margin: 0 auto;
+    /* The wipe is driven by pointer events on the container, so the pictures
+       themselves must stay out of the way of the gesture. */
+    img { @include undraggable; }
+    img.before { @include fitted; }
+    img.after {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      clip-path: inset(0 0 0 var(--split, 50%));
+    }
+    &.busy::after { @include developing; }
   }
-  /* The wipe is driven by pointer events on the container. */
-  .compare img {
-    pointer-events: none;
-    -webkit-user-drag: none;
-    user-select: none;
-  }
-  .compare img.before {
-    display: block; width: auto; height: auto;
-    max-width: 100%; max-height: var(--fit);
-  }
-  .compare img.after {
-    position: absolute; inset: 0; width: 100%; height: 100%;
-    clip-path: inset(0 0 0 var(--split, 50%));
-  }
+
   .divider {
     position: absolute; top: 0; bottom: 0; left: var(--split, 50%);
-    width: 2px; margin-left: -1px; background: rgba(255,255,255,.85);
-    box-shadow: 0 0 8px rgba(0,0,0,.6); pointer-events: none;
+    width: 2px; margin-left: -1px; background: rgb(255 255 255 / 85%);
+    box-shadow: 0 0 8px rgb(0 0 0 / 60%); pointer-events: none;
+    /* The grab handle, with an arrow on each side made of borders. */
+    i {
+      position: absolute; top: 50%; left: 50%; width: 34px; height: 34px;
+      transform: translate(-50%, -50%); border-radius: 50%;
+      background: rgb(255 255 255 / 92%); box-shadow: 0 2px 10px rgb(0 0 0 / 50%);
+      &::before, &::after {
+        content: ""; position: absolute; top: 50%; width: 0; height: 0;
+        border: 5px solid transparent; margin-top: -5px;
+      }
+      &::before { left: 4px; border-right-color: var(--color-panel); }
+      &::after { right: 4px; border-left-color: var(--color-panel); }
+    }
   }
-  .divider i {
-    position: absolute; top: 50%; left: 50%; width: 34px; height: 34px;
-    transform: translate(-50%, -50%); border-radius: 50%;
-    background: rgba(255,255,255,.92); box-shadow: 0 2px 10px rgba(0,0,0,.5);
-  }
-  .divider i::before, .divider i::after {
-    content: ""; position: absolute; top: 50%; width: 0; height: 0;
-    border: 5px solid transparent;
-  }
-  .divider i::before { left: 4px;  border-right-color: #16181c; margin-top: -5px; }
-  .divider i::after  { right: 4px; border-left-color: #16181c;  margin-top: -5px; }
+
   .tag {
     position: absolute; top: 12px; padding: 4px 10px; border-radius: 999px;
-    background: rgba(8,9,11,.72); color: #fff; font-size: 11.5px; letter-spacing: .04em;
-    text-transform: uppercase; pointer-events: none;
-  }
-  .tag.left { left: 12px; }
-  .tag.right { right: 12px; }
-  .compare.busy::after {
-    content: ""; position: absolute; inset: 0;
-    background: rgba(13,14,16,.45) url("data:image/svg+xml;utf8,\
-<svg xmlns='http://www.w3.org/2000/svg' width='38' height='38' viewBox='0 0 38 38' stroke='%23e5a03c'>\
-<g fill='none' stroke-width='3'><circle cx='19' cy='19' r='16' stroke-opacity='.25'/>\
-<path d='M35 19a16 16 0 0 0-16-16'><animateTransform attributeName='transform' type='rotate' \
-from='0 19 19' to='360 19 19' dur='.8s' repeatCount='indefinite'/></path></g></svg>") center/38px no-repeat;
+    background: rgb(8 9 11 / 72%); color: #fff; font-size: 11.5px;
+    letter-spacing: .04em; text-transform: uppercase; pointer-events: none;
+    &.left { left: 12px; }
+    &.right { right: 12px; }
   }
 </style>

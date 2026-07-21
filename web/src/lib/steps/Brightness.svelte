@@ -46,7 +46,7 @@
   </aside>
 </div>
 
-<style>
+<style lang="scss">
   .zonehint { margin: -8px 0 14px; }
   /* Two controls where there used to be one: let them wrap rather than
      squeezing the labels, which are long in both languages. */

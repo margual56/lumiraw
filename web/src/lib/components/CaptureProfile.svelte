@@ -19,14 +19,15 @@
   </dl>
 </details>
 
-<style>
-  .capture { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 12px; }
-  summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+<style lang="scss">
+  .capture { margin-top: 8px; border-top: 1px solid var(--color-line); padding-top: 12px; }
+  summary { cursor: pointer; color: var(--color-muted); font-size: 12px; }
   dl {
     display: grid; grid-template-columns: auto 1fr; gap: 3px 12px;
     margin: 10px 0 0; font-size: 11.8px;
   }
-  dt { color: var(--muted); }
+  dt { color: var(--color-muted); }
   dd { margin: 0; font-variant-numeric: tabular-nums; }
-  .note { grid-column: 1 / -1; color: var(--accent); margin-top: 8px; line-height: 1.45; }
+  /* A remark about the capture itself, across both columns. */
+  .note { grid-column: 1 / -1; color: var(--color-accent); margin-top: 8px; line-height: 1.45; }
 </style>

@@ -1,0 +1,39 @@
+/* The Tailwind entry, and the one place the design tokens are written down. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+
+/* Automatic scanning is off and the utilities this project uses are listed instead. */
+@source inline("mx-auto grid max-w-[880px] gap-4 flex flex-wrap items-center items-start justify-between gap-2.5");
+
+/*
+ * `static` because these variables are read by hand, from app.scss and from
+ * every component's own styles, and not only by generated utilities.
+ */
+@theme static {
+  /* The palette. */
+  --color-bg: #0d0e10;
+  --color-panel: #16181c;
+  --color-panel-2: #1d2026;
+  --color-line: #2a2e35;
+  --color-ink: #e8e9ea;
+  --color-muted: #8d939c;
+  --color-accent: #e5a03c;
+  --color-accent-ink: #17130a;
+  --color-ok: #6fca8b;
+
+  --radius-panel: 10px;
+
+  /*
+   * Tailwind's spacing scale is rem based, and `html` here is 14px, so every gap
+   * and margin utility came out at 14/16 of its documented size.
+   */
+  --spacing: 4px;
+
+  /* The widths this layout actually changes at. */
+  --breakpoint-*: initial;
+  --breakpoint-tiny: 420px;
+  --breakpoint-card: 640px;
+  --breakpoint-phone: 700px;
+  --breakpoint-wide: 900px;
+}

@@ -23,29 +23,28 @@
   {/if}
 </div>
 
-<style>
+<style lang="scss">
+  @use '../../styles/breakpoints' as *;
+
   .bar {
-    position: relative; height: 2px; background: var(--line);
+    position: relative; height: 2px; background: var(--color-line);
     opacity: 0; transition: opacity .18s;
+    &.active { opacity: 1; }
+    &.determinate .fill { transition: width .3s ease-out; }
+    /* Indeterminate: a shuttle, so a long stage still looks alive. */
+    &:not(.determinate).active .fill {
+      width: 34%; animation: shuttle 1.15s ease-in-out infinite;
+      @include still { animation: none; width: 100%; opacity: .4; }
+    }
   }
-  .bar.active { opacity: 1; }
-  .fill { height: 100%; background: var(--accent); width: 0; }
-  .bar.determinate .fill { transition: width .3s ease-out; }
-  /* Indeterminate: a shuttle, so a long stage still looks alive. */
-  .bar:not(.determinate).active .fill {
-    width: 34%;
-    animation: shuttle 1.15s ease-in-out infinite;
-  }
+  .fill { height: 100%; background: var(--color-accent); width: 0; }
   @keyframes shuttle {
     0%   { margin-left: -34%; }
     100% { margin-left: 100%; }
   }
   .label {
     position: absolute; right: 22px; top: 6px;
-    font-size: 11px; color: var(--muted); letter-spacing: .02em;
+    font-size: 11px; color: var(--color-muted); letter-spacing: .02em;
     white-space: nowrap; pointer-events: none;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .bar:not(.determinate).active .fill { animation: none; width: 100%; opacity: .4; }
   }
 </style>

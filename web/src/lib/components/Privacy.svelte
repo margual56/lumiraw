@@ -18,32 +18,35 @@
   </div>
 </section>
 
-<style>
+<style lang="scss">
+  @use '../../styles/breakpoints' as *;
+
   .privacy {
     display: flex; gap: 16px; align-items: flex-start;
     padding: 18px 20px; margin-bottom: 16px;
-    border: 1.5px solid var(--ok); border-radius: var(--radius);
+    border: 1.5px solid var(--color-ok); border-radius: var(--radius-panel);
     background:
-      linear-gradient(180deg, color-mix(in srgb, var(--ok) 9%, transparent), transparent),
-      var(--panel);
+      linear-gradient(180deg, color-mix(in srgb, var(--color-ok) 9%, transparent), transparent),
+      var(--color-panel);
+    @include card { padding: 14px; gap: 12px; }
+    h2 {
+      margin: 0 0 4px; font-size: 17px; font-weight: 650; letter-spacing: -0.01em;
+      color: var(--color-ok);
+      @include card { font-size: 15.5px; }
+    }
+    p {
+      margin: 0; font-size: 14.5px; line-height: 1.55;
+      @include card { font-size: 13.5px; }
+    }
+    .fine { margin-top: 6px; font-size: 12.5px; color: var(--color-muted); }
   }
+  /* A flex child will not shrink below its longest word without this, and the
+     body text here is a paragraph, not a label. */
+  .body { min-width: 0; }
   .mark {
     flex: none; display: grid; place-items: center;
     width: 42px; height: 42px; border-radius: 50%;
-    color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent);
-  }
-  .body { min-width: 0; }
-  h2 {
-    margin: 0 0 4px; font-size: 17px; font-weight: 650; letter-spacing: -0.01em;
-    color: var(--ok);
-  }
-  p { margin: 0; font-size: 14.5px; line-height: 1.55; }
-  .fine { margin-top: 6px; font-size: 12.5px; color: var(--muted); }
-
-  @media (max-width: 640px) {
-    .privacy { padding: 14px; gap: 12px; }
-    .mark { width: 34px; height: 34px; }
-    h2 { font-size: 15.5px; }
-    p { font-size: 13.5px; }
+    color: var(--color-ok); background: color-mix(in srgb, var(--color-ok) 14%, transparent);
+    @include card { width: 34px; height: 34px; }
   }
 </style>

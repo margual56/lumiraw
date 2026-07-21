@@ -123,13 +123,17 @@
   </aside>
 </div>
 
-<style>
+<style lang="scss">
   .job { margin-top: 14px; }
-  .track { height: 5px; border-radius: 3px; background: var(--panel-2); overflow: hidden; }
-  .fill { height: 100%; background: var(--accent); transition: width .3s ease-out; }
+  .track {
+    height: 5px; border-radius: 3px; background: var(--color-panel-2); overflow: hidden;
+    .fill { height: 100%; background: var(--color-accent); transition: width .3s ease-out; }
+  }
   .row {
     display: flex; justify-content: space-between; gap: 10px; margin-top: 6px;
-    font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums;
+    font-size: 11.5px; color: var(--color-muted); font-variant-numeric: tabular-nums;
+    /* The stage name can be long in either language; the elapsed time beside
+       it must not be pushed off the end. */
+    span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   }
-  .row span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { sveltekit } from '@sveltejs/kit/vite';
+import tailwindcss from '@tailwindcss/vite';
 
 /** Cargo owns the version. */
 function version() {
@@ -10,7 +11,7 @@ function version() {
 }
 
 export default {
-  plugins: [sveltekit()],
+  plugins: [tailwindcss(), sveltekit()],
   define: { __APP_VERSION__: JSON.stringify(version()) },
   // The pipeline is a wasm module fetched at runtime, so there is no backend
   // to proxy to any more: `npm run dev` is the whole application.

@@ -1,0 +1,195 @@
+// The page chrome and the form primitives every step shares.
+@use 'styles/breakpoints' as *;
+@use 'styles/surfaces' as *;
+
+@layer base {
+  :root {
+    /* Height left for a preview once the header, footer and page padding are
+       accounted for.  Previews fit inside it instead of pushing the page. */
+    --fit: calc(100vh - 190px);
+    /*
+     * dvh rather than vh: mobile browsers measure vh against the viewport with the
+     * address bar hidden, so a picture sized in vh pushes its own controls off the
+     * bottom of the screen until you scroll.
+     */
+    @include phone { --fit: calc(100dvh - 220px); }
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    height: 100%; margin: 0;
+    background: var(--color-bg); color: var(--color-ink);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  header {
+    display: flex; align-items: center; gap: 28px;
+    padding: 14px 22px; border-bottom: 1px solid var(--color-line);
+    background: var(--color-panel);
+    /* Two rows on a phone: identity and language on top, the steps as a strip
+       underneath (see Stepper.svelte, which makes that strip scroll). */
+    @include phone { flex-wrap: wrap; gap: 8px 12px; padding: 10px 12px; }
+  }
+
+  main {
+    flex: 1; overflow: auto; padding: 22px;
+    @include phone { padding: 12px; }
+  }
+
+  footer {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 12px 22px; border-top: 1px solid var(--color-line);
+    background: var(--color-panel);
+    @include phone { flex-wrap: wrap; padding: 10px 12px 12px; gap: 8px 12px; }
+  }
+
+  aside {
+    @include surface;
+    padding: 18px;
+    @include phone { padding: 14px; }
+    h2 { margin: 0 0 8px; font-size: 15px; font-weight: 650; }
+  }
+
+  button {
+    background: var(--color-accent); color: var(--color-accent-ink); border: 0;
+    padding: 9px 18px; border-radius: 8px; font: inherit; font-weight: 600;
+    cursor: pointer;
+    &:hover { filter: brightness(1.08); }
+    &:disabled { opacity: .4; cursor: default; filter: none; }
+    /* Touch targets: 34px is fine with a mouse and a nuisance with a thumb. */
+    @include phone { padding: 11px 18px; min-height: 44px; }
+  }
+
+  select {
+    width: 100%; margin-top: 6px; background: var(--color-panel-2);
+    color: var(--color-ink); border: 1px solid var(--color-line);
+    border-radius: 8px; padding: 8px 10px; font: inherit;
+    @include phone { min-height: 42px; padding: 10px; }
+  }
+
+  input[type=range] {
+    width: 100%; margin-top: 8px; appearance: none;
+    height: 4px; border-radius: 3px; background: var(--color-line); outline: none;
+    @include phone { height: 6px; margin-top: 12px; }
+    /*
+     * The thumbs are what get dragged, so they are the controls that most need the
+     * room on a phone.
+     */
+    &::-webkit-slider-thumb {
+      appearance: none; width: 15px; height: 15px; border-radius: 50%;
+      background: var(--color-ink); border: 2px solid var(--color-bg); cursor: grab;
+      @include phone { width: 22px; height: 22px; }
+    }
+    &::-moz-range-thumb {
+      width: 15px; height: 15px; border-radius: 50%;
+      background: var(--color-ink); border: 2px solid var(--color-bg); cursor: grab;
+      @include phone { width: 22px; height: 22px; }
+    }
+    /* What the slider is adjusting, painted along its own track. */
+    &.temp { background: linear-gradient(90deg,#5b8fd8,#3a3f46,#e0a24c); }
+    &.tint { background: linear-gradient(90deg,#c67fd1,#3a3f46,#7fd18a); }
+    &.vib  { background: linear-gradient(90deg,#4a4f57,#3a3f46,#4fbfb0); }
+  }
+}
+
+@layer components {
+  .shell { display: flex; flex-direction: column; height: 100%; }
+
+  .brand {
+    font-weight: 650; letter-spacing: .2px;
+    @include phone { font-size: 15px; }
+    /* The direct child only: the sub-line holds the tagline and the version,
+       and those two sit beside each other rather than stacking. */
+    > span {
+      display: block; font-weight: 400; font-size: 11.5px;
+      color: var(--color-muted); letter-spacing: .3px;
+    }
+  }
+  /* The version, quiet enough to ignore and specific enough to quote in a bug
+     report.  Both pages show it, so it is described once here. */
+  .ver { color: var(--color-line); font-variant-numeric: tabular-nums; }
+  .tagline + .ver { margin-left: 6px; }
+
+  /* Where a raw file gets dropped, on the upload step and on the merge page. */
+  .drop {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; cursor: pointer; transition: border-color .15s, background .15s;
+    @include surface(16px);
+    border-style: dashed; border-width: 1.5px;
+    &:hover, &.over { border-color: var(--color-accent); background: var(--color-panel-2); }
+    input { display: none; }
+    strong { font-size: 19px; font-weight: 600; }
+    span { color: var(--color-muted); font-size: 13px; }
+    /* Whatever the pipeline is saying about the file right now. */
+    em { color: var(--color-accent); font-style: normal; font-size: 13px; min-height: 20px; }
+  }
+
+  .file-label {
+    color: var(--color-muted); font-size: 12.5px;
+    /*
+     * Its own line on a phone so the two buttons keep their width, and clipped
+     * rather than allowed to wrap to four lines.
+     */
+    @include phone {
+      order: 3; width: 100%; text-align: center; font-size: 11px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    @include tiny { display: none; }
+  }
+
+  .stage {
+    display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 22px;
+    align-items: start;
+    @include narrow { grid-template-columns: 1fr; }
+    @include phone { gap: 14px; }
+  }
+
+  .field {
+    margin: 18px 0;
+    @include phone { margin: 20px 0; }
+    .row { display: flex; justify-content: space-between; align-items: baseline; }
+    label { font-size: 12.5px; color: var(--color-muted); }
+    output { font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--color-ink); }
+  }
+
+  .lede {
+    color: var(--color-muted); font-size: 12.8px; margin: 0 0 4px;
+    em { color: var(--color-ink); font-style: italic; }
+  }
+  .hint {
+    display: block; margin-top: 10px; font-style: normal;
+    font-size: 12px; color: var(--color-muted); min-height: 18px;
+  }
+  .pagetitle {
+    margin: 0 0 14px; font-size: 15px; font-weight: 650;
+    @include phone { margin-bottom: 10px; }
+  }
+
+  /* a labelled checkbox in a side panel */
+  .check {
+    display: flex; gap: 10px; align-items: flex-start; cursor: pointer;
+    background: var(--color-panel-2); border: 1px solid var(--color-line);
+    border-radius: 8px; padding: 10px 12px; margin: 18px 0 10px;
+    @include phone { padding: 12px; }
+    &:hover { border-color: var(--color-muted); }
+    input {
+      accent-color: var(--color-accent); width: 15px; height: 15px;
+      margin: 1px 0 0; flex: 0 0 auto; cursor: pointer;
+      @include phone { width: 18px; height: 18px; }
+    }
+    span { font-size: 12.5px; line-height: 1.35; }
+    em {
+      display: block; margin-top: 2px; font-style: normal;
+      font-size: 11.5px; color: var(--color-muted);
+    }
+  }
+
+  /* The quieter of the two buttons: the same shape with no fill. */
+  .ghost {
+    background: transparent; color: var(--color-muted);
+    border: 1px solid var(--color-line); font-weight: 500;
+    &:hover { color: var(--color-ink); border-color: var(--color-muted); filter: none; }
+  }
+}

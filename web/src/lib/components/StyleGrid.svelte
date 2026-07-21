@@ -37,36 +37,43 @@
   {/each}
 </div>
 
-<style>
+<style lang="scss">
+  @use '../../styles/breakpoints' as *;
+
   .grid {
     display: grid; gap: 16px;
     /* min() so the track can never be wider than the column it is in:
        at 560px flat, a phone got one tile cropped at both edges. */
     grid-template-columns: repeat(auto-fill, minmax(min(560px, 100%), 1fr));
+    @include phone { gap: 12px; }
   }
   .tile {
-    border: 1.5px solid var(--line); border-radius: var(--radius); overflow: hidden;
-    background: var(--panel); cursor: pointer; padding: 0; text-align: left;
-    color: var(--ink); font: inherit; font-weight: 400; transition: border-color .12s;
+    border: 1.5px solid var(--color-line); border-radius: var(--radius-panel); overflow: hidden;
+    background: var(--color-panel); cursor: pointer; padding: 0; text-align: left;
+    color: var(--color-ink); font: inherit; font-weight: 400; transition: border-color .12s;
+    &:hover { border-color: var(--color-muted); filter: none; }
+    &[aria-pressed="true"] {
+      border-color: var(--color-accent);
+      .cap b::after { content: " ✓"; color: var(--color-accent); }
+    }
+    img { display: block; width: 100%; height: auto; background: #000; }
   }
-  .tile:hover { border-color: var(--muted); filter: none; }
-  .tile[aria-pressed="true"] { border-color: var(--accent); }
-  .tile img { display: block; width: 100%; height: auto; background: #000; }
-  .cap { padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
-  .cap b { font-weight: 600; font-size: 14px; }
-  .cap span {
-    color: var(--muted); font-size: 12px;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  .cap {
+    padding: 10px 12px; display: flex; flex-direction: column; gap: 2px;
+    @include phone { padding: 9px 11px; }
+    b { font-weight: 600; font-size: 14px; }
+    span {
+      color: var(--color-muted); font-size: 12px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
   }
-  .tile[aria-pressed="true"] .cap b::after { content: " ✓"; color: var(--accent); }
 
-  .skeleton { cursor: default; animation: pulse 1.4s ease-in-out infinite; }
-  .skeleton .shim { width: 100%; aspect-ratio: 3 / 2; background: var(--panel-2); }
+  /* A tile that has not been rendered yet, breathing so the wait reads as
+     work rather than as a broken image. */
+  .skeleton {
+    cursor: default; animation: pulse 1.4s ease-in-out infinite;
+    .shim { width: 100%; aspect-ratio: 3 / 2; background: var(--color-panel-2); }
+    @include still { animation: none; }
+  }
   @keyframes pulse { 0%, 100% { opacity: .55; } 50% { opacity: .95; } }
-  @media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
-
-  @media (max-width: 700px) {
-    .grid { gap: 12px; }
-    .cap { padding: 9px 11px; }
-  }
 </style>

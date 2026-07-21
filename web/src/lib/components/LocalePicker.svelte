@@ -15,13 +15,14 @@
   </select>
 </label>
 
-<style>
+<style lang="scss">
   .picker { margin-left: auto; }
   select {
     width: auto; margin: 0; padding: 5px 8px; font-size: 12px;
-    color: var(--muted); background: var(--panel-2);
+    color: var(--color-muted); background: var(--color-panel-2);
+    &:hover { color: var(--color-ink); }
   }
-  select:hover { color: var(--ink); }
+  /* Read out, never shown: the control is a bare select with a flag of a name. */
   .sr {
     position: absolute; width: 1px; height: 1px; overflow: hidden;
     clip-path: inset(50%); white-space: nowrap;

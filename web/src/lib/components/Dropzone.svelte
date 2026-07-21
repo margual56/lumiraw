@@ -32,16 +32,10 @@
   <em>{app.message}</em>
 </label>
 
-<style>
-  .drop {
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 8px; height: 100%; min-height: 380px; cursor: pointer;
-    border: 1.5px dashed var(--line); border-radius: 16px; background: var(--panel);
-    transition: border-color .15s, background .15s;
-  }
-  .drop:hover, .drop.over { border-color: var(--accent); background: var(--panel-2); }
-  .drop input { display: none; }
-  .drop strong { font-size: 19px; font-weight: 600; }
-  .drop span { color: var(--muted); font-size: 13px; }
-  .drop em { color: var(--accent); font-style: normal; font-size: 13px; min-height: 20px; }
+<style lang="scss">
+  /*
+   * Fills whatever the upload step gives it, and never gets so short that the
+   * target is hard to hit.
+   */
+  .drop { height: 100%; min-height: 380px; }
 </style>

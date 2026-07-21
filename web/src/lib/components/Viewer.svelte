@@ -137,29 +137,18 @@
   ></canvas>
 </div>
 
-<style>
+<style lang="scss">
+  @use '../../styles/photo' as *;
+
   .viewer {
-    position: relative; border-radius: var(--radius); overflow: hidden;
+    position: relative; border-radius: var(--radius-panel); overflow: hidden;
     background: #000; min-height: 260px;
     display: flex; align-items: center; justify-content: center;
+    img { @include fitted; @include undraggable; }
+    &.busy::after { @include developing; }
   }
-  .viewer img {
-    display: block; width: auto; height: auto;
-    max-width: 100%; max-height: var(--fit);
-    /* Never let the browser drag the picture itself: on a viewer with no
-       selection overlay there is nothing above it to catch the gesture. */
-    pointer-events: none;
-    -webkit-user-drag: none;
-    user-select: none;
-  }
-  canvas { position: absolute; touch-action: none; pointer-events: none; }
-  canvas.selectable { cursor: crosshair; pointer-events: auto; }
-  .viewer.busy::after {
-    content: ""; position: absolute; inset: 0;
-    background: rgba(13,14,16,.45) url("data:image/svg+xml;utf8,\
-<svg xmlns='http://www.w3.org/2000/svg' width='38' height='38' viewBox='0 0 38 38' stroke='%23e5a03c'>\
-<g fill='none' stroke-width='3'><circle cx='19' cy='19' r='16' stroke-opacity='.25'/>\
-<path d='M35 19a16 16 0 0 0-16-16'><animateTransform attributeName='transform' type='rotate' \
-from='0 19 19' to='360 19 19' dur='.8s' repeatCount='indefinite'/></path></g></svg>") center/38px no-repeat;
+  canvas {
+    position: absolute; touch-action: none; pointer-events: none;
+    &.selectable { cursor: crosshair; pointer-events: auto; }
   }
 </style>

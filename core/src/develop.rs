@@ -72,6 +72,34 @@ impl Development {
         floor
     }
 
+    /// A development whose frame came from a merge rather than a single file.
+    pub fn from_frame(filename: &str, linear: Image, meta: Meta,
+                      exif: Vec<crate::exif::Entry>, db: Option<&Database>) -> Development {
+        let (w, h) = (linear.w, linear.h);
+        let mut crop_factor = None;
+        let mut lens_match = None;
+        if let Some(db) = db {
+            if let Some(cam) = db.find_camera(&meta.make, &meta.model) {
+                crop_factor = Some(cam.crop);
+            }
+            lens_match = db.find_lens(&meta.make, &meta.model, &meta.lens_model,
+                                      meta.focal_mm, meta.aperture, 10.0);
+        }
+        let prof = profile::derive(&meta, w, h, crop_factor);
+        Development {
+            filename: filename.to_string(),
+            linear,
+            meta,
+            exif,
+            noise_floor: None,
+            profile: prof,
+            lens_match,
+            cache: Vec::new(),
+            baseline_key: String::new(),
+            baseline_img: None,
+        }
+    }
+
     pub fn width(&self) -> usize {
         self.linear.w
     }

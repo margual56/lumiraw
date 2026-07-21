@@ -97,7 +97,10 @@ export function stageText(stage, params = {}) {
 /** Server errors carry a code when they have one; fall back to its English. */
 export function errorText(error) {
   if (error?.reason) {
-    const translated = t(`error.${error.reason}`, error.params ?? {});
+    // `message` is always available as a placeholder: some reports carry
+    // detail the sentence wants to quote rather than paraphrase.
+    const translated = t(`error.${error.reason}`,
+                         { message: error.message ?? '', ...(error.params ?? {}) });
     if (translated !== `error.${error.reason}`) return translated;
   }
   return error?.message ?? String(error);

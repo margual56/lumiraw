@@ -107,6 +107,21 @@ export async function styles(body, ontile) {
   return { tiles: out.tiles.map((tile) => ({ ...tile, image: toUrl(tile.image) })) };
 }
 
+/** Building a merge: the frames go over one at a time, then one call to
+ *  combine them. The result replaces whatever the wizard was developing. */
+export const mergeReset = () => call('mergeReset');
+export const mergeRemove = (index) => call('mergeRemove', { index });
+
+export async function mergeAdd(file) {
+  const buffer = await file.arrayBuffer();
+  return call('mergeAdd', { name: file.name, buffer }, {}, [buffer]);
+}
+
+export async function mergeFinish(options) {
+  const info = await call('mergeFinish', options);
+  return { ...info, id: 'local', original_name: info.file };
+}
+
 /** Exports keep the job shape the download step already knows how to watch. */
 const jobs = new Map();
 

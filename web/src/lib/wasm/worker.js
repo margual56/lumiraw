@@ -282,7 +282,37 @@ function crc32(bytes, table) {
   return (c ^ 0xffffffff) >>> 0;
 }
 
-const HANDLERS = { open, render, compare, styles, export: exportImage };
+/** Add one exposure to the bracket waiting to be merged. */
+async function mergeAdd({ name, buffer }) {
+  const bytes = new Uint8Array(buffer);
+  const ptr = copyIn(bytes);
+  const rc = withString(name, (np, nl) => wasm.ar_merge_add(np, nl, ptr, bytes.length));
+  wasm.ar_free(ptr, bytes.length);
+  const info = readJson();
+  if (rc !== 0) fail(info);
+  return info;
+}
+
+function mergeRemove({ index }) {
+  wasm.ar_merge_remove(index);
+  return {};
+}
+
+function mergeReset() {
+  wasm.ar_merge_reset();
+  return {};
+}
+
+/** Merge the bracket; the result becomes the frame the wizard develops. */
+async function mergeFinish({ align, deghost }) {
+  const rc = wasm.ar_merge_finish(align ? 1 : 0, deghost ?? 0.5);
+  const info = readJson();
+  if (rc !== 0) fail(info);
+  return info;
+}
+
+const HANDLERS = { open, render, compare, styles, export: exportImage,
+                   mergeAdd, mergeRemove, mergeReset, mergeFinish };
 
 async function handle({ type, id, ...rest }) {
   try {

@@ -10,6 +10,7 @@ use std::cell::RefCell;
 
 thread_local! {
     static DB: RefCell<Option<Database>> = RefCell::new(None);
+    static BRACKET: RefCell<Vec<crate::merge::Frame>> = RefCell::new(Vec::new());
     static DEV: RefCell<Option<Development>> = RefCell::new(None);
     static JSON: RefCell<Vec<u8>> = RefCell::new(Vec::new());
     static PIXELS: RefCell<Vec<u8>> = RefCell::new(Vec::new());
@@ -366,6 +367,102 @@ pub extern "C" fn ar_export(settings_ptr: *const u8, settings_len: usize, style_
         }
         Err(e) => set_error(&e, "encode"),
     }
+}
+
+// -- merging a bracket -----------------------------------------------------
+
+/// Start a new bracket, forgetting any frames already gathered.
+#[no_mangle]
+pub extern "C" fn ar_merge_reset() {
+    BRACKET.with(|b| b.borrow_mut().clear());
+}
+
+/// Drop one exposure from the bracket.  Without this, changing your mind
+/// about a frame means decoding every other one again.
+#[no_mangle]
+pub extern "C" fn ar_merge_remove(index: i32) -> i32 {
+    BRACKET.with(|b| {
+        let mut frames = b.borrow_mut();
+        if index < 0 || index as usize >= frames.len() {
+            return -1;
+        }
+        frames.remove(index as usize);
+        0
+    })
+}
+
+/// Decode one exposure and add it to the bracket.
+#[no_mangle]
+pub extern "C" fn ar_merge_add(name_ptr: *const u8, name_len: usize, ptr: *const u8,
+                               len: usize) -> i32 {
+    let name = String::from_utf8_lossy(unsafe { slice(name_ptr, name_len) }).to_string();
+    let bytes = unsafe { slice(ptr, len) };
+    progress(0.1, "decoding");
+    match crate::merge::Frame::open(&name, bytes) {
+        Ok(frame) => {
+            let (w, h) = (frame.linear.w, frame.linear.h);
+            let exposure = frame.exposure();
+            let (iso, shutter, aperture) =
+                (frame.meta.iso, frame.meta.shutter_s, frame.meta.aperture);
+            BRACKET.with(|b| b.borrow_mut().push(frame));
+            let count = BRACKET.with(|b| b.borrow().len());
+            set_json(json!({"name": name, "width": w, "height": h, "count": count,
+                            "iso": iso, "shutter_s": shutter, "aperture": aperture,
+                            "exposure": exposure}));
+            progress(1.0, "done");
+            0
+        }
+        Err(e) => set_error(&e, "unreadable"),
+    }
+}
+
+/// Merge what has been gathered and make the result the frame being developed.
+#[no_mangle]
+pub extern "C" fn ar_merge_finish(align: i32, deghost: f32) -> i32 {
+    let options = crate::merge::Options { align: align != 0, deghost: deghost.clamp(0.0, 1.0) };
+    progress(0.15, "merging");
+    let merged = BRACKET.with(|b| {
+        let frames = b.borrow();
+        crate::merge::merge(&frames, options).map(|(img, notes)| {
+            // The reference frame's metadata describes the result.
+            let reference = &frames[notes.reference];
+            (img, reference.meta.clone(), reference.exif.clone(), reference.name.clone(),
+             notes)
+        })
+    });
+    let (img, meta, exif, name, notes) = match merged {
+        Ok(v) => v,
+        Err(e) => return set_error(&e, "merge"),
+    };
+    progress(0.8, "describing");
+
+    let dev = DB.with(|db| {
+        crate::develop::Development::from_frame(&format!("{name} (merged)"), img, meta,
+                                                exif, db.borrow().as_ref())
+    });
+    let mut description = dev.describe();
+    if let Some(o) = description.as_object_mut() {
+        o.insert("formats".into(), json!(output::FORMATS.iter()
+            .map(|f| json!({"id": f.id, "label": f.label, "ext": f.ext, "mime": f.mime}))
+            .collect::<Vec<_>>()));
+        o.insert("styles".into(), json!(styles::STYLES.iter()
+            .map(|s| json!({"id": s.id, "label": s.label, "description": s.description}))
+            .collect::<Vec<_>>()));
+        o.insert("merge".into(), json!({
+            "frames": notes.stops.len(),
+            "reference": notes.reference,
+            "stops": notes.stops.iter().map(|v| (v * 100.0).round() / 100.0).collect::<Vec<_>>(),
+            "range_stops": (notes.range_stops * 100.0).round() / 100.0,
+            "shifts": notes.shifts.iter().map(|(x, y)| vec![*x, *y]).collect::<Vec<_>>(),
+            "ghosted": (notes.ghosted * 10000.0).round() / 10000.0,
+            "uncovered": (notes.uncovered * 10000.0).round() / 10000.0,
+        }));
+    }
+    DEV.with(|d| *d.borrow_mut() = Some(dev));
+    BRACKET.with(|b| b.borrow_mut().clear());
+    set_json(description);
+    progress(1.0, "done");
+    0
 }
 
 /// Which build this is. Read once at start-up so the interface can show it

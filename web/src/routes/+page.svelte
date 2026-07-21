@@ -12,6 +12,7 @@
   import Download from '$lib/steps/Download.svelte';
 
   import LocalePicker from '$lib/components/LocalePicker.svelte';
+  import { base } from '$app/paths';
   import * as api from '$lib/api.js';
   import { t, n } from '$lib/i18n.svelte.js';
   import { errorText } from '$lib/format.js';
@@ -183,6 +184,10 @@
       <div class="intro">
         <Privacy />
         <Dropzone onpick={pick} />
+        <a class="merge-link" href="{base}/merge">
+          <strong>{t('merge.link')}</strong>
+          <span>{t('merge.linkHint')}</span>
+        </a>
       </div>
     {:else if app.step === FRAME}
       <Framing />
@@ -232,4 +237,15 @@
     max-width: 1080px; margin-inline: auto;
   }
   .intro :global(.drop) { flex: 1; height: auto; min-height: 260px; }
+
+  /* The way out to the other tool, under the drop zone rather than beside it. */
+  .merge-link {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;
+    margin-top: 12px; padding: 12px 14px;
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--panel); text-decoration: none; color: var(--ink);
+  }
+  .merge-link:hover { border-color: var(--accent); background: var(--panel-2); }
+  .merge-link strong { font-size: 14px; font-weight: 600; color: var(--accent); }
+  .merge-link span { color: var(--muted); font-size: 13px; }
 </style>

@@ -33,7 +33,7 @@ fn main() {
     let mut cb = |f: f32, code: &str| {
         last = format!("{:.0}% {}", f * 100.0, code);
     };
-    let (img, report) = dev.render(&settings, "original", long_edge, true, Some(&mut cb));
+    let (img, report) = dev.render(&settings, None, long_edge, true, Some(&mut cb));
     println!("render {:.2}s -> {}x{}", t1.elapsed().as_secs_f32(), img.w, img.h);
     // One line of JSON, so tools/parity.py can diff it against the Python
     // pipeline's own report field by field.

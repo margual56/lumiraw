@@ -163,8 +163,10 @@ impl Development {
         (src, infos, eff)
     }
 
-    pub fn render(&mut self, settings: &Settings, style_id: &str, long_edge: Option<usize>,
-                  crop: bool, mut progress: Option<&mut dyn FnMut(f32, &str)>)
+    /// Develop the picture, optionally under a look.
+    pub fn render(&mut self, settings: &Settings, style: Option<&styles::Style>,
+                  long_edge: Option<usize>, crop: bool,
+                  mut progress: Option<&mut dyn FnMut(f32, &str)>)
                   -> (Image, Report) {
         let mut report = Report::new();
         let (src, lens_info, eff_crop) = self.corrected(settings, long_edge, crop, &mut progress);
@@ -204,9 +206,9 @@ impl Development {
             progress: boxed.take(),
         };
         let mut rgb = grade::process(&src, &s, args, &mut report);
-        if !style_id.is_empty() && style_id != "original" {
-            rgb = styles::apply(&rgb, style_id);
-            report.add("style", json!({"applied": true, "id": style_id}));
+        if let Some(style) = style.filter(|s| s.look.is_some()) {
+            rgb = styles::apply(&rgb, style);
+            report.add("style", json!({"applied": true, "id": style.id}));
         }
         (rgb, report)
     }
@@ -241,7 +243,7 @@ impl Development {
                 return img.clone();
             }
         }
-        let (img, _) = self.render(&flat, "original", long_edge, true, None);
+        let (img, _) = self.render(&flat, None, long_edge, true, None);
         self.baseline_key = key;
         self.baseline_img = Some(img.clone());
         img

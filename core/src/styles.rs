@@ -7,20 +7,37 @@ pub struct Style {
     pub id: &'static str,
     pub label: &'static str,
     pub description: &'static str,
+    /// The look itself, or nothing at all for the original.
+    pub look: Option<fn(&Image) -> Image>,
 }
 
 pub const STYLES: [Style; 10] = [
-    Style { id: "original", label: "Original", description: "Your corrections, nothing added" },
-    Style { id: "punch", label: "Punch", description: "Extra local contrast and colour" },
-    Style { id: "cinematic", label: "Cinematic", description: "Teal shadows, warm highlights" },
-    Style { id: "film", label: "Film", description: "Warm portrait stock, soft blacks" },
-    Style { id: "bw", label: "Black & white", description: "Yellow-filter panchromatic, grain" },
-    Style { id: "bleach", label: "Bleach bypass", description: "Desaturated, hard contrast" },
-    Style { id: "cold", label: "Cold", description: "Blue-green cast, crisp" },
-    Style { id: "vintage", label: "Vintage", description: "Faded, warm, vignetted" },
-    Style { id: "dream", label: "Dream", description: "Orton glow, soft highlights" },
-    Style { id: "chroma", label: "Chromatic", description: "Artistic colour fringing and bloom" },
+    Style { id: "original", label: "Original", description: "Your corrections, nothing added",
+            look: None },
+    Style { id: "punch", label: "Punch", description: "Extra local contrast and colour",
+            look: Some(punch) },
+    Style { id: "cinematic", label: "Cinematic", description: "Teal shadows, warm highlights",
+            look: Some(cinematic) },
+    Style { id: "film", label: "Film", description: "Warm portrait stock, soft blacks",
+            look: Some(film) },
+    Style { id: "bw", label: "Black & white", description: "Yellow-filter panchromatic, grain",
+            look: Some(bw) },
+    Style { id: "bleach", label: "Bleach bypass", description: "Desaturated, hard contrast",
+            look: Some(bleach) },
+    Style { id: "cold", label: "Cold", description: "Blue-green cast, crisp",
+            look: Some(cold) },
+    Style { id: "vintage", label: "Vintage", description: "Faded, warm, vignetted",
+            look: Some(vintage) },
+    Style { id: "dream", label: "Dream", description: "Orton glow, soft highlights",
+            look: Some(dream) },
+    Style { id: "chroma", label: "Chromatic", description: "Artistic colour fringing and bloom",
+            look: Some(chroma) },
 ];
+
+/// The look of that name, or nothing if there is no such look.
+pub fn find(id: &str) -> Option<&'static Style> {
+    STYLES.iter().find(|s| s.id == id)
+}
 
 // -------------------------------------------------------------------------
 // helpers
@@ -178,19 +195,9 @@ fn sigma_for(img: &Image, fraction: f32) -> f32 {
 // the looks
 // -------------------------------------------------------------------------
 
-pub fn apply(img: &Image, style_id: &str) -> Image {
-    let mut out = match style_id {
-        "punch" => punch(img),
-        "cinematic" => cinematic(img),
-        "film" => film(img),
-        "bw" => bw(img),
-        "bleach" => bleach(img),
-        "cold" => cold(img),
-        "vintage" => vintage(img),
-        "dream" => dream(img),
-        "chroma" => chroma(img),
-        _ => img.clone(),
-    };
+pub fn apply(img: &Image, style: &Style) -> Image {
+    let Some(look) = style.look else { return img.clone() };
+    let mut out = look(img);
     for v in out.d.iter_mut() {
         *v = v.clamp(0.0, 1.0);
     }
@@ -294,4 +301,41 @@ fn punch(img: &Image) -> Image {
         }
     }
     saturate(&scaled, 1.12)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A name that is not in the table must not resolve to anything.
+    #[test]
+    fn a_name_that_is_not_a_look_does_not_become_one() {
+        assert!(find("warm").is_none(), "made-up names must not resolve");
+        assert!(find("BW").is_none(), "and the match is exact");
+        assert!(find("").is_none());
+        assert!(find("bw").is_some_and(|s| s.look.is_some()));
+    }
+
+    /// The original is a choice in the list and the absence of a look at the
+    /// same time, which is the one case `apply` passes straight through.
+    #[test]
+    fn the_original_is_the_absence_of_a_look() {
+        let original = find("original").expect("the original is always offered");
+        assert!(original.look.is_none());
+        let img = Image::new(4, 4);
+        assert_eq!(apply(&img, original).d, img.d);
+    }
+
+    /// Everything else in the table has to actually do something, or it would
+    /// be an unstyled export wearing a name.
+    #[test]
+    fn every_other_look_has_one() {
+        for style in STYLES.iter().filter(|s| s.id != "original") {
+            assert!(style.look.is_some(), "{} has no look attached", style.id);
+        }
+        for (i, style) in STYLES.iter().enumerate() {
+            assert!(STYLES.iter().skip(i + 1).all(|other| other.id != style.id),
+                    "{} is in the table twice", style.id);
+        }
+    }
 }

@@ -215,10 +215,18 @@ pub extern "C" fn ar_render(settings_ptr: *const u8, settings_len: usize, long_e
     let settings = Settings::from_json(&settings_json);
     let style = String::from_utf8_lossy(unsafe { slice(style_ptr, style_len) }).to_string();
     let edge = if long_edge > 0 { Some(long_edge as usize) } else { None };
+    // A name from outside is only a look if the table says so.
+    let look = match style.as_str() {
+        "" | "original" => None,
+        id => match styles::find(id) {
+            Some(found) => Some(found),
+            None => return set_error(&format!("there is no look called {id}"), "unknown_style"),
+        },
+    };
 
     let out = with_dev(|dev| {
         let mut cb = |f: f32, code: &str| progress(f, code);
-        let (img, report) = dev.render(&settings, &style, edge, crop != 0, Some(&mut cb));
+        let (img, report) = dev.render(&settings, look, edge, crop != 0, Some(&mut cb));
         let toggles = dev.toggles(&settings, &report);
         let eff = crate::geometry::effective_crop(dev.width(), dev.height(), &settings.framing);
         (img, report.to_json(), toggles, eff)
@@ -246,7 +254,7 @@ pub extern "C" fn ar_compare(settings_ptr: *const u8, settings_len: usize, long_
 
     let out = with_dev(|dev| {
         let mut cb = |f: f32, code: &str| progress(f * 0.5, code);
-        let (after, report) = dev.render(&settings, "original", edge, true, Some(&mut cb));
+        let (after, report) = dev.render(&settings, None, edge, true, Some(&mut cb));
         progress(0.5, "baseline");
         let before = dev.baseline(&settings, edge);
         let toggles = dev.toggles(&settings, &report);
@@ -275,7 +283,7 @@ pub extern "C" fn ar_styles_prepare(settings_ptr: *const u8, settings_len: usize
     let edge = (size.max(200).min(1400)) as usize;
     let out = with_dev(|dev| {
         let mut cb = |f: f32, code: &str| progress(f * 0.5, code);
-        let (img, _) = dev.render(&settings, "original", Some(edge), true, Some(&mut cb));
+        let (img, _) = dev.render(&settings, None, Some(edge), true, Some(&mut cb));
         img
     });
     match out {
@@ -300,7 +308,7 @@ pub extern "C" fn ar_style_tile(index: i32) -> i32 {
     let s = &styles::STYLES[i];
     let done = STYLE_BASE.with(|b| {
         b.borrow().as_ref().map(|base| {
-            let img = styles::apply(base, s.id);
+            let img = styles::apply(base, s);
             store(&img);
             (img.w, img.h)
         })
@@ -331,16 +339,34 @@ pub extern "C" fn ar_export(settings_ptr: *const u8, settings_len: usize, style_
     // There is no clock in this target, so the host passes the time in.
     let now = String::from_utf8_lossy(unsafe { slice(now_ptr, now_len) }).to_string();
     let modified = if now.is_empty() { None } else { Some(now.as_str()) };
+    // A name from outside is only a look if the table says so.
+    let look = match style.as_str() {
+        "" | "original" => None,
+        id => match styles::find(id) {
+            Some(found) => Some(found),
+            None => return set_error(&format!("there is no look called {id}"), "unknown_style"),
+        },
+    };
 
     let developed = with_dev(|dev| {
         let mut cb = |f: f32, code: &str| progress(f * 0.8, code);
-        let (img, _) = dev.render(&settings, &style, edge, true, Some(&mut cb));
+        let (img, _) = dev.render(&settings, look, edge, true, Some(&mut cb));
         (img, dev.exif.clone())
     });
     let (img, meta) = match developed {
         Some(pair) => pair,
         None => return set_error("no image open", "no_session"),
     };
+    // When the photograph was taken, so that a bundle can date each member by
+    // it rather than by the moment the zip was written.
+    let captured = meta.iter()
+        .find(|e| e.tag == crate::exif::TAG_DATE_TIME_ORIGINAL)
+        .or_else(|| meta.iter().find(|e| e.tag == crate::exif::TAG_DATE_TIME))
+        .and_then(|e| match &e.value {
+            crate::exif::Value::Ascii(s) => Some(s.trim_end_matches('\0').to_string()),
+            _ => None,
+        });
+
     progress(0.85, "encoding");
     // WebP has no pure-Rust encoder we want to carry, so the worker asks the
     // browser's own canvas encoder for it; everything else is encoded here.
@@ -351,7 +377,7 @@ pub extern "C" fn ar_export(settings_ptr: *const u8, settings_len: usize, style_
         BYTES.with(|b| *b.borrow_mut() = block);
         store(&img);
         set_json(json!({"width": img.w, "height": img.h, "canvas": true, "format": "webp",
-                        "exif": n}));
+                        "captured": captured, "exif": n}));
         progress(1.0, "done");
         return 0;
     }
@@ -361,7 +387,8 @@ pub extern "C" fn ar_export(settings_ptr: *const u8, settings_len: usize, style_
             BYTES.with(|b| *b.borrow_mut() = bytes);
             let spec = output::format_spec(&fmt);
             set_json(json!({"width": img.w, "height": img.h, "bytes": n,
-                            "mime": spec.mime, "ext": spec.ext, "canvas": false}));
+                            "mime": spec.mime, "ext": spec.ext, "canvas": false,
+                            "captured": captured}));
             progress(1.0, "done");
             0
         }

@@ -205,6 +205,7 @@ export default {
   'stage.packaging': 'packaging',
   'stage.ready': 'ready',
 
+  'error.unknown_style': '{message}. The look asked for is not one this version offers, so nothing was exported rather than quietly exporting it without the look.',
   'error.not_a_raw': '{suffix} is not a raw format. autoraw reads {known} and others, but not JPEG or PNG.',
   'error.undecodable': '{file} could not be decoded. It looks damaged, or it is a format the decoder does not support.',
 

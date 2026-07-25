@@ -205,6 +205,7 @@ export default {
   'stage.packaging': 'empaquetando',
   'stage.ready': 'listo',
 
+  'error.unknown_style': '{message}. El estilo que se ha pedido no existe en esta versión, así que no se ha exportado nada en vez de exportarlo sin el estilo y sin avisar.',
   'error.not_a_raw': '{suffix} no es un formato raw. autoraw lee {known} y otros, pero no JPEG ni PNG.',
   'error.undecodable': 'No se ha podido descodificar {file}: parece dañado, o es un formato que el descodificador no admite.',
 

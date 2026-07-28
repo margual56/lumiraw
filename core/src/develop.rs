@@ -7,6 +7,7 @@ use crate::grade::{self, ProcessArgs, Settings, TOGGLES};
 use crate::lensdb::{self, Database, LensMatch};
 use crate::ops::{self, Image};
 use crate::profile::{self, CaptureProfile};
+use crate::straighten;
 use crate::styles;
 use serde_json::{json, Map, Value};
 
@@ -206,6 +207,15 @@ impl Development {
             progress: boxed.take(),
         };
         let mut rgb = grade::process(&src, &s, args, &mut report);
+
+        // Framing is the one step that had nothing of its own to propose, so
+        // the measurement rides along with the preview it was taken from,
+        // against the graded frame rather than the linear one.
+        if long_edge.is_some() {
+            if let Some(hint) = straighten::propose(&rgb, stats_rect) {
+                report.add("framing", hint.to_json());
+            }
+        }
         if let Some(style) = style.filter(|s| s.look.is_some()) {
             rgb = styles::apply(&rgb, style);
             report.add("style", json!({"applied": true, "id": style.id}));

@@ -30,6 +30,7 @@ export const app = $state({
   chosen: ['original'],
   ratio: '',                 // locked crop aspect, '' = free
   coverCrop: null,           // largest empty-corner-free crop for the current tilt
+  framingHint: null,         // what the framing step measured and could offer
   toggles: [],
 
   // What is happening right now, for the progress bar.

@@ -6,6 +6,41 @@
 
   const framing = $derived(app.settings.framing);
 
+  // What the last render measured, when it found something worth offering.
+  const hint = $derived(app.framingHint?.proposed ? app.framingHint : null);
+  const offersTilt = $derived(!!hint && hint.angle !== 0);
+  const offersShift = $derived(!!hint && hint.perspective_v !== 0);
+
+  // Turning an offer down hides that offer, not every future one: a different
+  // measurement is a different question and deserves asking again.
+  let refused = $state('');
+  const offerKey = $derived(hint ? `${hint.angle}|${hint.perspective_v}` : '');
+  const offered = $derived(!!hint && refused !== offerKey);
+
+  // Confidence is already the gate on whether anything is offered at all, so a
+  // number that got this far is worth showing.
+  const unsure = $derived(
+    !!hint && Math.max(offersTilt ? hint.angle_confidence : 0,
+                       offersShift ? hint.perspective_confidence : 0) < 0.35);
+
+  const offerText = $derived.by(() => {
+    if (!hint) return '';
+    const angle = `${n(Math.abs(hint.angle), 1)}°`;
+    if (offersTilt && offersShift) return t('framing.offer.both', { angle });
+    if (offersTilt) return t('framing.offer.tilt', { angle });
+    return t('framing.offer.verticals');
+  });
+
+  function acceptOffer() {
+    // Added to whatever is already set, not written over it.
+    if (offersTilt) framing.angle = Math.round((framing.angle + hint.angle) * 100) / 100;
+    if (offersShift) {
+      const shifted = framing.perspective_v + hint.perspective_v;
+      framing.perspective_v = Math.round(Math.min(0.6, Math.max(-0.6, shifted)) * 1000) / 1000;
+    }
+    refused = offerKey;
+  }
+
   // Where the handle is right now.  It leads `framing.angle` during a drag and
   // catches up when the drag ends.
   let liveAngle = $state(0);
@@ -41,6 +76,7 @@
   function reset() {
     Object.assign(framing,
                   { angle: 0, perspective_v: 0, perspective_h: 0, crop: null, auto_fit: true });
+    refused = '';   // back to square one, so the measurement may speak again
   }
 </script>
 
@@ -59,6 +95,19 @@
   <aside>
     <h2>{t('framing.title')}</h2>
     <p class="lede">{t('framing.lede')}</p>
+
+    {#if offered}
+      <div class="offer" class:unsure>
+        <p>{offerText}</p>
+        {#if unsure}<p class="thin">{t('framing.offer.unsure')}</p>{/if}
+        <div class="actions">
+          <button class="accept" onclick={acceptOffer}>{t('framing.offer.accept')}</button>
+          <button class="ghost" onclick={() => (refused = offerKey)}>
+            {t('framing.offer.refuse')}
+          </button>
+        </div>
+      </div>
+    {/if}
 
     <Slider label={t('framing.tilt')} bind:value={framing.angle}
             min={-45} max={45} step={0.1} format={(v) => `${n(v, 1)}°`}
@@ -92,3 +141,26 @@
     <button class="ghost" onclick={reset}>{t('framing.reset')}</button>
   </aside>
 </div>
+
+<style lang="scss">
+  /*
+   * The same quiet block AutoAmount uses for what the pipeline decided, since
+   * this is the same kind of remark.
+   */
+  .offer {
+    margin: -6px 0 16px; padding: 9px 11px;
+    border-left: 2px solid var(--color-accent);
+    background: var(--color-panel-2); border-radius: 0 6px 6px 0;
+    font-size: 12px; color: var(--color-muted);
+    p { margin: 0; }
+    /* Thin evidence, said in the same place but without the emphasis. */
+    &.unsure { border-left-color: var(--color-line); }
+  }
+  .thin { margin-top: 4px; font-style: italic; font-size: 11.5px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .accept {
+    padding: 4px 10px; border: 0; border-radius: 6px; cursor: pointer;
+    background: var(--color-accent); color: var(--color-bg);
+    font: inherit; font-size: 12px; font-weight: 600;
+  }
+</style>

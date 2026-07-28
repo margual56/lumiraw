@@ -38,12 +38,12 @@ pub struct Options {
     /// tripod, and the cost is a few pyramid levels of bit counting.
     pub align: bool,
     /// How eagerly to reject pixels where the scene itself moved.
-    pub deghost: f32,
+    pub deghost: Option<f32>,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { align: true, deghost: 0.5 }
+        Options { align: true, deghost: None }
     }
 }
 
@@ -149,6 +149,8 @@ pub struct Notes {
     /// The range the compensation dial was asking for, against `range_stops`,
     /// which is the range the frames actually cover.
     pub intended_range_stops: f32,
+    /// The ghost removal that was used, measured or as given.
+    pub deghost_used: f32,
     pub shifts: Vec<(i32, i32)>,
     /// Fraction of the frame where the exposures disagreed enough to be
     /// treated as movement.
@@ -170,6 +172,24 @@ const MEASURE_SPREAD_EV: f32 = 0.25;
 // Two frames this close in exposure are the same exposure, whatever their
 // compensation dials say about it.
 const SAME_EXPOSURE_EV: f32 = 0.5;
+
+// Deghosting.
+const GHOST_LOOSE_SIGMAS: f32 = 16.0;
+const GHOST_TIGHT_SIGMAS: f32 = 6.0;
+// What the measured setting uses, and what the probe that measures it uses:
+// comfortably past anything noise reaches, so what it counts really moved.
+const GHOST_PROBE_SIGMAS: f32 = 10.0;
+// No threshold goes below this, whatever the arithmetic says: see
+// `ghost_tolerance`.
+const GHOST_FLOOR_EV: f32 = 0.25;
+// Less of the frame than this disagreeing is not a moving subject, it is the
+// last of the noise, and substituting for it costs more than it saves.
+const GHOST_QUIET: f32 = 0.0002;
+// More of the frame than this is not ghosting either.
+const GHOST_WHOLESALE: f32 = 0.25;
+// The centre crop the noise constant is read from, matching what the developer
+// does for the same measurement.
+const PROBE_CROP: usize = 640;
 // A step larger than this leaves the tones inside it resting on a single frame.
 const WIDE_GAP_EV: f32 = 2.5;
 
@@ -209,6 +229,30 @@ pub fn measured_stops(a: &Image, b: &Image) -> Option<(f32, f32)> {
     Some((at(0.5).log2(), (at(0.75) / at(0.25)).log2()))
 }
 
+/// The spread shot noise alone puts on a reading, in stops.
+pub fn noise_stops(level: f32, k: f32) -> f32 {
+    k / (level.max(NOISE_FLOOR).sqrt() * std::f32::consts::LN_2)
+}
+
+/// The shot-noise constant of a frame, read off the frame itself.
+const FLOOR_TO_SIGMA: f32 = 5.3;
+
+pub fn shot_noise_constant(img: &Image) -> f32 {
+    let (w, h) = (PROBE_CROP.min(img.w), PROBE_CROP.min(img.h));
+    let crop = img.crop((img.w - w) / 2, (img.h - h) / 2, w, h);
+    let mut root = ops::luminance(&crop);
+    for v in root.d.iter_mut() {
+        *v = v.max(0.0).sqrt();
+    }
+    (2.0 * FLOOR_TO_SIGMA * crate::analyze::noise_floor(&root)).max(1e-6)
+}
+
+/// How far two readings may differ before the difference is worth calling
+/// movement, in stops.
+fn ghost_tolerance(level: f32, k: f32, sigmas: f32) -> f32 {
+    (sigmas * noise_stops(level, k)).max(GHOST_FLOOR_EV)
+}
+
 /// Whether there is any signal here worth reading, from the brightest channel.
 fn signal(level: f32) -> f32 {
     ops::smoothstep(NOISE_FLOOR, TRUSTED_LOW, level)
@@ -220,10 +264,9 @@ fn headroom(value: f32) -> f32 {
     1.0 - ops::smoothstep(TRUSTED_HIGH, CEILING, value)
 }
 
-/// How much a reading of this level deserves to be believed, for a channel
-/// that is the brightest in its pixel.
-fn reliability(level: f32) -> f32 {
-    signal(level) * headroom(level)
+/// Whether the reference frame is entitled to an opinion about this pixel.
+pub fn arbitrable(level: f32) -> bool {
+    signal(level) > 0.0 && level < TRUSTED_HIGH
 }
 
 /// Merge a bracket into one scene-linear frame.
@@ -384,53 +427,105 @@ pub fn merge(frames: &[Frame], options: Options) -> Result<(Image, Notes), Strin
     }
     notes.uncovered = uncovered as f32 / n as f32;
 
-    if options.deghost > 0.0 {
-        notes.ghosted = deghost(&mut out, frames, &scale, &notes.shifts, reference, options.deghost);
+    // What the sensor's own noise looks like in this frame, which is what the
+    // deghosting threshold is denominated in.
+    let k = shot_noise_constant(&frames[reference].linear);
+    let sigmas = match options.deghost {
+        // The control, mapped onto the thing it was always trying to say.
+        Some(amount) if amount <= 0.0 => None,
+        Some(amount) => {
+            let a = amount.clamp(0.0, 1.0);
+            Some(GHOST_LOOSE_SIGMAS + a * (GHOST_TIGHT_SIGMAS - GHOST_LOOSE_SIGMAS))
+        }
+        // Or measure it. Count what disagrees by more than noise can account
+        // for, and let that decide whether there is anything to remove.
+        None => {
+            let moving = probe_movement(&out, frames, &scale, &notes.shifts, reference, k);
+            // Carried as a percentage, because that is the unit the sentence
+            // written about it reads in, the way the other findings carry
+            // stops.
+            let found = |code| Finding::new(code, Vec::new(), moving * 100.0);
+            if moving < GHOST_QUIET {
+                notes.findings.push(found("movement_none"));
+                None
+            } else if moving > GHOST_WHOLESALE {
+                notes.findings.push(found("movement_wholesale"));
+                None
+            } else {
+                notes.findings.push(found("movement"));
+                Some(GHOST_PROBE_SIGMAS)
+            }
+        }
+    };
+    if let Some(sigmas) = sigmas {
+        notes.deghost_used = ((GHOST_LOOSE_SIGMAS - sigmas)
+            / (GHOST_LOOSE_SIGMAS - GHOST_TIGHT_SIGMAS)).clamp(0.0, 1.0);
+        notes.ghosted = deghost(&mut out, frames, &scale, &notes.shifts, reference, k, sigmas);
     }
     Ok((out, notes))
 }
 
-/// Replace pixels where the frames disagree about the scene with the reference
-/// frame's own reading.
-fn deghost(out: &mut Image, frames: &[Frame], scale: &[f32], shifts: &[(i32, i32)],
-           reference: usize, amount: f32) -> f32 {
-    let (w, h) = (out.w, out.h);
+/// Replace pixels where the frames disagree about the scene with the reference frame's own reading.
+fn visit(frames: &[Frame], shifts: &[(i32, i32)], reference: usize, scale: &[f32],
+         w: usize, h: usize, mut look: impl FnMut(usize, f32, [f32; 3])) {
     let (dx, dy) = shifts[reference];
-    // A generous threshold at amount 0, tightening as the control rises.
-    let tolerance = 0.9 - 0.7 * amount.clamp(0.0, 1.0);
-    let mut moved = 0usize;
-
+    let s = scale[reference];
     for y in 0..h {
         let sy = (y as i32 + dy).clamp(0, h as i32 - 1) as usize;
         for x in 0..w {
             let sx = (x as i32 + dx).clamp(0, w as i32 - 1) as usize;
             let src = (sy * w + sx) * 3;
-            let dst = (y * w + x) * 3;
             let px = [frames[reference].linear.d[src], frames[reference].linear.d[src + 1],
                       frames[reference].linear.d[src + 2]];
             let level = px[0].max(px[1]).max(px[2]);
-            // The reference can only arbitrate where it saw something itself.
-            if reliability(level) <= 0.0 {
+            if !arbitrable(level) {
                 continue;
             }
-            let theirs = [out.d[dst], out.d[dst + 1], out.d[dst + 2]];
-            let mine = [px[0] * scale[reference], px[1] * scale[reference],
-                        px[2] * scale[reference]];
-            let a = mine[0].max(mine[1]).max(mine[2]).max(1e-6);
-            let b = theirs[0].max(theirs[1]).max(theirs[2]).max(1e-6);
-            // Compare as a ratio: a disagreement matters in proportion to how
-            // much light is there, not in absolute terms.
-            let disagreement = (a / b).log2().abs();
-            if disagreement > tolerance {
-                moved += 1;
-                for c in 0..3 {
-                    out.d[dst + c] = mine[c];
-                }
-            }
+            look((y * w + x) * 3, level, [px[0] * s, px[1] * s, px[2] * s]);
         }
     }
+}
+
+/// How far apart two readings of the same pixel are, in stops.
+fn disagreement(mine: [f32; 3], theirs: [f32; 3]) -> f32 {
+    let a = mine[0].max(mine[1]).max(mine[2]).max(1e-6);
+    let b = theirs[0].max(theirs[1]).max(theirs[2]).max(1e-6);
+    (a / b).log2().abs()
+}
+
+/// What share of the arbitrable frame disagrees by more than noise explains,
+/// without changing anything.
+fn probe_movement(out: &Image, frames: &[Frame], scale: &[f32], shifts: &[(i32, i32)],
+                  reference: usize, k: f32) -> f32 {
+    let mut moved = 0usize;
+    let mut looked = 0usize;
+    visit(frames, shifts, reference, scale, out.w, out.h, |dst, level, mine| {
+        looked += 1;
+        let theirs = [out.d[dst], out.d[dst + 1], out.d[dst + 2]];
+        if disagreement(mine, theirs) > ghost_tolerance(level, k, GHOST_PROBE_SIGMAS) {
+            moved += 1;
+        }
+    });
+    if looked == 0 { 0.0 } else { moved as f32 / looked as f32 }
+}
+
+/// Put the reference frame back wherever the merge cannot be believed.
+fn deghost(out: &mut Image, frames: &[Frame], scale: &[f32], shifts: &[(i32, i32)],
+           reference: usize, k: f32, sigmas: f32) -> f32 {
+    let (w, h) = (out.w, out.h);
+    let mut moved = 0usize;
+    visit(frames, shifts, reference, scale, w, h, |dst, level, mine| {
+        let theirs = [out.d[dst], out.d[dst + 1], out.d[dst + 2]];
+        if disagreement(mine, theirs) > ghost_tolerance(level, k, sigmas) {
+            moved += 1;
+            for c in 0..3 {
+                out.d[dst + c] = mine[c];
+            }
+        }
+    });
     moved as f32 / (w * h) as f32
 }
+
 
 // -------------------------------------------------------------------------
 // alignment
@@ -593,7 +688,7 @@ mod tests {
     fn the_merge_reaches_past_any_one_exposure() {
         let frames = bracket((0, 0));
         let single = &frames[1].linear;
-        let (merged, notes) = merge(&frames, Options { align: false, deghost: 0.0 }).unwrap();
+        let (merged, notes) = merge(&frames, Options { align: false, deghost: Some(0.0) }).unwrap();
 
         assert_eq!(notes.reference, 1, "the middle exposure should be the reference");
         assert!((notes.range_stops - 4.0).abs() < 0.01, "bracket spans 4 stops: {notes:?}");
@@ -639,7 +734,7 @@ mod tests {
         frames[2].meta.shutter_s *= 4.0;
         assert!((frames[2].stops_from(&frames[1]) - (true_stops + 2.0)).abs() < 1e-3);
 
-        let (_, notes) = merge(&frames, Options { align: false, deghost: 0.0 }).expect("merge");
+        let (_, notes) = merge(&frames, Options { align: false, deghost: Some(0.0) }).expect("merge");
         assert!(notes.remeasured[2], "the lie should have been caught");
         assert!((notes.stops[2] - true_stops).abs() < 0.35,
                 "should be put back where its pixels say it belongs: {} vs {true_stops}",
@@ -657,7 +752,7 @@ mod tests {
         frames[0].meta.exposure_comp = -3.0;
         frames[2].meta.exposure_comp = 2.0;
 
-        let (_, notes) = merge(&frames, Options { align: false, deghost: 0.0 }).expect("merge");
+        let (_, notes) = merge(&frames, Options { align: false, deghost: Some(0.0) }).expect("merge");
         let told = notes.findings.iter().find(|f| f.code == "dial_ignored")
             .expect("the photographer should be told the camera did not deliver");
         assert_eq!(told.frames, vec![0, 1],
@@ -699,8 +794,151 @@ mod tests {
     /// not be believed.
     #[test]
     fn clipped_and_buried_readings_are_not_trusted() {
-        assert_eq!(reliability(0.999), 0.0, "a clipped pixel knows nothing");
-        assert_eq!(reliability(0.0), 0.0, "neither does one below the noise");
-        assert!(reliability(0.35) > 0.99, "a well exposed one is worth listening to");
+        assert_eq!(headroom(0.999), 0.0, "a clipped pixel knows nothing");
+        assert_eq!(signal(0.0), 0.0, "neither does one below the noise");
+        assert!(signal(0.35) * headroom(0.35) > 0.99,
+                "a well exposed one is worth listening to");
+        // And the pair of them are what decides whether the reference frame
+        // gets a say, which is where believing a clipped reading did real harm.
+        assert!(!arbitrable(0.999), "a clipped reference frame arbitrated anyway");
+        assert!(!arbitrable(0.0), "a reference frame below its noise arbitrated anyway");
+        assert!(arbitrable(0.35), "a well exposed reference frame was not allowed to speak");
     }
+
+    /// Shot noise, laid over a bracket so the deghosting has something to be
+    /// confused by.
+    fn add_shot_noise(frames: &mut [Frame], strength: f32) {
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut unit = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 40) as f32 / 16_777_216.0
+        };
+        for frame in frames.iter_mut() {
+            for v in frame.linear.d.iter_mut() {
+                // Four uniforms make a passable normal, once the variance of
+                // their sum is scaled back to one.
+                let z = (unit() + unit() + unit() + unit() - 2.0) * 1.732;
+                *v = (*v + strength * v.max(0.0).sqrt() * z).clamp(0.0, 1.0);
+            }
+        }
+    }
+
+    /// A rectangle of one frame filled with what lies to its left, which is
+    /// what an object moving between exposures does to a bracket.
+    const MOVED: (usize, usize, usize, usize) = (44, 20, 40, 56);
+    const MOVED_BY: usize = 24;
+
+    fn displace(frame: &mut Frame) {
+        let (x0, y0, pw, ph) = MOVED;
+        let w = frame.linear.w;
+        let source = frame.linear.d.clone();
+        for y in y0..y0 + ph {
+            for x in x0..x0 + pw {
+                let from = (y * w + x - MOVED_BY) * 3;
+                let to = (y * w + x) * 3;
+                for c in 0..3 {
+                    frame.linear.d[to + c] = source[from + c];
+                }
+            }
+        }
+    }
+
+    fn moved_patch_contains(x: usize, y: usize) -> bool {
+        let (x0, y0, pw, ph) = MOVED;
+        x >= x0 && x < x0 + pw && y >= y0 && y < y0 + ph
+    }
+
+    /// Which pixels a setting substituted, found by merging twice and
+    /// comparing, so the test cannot drift away from the rule it is checking.
+    fn substituted(frames: &[Frame], deghost: Option<f32>) -> (usize, usize, usize) {
+        let off = Options { align: false, deghost: Some(0.0) };
+        let (clean, notes) = merge(frames, off).unwrap();
+        let (out, _) = merge(frames, Options { align: false, deghost }).unwrap();
+        let reference = &frames[notes.reference].linear;
+        let (w, h) = (clean.w, clean.h);
+        let (mut inside, mut outside, mut arbitrable_in_patch) = (0, 0, 0);
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 3;
+                let level = reference.d[i].max(reference.d[i + 1]).max(reference.d[i + 2]);
+                if !arbitrable(level) {
+                    continue;
+                }
+                if moved_patch_contains(x, y) {
+                    arbitrable_in_patch += 1;
+                }
+                if (0..3).any(|c| out.d[i + c] != clean.d[i + c]) {
+                    if moved_patch_contains(x, y) {
+                        inside += 1;
+                    } else {
+                        outside += 1;
+                    }
+                }
+            }
+        }
+        (inside, outside, arbitrable_in_patch)
+    }
+
+    /// What the probe measured, back out of the percentage the finding
+    /// reports it in.
+    fn measured(notes: &Notes) -> f32 {
+        notes.findings.iter().find(|f| f.code.starts_with("movement")).unwrap().value / 100.0
+    }
+
+    /// The bug this whole change exists for.
+    #[test]
+    fn noise_alone_is_not_movement() {
+        let mut frames = bracket((0, 0));
+        add_shot_noise(&mut frames, 0.002);
+        let (_, notes) = merge(&frames, Options { align: false, deghost: None }).unwrap();
+        let moving = measured(&notes);
+        assert!(moving < GHOST_QUIET, "nothing moved, yet {moving} of the frame was called movement");
+        assert!(moving < GHOST_WHOLESALE, "the wholesale guard, not the noise model, would be deciding this");
+        assert!(notes.findings.iter().any(|f| f.code == "movement_none"),
+                "the merge decided to remove nothing without saying so");
+        assert_eq!(notes.ghosted, 0.0, "the merge was substituted into on a static scene");
+        assert_eq!(notes.deghost_used, 0.0);
+    }
+
+    /// And the other half: something that did move still gets caught.
+    #[test]
+    fn real_movement_is_still_caught() {
+        let mut frames = bracket((0, 0));
+        add_shot_noise(&mut frames, 0.002);
+        // The longest exposure carries the most weight down here, so moving
+        // part of it is the case the merge is least able to ignore.
+        displace(&mut frames[2]);
+        let (_, notes) = merge(&frames, Options { align: false, deghost: None }).unwrap();
+        let moving = measured(&notes);
+        assert!(moving > GHOST_QUIET, "a displaced patch went unnoticed: {moving}");
+        assert!(notes.findings.iter().any(|f| f.code == "movement"),
+                "movement was acted on without saying so");
+        assert!(notes.deghost_used > 0.0, "movement was found and then not acted on");
+
+        let (inside, outside, patch) = substituted(&frames, None);
+        let caught = inside as f32 / patch as f32;
+        let elsewhere = outside as f32 / (patch * 4).max(1) as f32;
+        assert!(caught > 0.8, "only {caught} of the moving patch was rejected");
+        assert!(elsewhere < 0.05, "{elsewhere} of the still part of the scene was rejected too");
+    }
+
+    /// The control has to keep working, and keep pointing the way it reads.
+    #[test]
+    fn the_control_overrides_the_measurement() {
+        let mut frames = bracket((0, 0));
+        add_shot_noise(&mut frames, 0.002);
+        displace(&mut frames[2]);
+        let at = |amount: f32| {
+            let options = Options { align: false, deghost: Some(amount) };
+            merge(&frames, options).unwrap().1
+        };
+        assert_eq!(at(0.0).ghosted, 0.0, "a control reading none still removed something");
+        assert!(at(1.0).ghosted >= at(0.5).ghosted, "the control is not monotonic");
+        assert_eq!(at(0.5).deghost_used, 0.5, "an explicit setting was not the one used");
+        assert!(at(0.5).findings.iter().all(|f| !f.code.starts_with("movement")),
+                "an overridden merge reported a measurement it did not make");
+    }
+
 }

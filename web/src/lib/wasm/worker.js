@@ -375,7 +375,8 @@ function mergeReset() {
 
 /** Merge the bracket; the result becomes the frame the wizard develops. */
 async function mergeFinish({ align, deghost }) {
-  const rc = wasm.ar_merge_finish(align ? 1 : 0, deghost ?? 0.5);
+  // A negative amount asks the merge to measure one, which is the default.
+  const rc = wasm.ar_merge_finish(align ? 1 : 0, deghost ?? -1);
   const info = readJson();
   if (rc !== 0) fail(info);
   return info;

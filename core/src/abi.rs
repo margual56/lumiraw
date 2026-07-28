@@ -460,7 +460,11 @@ pub extern "C" fn ar_merge_add(name_ptr: *const u8, name_len: usize, ptr: *const
 /// Merge what has been gathered and make the result the frame being developed.
 #[no_mangle]
 pub extern "C" fn ar_merge_finish(align: i32, deghost: f32) -> i32 {
-    let options = crate::merge::Options { align: align != 0, deghost: deghost.clamp(0.0, 1.0) };
+    // A negative amount asks the merge to measure one instead of being told.
+    let options = crate::merge::Options {
+        align: align != 0,
+        deghost: if deghost < 0.0 { None } else { Some(deghost.clamp(0.0, 1.0)) },
+    };
     progress(0.15, "merging");
     let merged = BRACKET.with(|b| {
         let frames = b.borrow();
@@ -497,6 +501,9 @@ pub extern "C" fn ar_merge_finish(align: i32, deghost: f32) -> i32 {
             "range_stops": ev(notes.range_stops),
             "shifts": notes.shifts.iter().map(|(x, y)| vec![*x, *y]).collect::<Vec<_>>(),
             "ghosted": (notes.ghosted * 10000.0).round() / 10000.0,
+            // What the deghosting was set to, so the interface can say so when
+            // it was the merge rather than the photographer that chose it.
+            "deghost_used": (notes.deghost_used * 100.0).round() / 100.0,
             "uncovered": (notes.uncovered * 10000.0).round() / 10000.0,
             // What the photographer asked for, against what the frames turned
             // out to be. These differ when the camera ran out of shutter.

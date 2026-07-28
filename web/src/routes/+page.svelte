@@ -110,6 +110,7 @@
           // The angle travels with the image.
           app.frame = { key, image: out.image, angle: app.settings.framing.angle };
           app.coverCrop = out.cover_crop;
+          app.framingHint = out.report?.framing ?? null;
           app.toggles = out.toggles;
         });
       } else if ([EXPOSURE, WB, VIBRANCE].includes(step) && app.preview.key !== key) {

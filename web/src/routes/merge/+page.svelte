@@ -12,6 +12,9 @@
   /** One entry per frame the module is holding, in the order it holds them. */
   let frames = $state([]);
   let align = $state(true);
+  // Automatic by default: the merge can measure how much of the scene actually
+  // moved, and a fixed setting cannot. The slider is still here to overrule it.
+  let deghostAuto = $state(true);
   let deghost = $state(0.5);
   let result = $state(null);
   let error = $state('');
@@ -120,7 +123,7 @@
     app.busyKey = 'busy.merge';
     app.busyParams = {};
     try {
-      const info = await api.mergeFinish({ align, deghost });
+      const info = await api.mergeFinish({ align, deghost: deghostAuto ? -1 : deghost });
       // The module hands its frames to the merge and keeps nothing, so the list
       // has to go with them.
       result = {
@@ -264,10 +267,25 @@
             <div class="row">
               <strong>{t('merge.deghost')}</strong>
               <span class="value">
-                {deghost === 0 ? t('merge.deghostOff') : `${n(deghost * 100, 0)} %`}
+                {#if deghostAuto}
+                  {result?.merge?.deghost_used == null
+                    ? t('merge.deghostAuto')
+                    : t('merge.deghostChose',
+                        { value: n(result.merge.deghost_used * 100, 0) })}
+                {:else}
+                  {deghost === 0 ? t('merge.deghostOff') : `${n(deghost * 100, 0)} %`}
+                {/if}
               </span>
             </div>
-            <input type="range" min="0" max="1" step="0.05" bind:value={deghost} />
+            <input
+              type="range" min="0" max="1" step="0.05"
+              bind:value={deghost}
+              oninput={() => (deghostAuto = false)}
+            />
+            <label class="auto">
+              <input type="checkbox" bind:checked={deghostAuto} />
+              <span>{t('merge.deghostAuto')}</span>
+            </label>
             <small>{t('merge.deghostHint')}</small>
           </div>
           <button
@@ -442,6 +460,12 @@
       color: var(--color-muted); font-size: 12.5px; font-variant-numeric: tabular-nums;
     }
     input[type='range'] { width: 100%; margin: 6px 0 2px; accent-color: var(--color-accent); }
+    .auto {
+      display: flex; align-items: center; gap: 6px; margin: 2px 0 6px;
+      color: var(--color-muted); font-size: 12.5px;
+      input[type='checkbox'] { margin-top: 0; width: 14px; height: 14px; }
+      span { display: inline; }
+    }
     small { display: block; }
   }
   .run { margin-top: 4px; }

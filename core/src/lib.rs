@@ -18,4 +18,5 @@ pub mod merge;
 pub mod ops;
 pub mod output;
 pub mod profile;
+pub mod straighten;
 pub mod styles;

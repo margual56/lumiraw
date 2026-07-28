@@ -120,7 +120,175 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, String> {
     Ok(Decoded { img: orient(&cam, raw.orientation), meta })
 }
 
-/// Recover blown highlights to neutral instead of a colour.
+/// One cell of the hue field per this many pixels each way.
+const HUE_SCALE: usize = 4;
+
+/// What colour the neighbourhood is, everywhere, including where the sensor
+/// stopped recording it.
+struct HueField {
+    /// Three proportions per cell, summing to one.
+    d: Vec<f32>,
+    /// How much of each cell is a real measurement rather than filled in.
+    wt: Vec<f32>,
+    w: usize,
+    h: usize,
+}
+
+impl HueField {
+    fn at(&self, x: usize, y: usize) -> [f32; 3] {
+        let u = (x as f32 + 0.5) / HUE_SCALE as f32 - 0.5;
+        let v = (y as f32 + 0.5) / HUE_SCALE as f32 - 0.5;
+        sample_field(&self.d, &self.wt, self.w, self.h, u, v).0
+    }
+}
+
+/// A bilinear read of a field, weighted so that a cell nothing is known about
+/// contributes nothing rather than contributing black.
+fn sample_field(d: &[f32], wt: &[f32], w: usize, h: usize, u: f32, v: f32) -> ([f32; 3], f32) {
+    let (x0, y0) = (u.floor(), v.floor());
+    let (fx, fy) = (u - x0, v - y0);
+    let mut acc = [0f32; 3];
+    let mut acc_w = 0.0f32;
+    for (dy, wy) in [(0i32, 1.0 - fy), (1, fy)] {
+        for (dx, wx) in [(0i32, 1.0 - fx), (1, fx)] {
+            let xi = (x0 as i32 + dx).clamp(0, w as i32 - 1) as usize;
+            let yi = (y0 as i32 + dy).clamp(0, h as i32 - 1) as usize;
+            let j = yi * w + xi;
+            let k = wx * wy * wt[j];
+            if k <= 0.0 {
+                continue;
+            }
+            for c in 0..3 {
+                acc[c] += d[j * 3 + c] * k;
+            }
+            acc_w += k;
+        }
+    }
+    if acc_w > 0.0 {
+        for c in 0..3 {
+            acc[c] /= acc_w;
+        }
+    }
+    (acc, acc_w)
+}
+
+/// The colour around every point, with the holes the highlights punched in it
+/// filled in from their edges.
+fn surrounding_hue(img: &Image, onset: &[f32; 3], limit: &[f32; 3]) -> Option<HueField> {
+    let (w, h) = (img.w.div_ceil(HUE_SCALE), img.h.div_ceil(HUE_SCALE));
+    let mut d = vec![0f32; w * h * 3];
+    let mut wt = vec![0f32; w * h];
+
+    // Every other pixel each way.
+    for y in (0..img.h).step_by(2) {
+        for x in (0..img.w).step_by(2) {
+            let i = (y * img.w + x) * 3;
+            let px = &img.d[i..i + 3];
+            // Nowhere near any ceiling is the overwhelmingly common case, and
+            // three smoothsteps twenty million times is worth not doing.
+            let clear = px[0] < onset[0] && px[1] < onset[1] && px[2] < onset[2];
+            // Only a pixel with every channel still in range describes a
+            // colour.
+            let known = if clear {
+                1.0
+            } else {
+                let blown = blown_at(px, onset, limit);
+                1.0 - blown[0].max(blown[1]).max(blown[2])
+            };
+            let sum = px[0] + px[1] + px[2];
+            if known <= 0.0 || sum <= 1e-6 {
+                continue;
+            }
+            let j = (y / HUE_SCALE) * w + x / HUE_SCALE;
+            for c in 0..3 {
+                d[j * 3 + c] += known * px[c] / sum;
+            }
+            wt[j] += known;
+        }
+    }
+    for j in 0..w * h {
+        if wt[j] > 0.0 {
+            for c in 0..3 {
+                d[j * 3 + c] /= wt[j];
+            }
+            wt[j] = 1.0;
+        }
+    }
+    if wt.iter().all(|v| *v <= 0.0) {
+        return None;
+    }
+
+    // Coarsen until the largest hole has closed over.
+    let mut levels = vec![(d, wt, w, h)];
+    while levels.last().map_or(false, |(_, _, lw, lh)| *lw > 1 || *lh > 1) {
+        let (pd, pwt, lw, lh) = levels.last().unwrap();
+        let (nw, nh) = (lw.div_ceil(2), lh.div_ceil(2));
+        let mut nd = vec![0f32; nw * nh * 3];
+        let mut nwt = vec![0f32; nw * nh];
+        for y in 0..*lh {
+            for x in 0..*lw {
+                let i = y * lw + x;
+                if pwt[i] <= 0.0 {
+                    continue;
+                }
+                let j = (y / 2) * nw + x / 2;
+                for c in 0..3 {
+                    nd[j * 3 + c] += pd[i * 3 + c] * pwt[i];
+                }
+                nwt[j] += pwt[i];
+            }
+        }
+        for j in 0..nw * nh {
+            if nwt[j] > 0.0 {
+                for c in 0..3 {
+                    nd[j * 3 + c] /= nwt[j];
+                }
+                nwt[j] = nwt[j].min(1.0);
+            }
+        }
+        levels.push((nd, nwt, nw, nh));
+    }
+
+    // Refine back down, keeping what was measured and taking the rest from the
+    // level above.
+    for k in (0..levels.len() - 1).rev() {
+        let (cd, cwt, cw, ch) = levels[k + 1].clone();
+        let (fd, fwt, fw, fh) = &mut levels[k];
+        for y in 0..*fh {
+            for x in 0..*fw {
+                let i = y * *fw + x;
+                let here = fwt[i];
+                if here >= 1.0 {
+                    continue;
+                }
+                let u = (x as f32 - 0.5) * 0.5;
+                let v = (y as f32 - 0.5) * 0.5;
+                let (above, above_w) = sample_field(&cd, &cwt, cw, ch, u, v);
+                if above_w <= 0.0 {
+                    continue;
+                }
+                for c in 0..3 {
+                    fd[i * 3 + c] = fd[i * 3 + c] * here + above[c] * (1.0 - here);
+                }
+                fwt[i] = here + above_w * (1.0 - here);
+            }
+        }
+    }
+
+    let (d, wt, w, h) = levels.swap_remove(0);
+    Some(HueField { d, wt, w, h })
+}
+
+/// How far each channel has run out of range.
+fn blown_at(px: &[f32], onset: &[f32; 3], limit: &[f32; 3]) -> [f32; 3] {
+    [
+        smoothstep(onset[0], limit[0], px[0]),
+        smoothstep(onset[1], limit[1], px[1]),
+        smoothstep(onset[2], limit[2], px[2]),
+    ]
+}
+
+/// Recover blown highlights from what surrounds them.
 fn reconstruct_highlights(img: &mut Image, wb: &[f32; 3]) {
     // Where recovery starts, as a fraction of each channel's own ceiling.
     const ONSET: f32 = 0.96;
@@ -130,30 +298,78 @@ fn reconstruct_highlights(img: &mut Image, wb: &[f32; 3]) {
     let limit = [wb[0].max(1e-6), wb[1].max(1e-6), wb[2].max(1e-6)];
     let onset = [ONSET * limit[0], ONSET * limit[1], ONSET * limit[2]];
 
-    for px in img.d.chunks_exact_mut(3) {
-        let blown = [
-            smoothstep(onset[0], limit[0], px[0]),
-            smoothstep(onset[1], limit[1], px[1]),
-            smoothstep(onset[2], limit[2], px[2]),
-        ];
-        if blown[0] + blown[1] + blown[2] <= 0.0 {
-            continue;
-        }
-
-        // Green first, and from the average of the other two rather than from
-        // the brightest of them.
-        let mid = 0.5 * (px[0] + px[2]);
-        px[1] += blown[1] * (mid - px[1]).max(0.0);
-
-        // How far gone the pixel is overall.
-        let mut order = blown;
-        order.sort_by(|a, b| b.partial_cmp(a).unwrap());
-        let core = order[1];
-        if core > 0.0 {
+    let Some(hues) = surrounding_hue(img, &onset, &limit) else {
+        // Not one pixel in the frame kept all three channels, so there is
+        // nothing to carry inward and every highlight is on its own.
+        for px in img.d.chunks_exact_mut(3) {
+            let blown = blown_at(px, &onset, &limit);
+            if blown[0] + blown[1] + blown[2] <= 0.0 {
+                continue;
+            }
             let hi = px[0].max(px[1]).max(px[2]);
             for c in 0..3 {
-                px[c] += core * (hi - px[c]);
+                px[c] += blown[c] * (hi - px[c]);
             }
+        }
+        return;
+    };
+
+    for y in 0..img.h {
+        for x in 0..img.w {
+            let i = (y * img.w + x) * 3;
+            let px = [img.d[i], img.d[i + 1], img.d[i + 2]];
+            // Comparisons before smoothsteps: almost every pixel in a frame is
+            // nowhere near a ceiling and can be dismissed in three loads.
+            if px[0] < onset[0] && px[1] < onset[1] && px[2] < onset[2] {
+                continue;
+            }
+            let blown = blown_at(&px, &onset, &limit);
+            if blown[0] + blown[1] + blown[2] <= 0.0 {
+                continue;
+            }
+
+            let mut v = px;
+
+            // One channel gone leaves two that still describe the colour, and
+            // green is the one worth rebuilding because it sits between the
+            // others in wavelength.
+            let mid = 0.5 * (v[0] + v[2]);
+            v[1] += blown[1] * (mid - v[1]).max(0.0);
+
+            // How far gone the pixel is overall.
+            let mut order = blown;
+            order.sort_by(|a, b| b.partial_cmp(a).unwrap());
+            let core = order[1];
+            if core <= 0.0 {
+                img.d[i..i + 3].copy_from_slice(&v);
+                continue;
+            }
+
+            // Here is where the surroundings earn their keep.
+            let hue = hues.at(x, y);
+            let (mut scale, mut anchor) = (0.0f32, 0.0f32);
+            for c in 0..3 {
+                let known = 1.0 - blown[c];
+                if known > 0.0 && hue[c] > 1e-4 {
+                    scale += known * v[c] / hue[c];
+                    anchor += known;
+                }
+            }
+            let hi = v[0].max(v[1]).max(v[2]);
+            let scale = if anchor > 1e-4 { scale / anchor } else { 0.0 };
+            // Brightness washes colour out, so the hue at the rim of a blown
+            // sun is the most saturated it ever gets and the core really is
+            // white.
+            let trust = (0.5 * anchor).clamp(0.0, 1.0);
+            for c in 0..3 {
+                // Bounded at both ends: below by where it already is, which is
+                // its ceiling, and above by the brightest channel the pixel
+                // still has.
+                let from_neighbours = (scale * hue[c]).clamp(v[c], hi);
+                let want = from_neighbours * trust + hi * (1.0 - trust);
+                v[c] += core * (want - v[c]);
+            }
+            img.d[i..i + 3].copy_from_slice(&v);
         }
     }
 }
@@ -418,6 +634,62 @@ mod tests {
         assert!(img.d[4] < 0.1 && img.d[5] < 0.1, "red subject was neutralised: {:?}", &img.d[3..6]);
         // and an ordinary pixel is untouched
         assert_eq!(&img.d[6..9], &[0.30, 0.12, 0.18]);
+    }
+
+    /// A blown region has to keep the colour of what is around it rather than
+    /// going grey in the middle.
+    #[test]
+    fn a_blown_region_keeps_the_colour_around_it() {
+        let wb = [1.0f32, 0.36, 0.55];
+        let (w, h) = (64usize, 64usize);
+        let mut img = Image::new(w, h);
+        // A warm sky, every channel comfortably inside its own ceiling.
+        let sky = [0.30f32, 0.20, 0.12];
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 3;
+                img.d[i..i + 3].copy_from_slice(&sky);
+                let (dx, dy) = (x as f32 - 32.0, y as f32 - 24.0);
+                if dx * dx + dy * dy < 12.0 * 12.0 {
+                    // Green and blue sitting on their ceilings, red still
+                    // climbing: two channels gone and one measurement left.
+                    img.d[i..i + 3].copy_from_slice(&[0.80, wb[1], wb[2]]);
+                }
+            }
+        }
+        reconstruct_highlights(&mut img, &wb);
+
+        let middle = {
+            let i = (24 * w + 32) * 3;
+            [img.d[i], img.d[i + 1], img.d[i + 2]]
+        };
+        assert!(middle[1] > wb[1] && middle[2] > wb[2],
+                "the lost channels should have been rebuilt, not left at their \
+                 ceilings: {middle:?}");
+        assert!(middle[0] > middle[1] && middle[0] > middle[2],
+                "the warmth of the surrounding sky should have carried inward: {middle:?}");
+        let spread = middle[0] / middle[1].min(middle[2]).max(1e-6);
+        assert!(spread > 1.05, "the middle went neutral, which is the flat disc \
+                 this exists to avoid: {middle:?}");
+        // And the sky itself is none of this function's business.
+        let corner = [img.d[0], img.d[1], img.d[2]];
+        assert_eq!(corner, sky, "an unblown pixel was touched: {corner:?}");
+    }
+
+    /// With nothing unblown anywhere there is no colour to carry and no
+    /// brightness to anchor, and neutral is the only honest answer.
+    #[test]
+    fn a_frame_with_nothing_left_goes_neutral() {
+        let wb = [1.0f32, 0.36, 0.55];
+        let mut img = Image::new(8, 8);
+        for px in img.d.chunks_exact_mut(3) {
+            px.copy_from_slice(&[1.0, wb[1], wb[2]]);
+        }
+        reconstruct_highlights(&mut img, &wb);
+        for px in img.d.chunks_exact(3) {
+            let spread = px[0].max(px[1]).max(px[2]) / px[0].min(px[1]).min(px[2]).max(1e-6);
+            assert!(spread < 1.02, "a wholly blown frame should be white: {px:?}");
+        }
     }
 
     /// Anything that is really a file offset has to be left behind: it points

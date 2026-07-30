@@ -65,6 +65,22 @@
   const named = (finding) =>
     finding.frames.map((i) => frames[i]?.name).filter(Boolean).join(', ');
 
+  /** The brackets the module found in what was dropped, if it found more than one. */
+  const brackets = $derived(findings.filter((f) => f.code === 'separate_shot')
+    .map((f) => f.frames));
+  const split = $derived(brackets.length > 1);
+
+  // The split has a panel of its own, with an action beside each bracket, so
+  // it does not belong in the list of sentences underneath as well.
+  const remarks = $derived(findings.filter((f) => f.code !== 'separate_shot'));
+
+  // How far apart a bracket's own frames are, which is what decides whether
+  // it is worth merging at all.
+  const spanOf = (members) => {
+    const light = members.map((i) => frames[i]?.exposure).filter((e) => e > 0);
+    return light.length > 1 ? Math.log2(Math.max(...light) / Math.min(...light)) : 0;
+  };
+
   // Both frames of a pair are named in the finding, since the pair is what is
   // wrong.
   const dialIgnored = $derived(new Set(
@@ -106,6 +122,19 @@
     await api.mergeRemove(index).catch(() => {});
     frames = frames.filter((_, i) => i !== index);
     await check();
+  }
+
+  /** Keep one of the brackets that were found, and merge it. */
+  async function mergeOnly(members) {
+    error = '';
+    const keep = new Set(members);
+    for (let i = frames.length - 1; i >= 0; i -= 1) {
+      if (keep.has(i)) continue;
+      await api.mergeRemove(i).catch(() => {});
+      frames = frames.filter((_, j) => j !== i);
+    }
+    await check();
+    await run();
   }
 
   async function clear() {
@@ -207,6 +236,41 @@
       {#if error}<p class="error">{error}</p>{/if}
 
       {#if frames.length}
+        {#if split}
+          <!--
+            First, above the list of frames, because until this is settled the list
+            underneath is a list of unrelated photographs and everything it says about
+            "this bracket" is about a bracket that does not exist.
+          -->
+          <section class="panel split">
+            <h2>{t('merge.split.title', { count: brackets.length })}</h2>
+            <p>{t('merge.split.body')}</p>
+            <ul class="brackets">
+              {#each brackets as members, nth (nth)}
+                <li>
+                  <span class="which">{nth + 1}</span>
+                  <span class="what">
+                    <strong>{members.map((i) => frames[i]?.name).join(', ')}</strong>
+                    <small>
+                      {members.length > 1
+                        ? t('merge.split.frames', { count: members.length,
+                                                    range: n(spanOf(members), 1) })
+                        : t('merge.split.single')}
+                    </small>
+                  </span>
+                  {#if members.length > 1}
+                    <button
+                      class="small"
+                      disabled={app.busy}
+                      onclick={() => mergeOnly(members)}
+                    >{t('merge.split.merge', { count: members.length })}</button>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          </section>
+        {/if}
+
         <section class="panel">
           <div class="flex items-center justify-between">
             <h2>{t('merge.frames')}</h2>
@@ -238,14 +302,17 @@
               </li>
             {/each}
           </ul>
-          {#if frames.length > 1}
+          <!-- The range is the distance between the darkest and brightest frame of a bracket. -->
+          {#if split}
+            <p class="range">{t('merge.split.pick')}</p>
+          {:else if frames.length > 1}
             <p class="range">{t('merge.range', { stops: n(range, 1) })}</p>
           {:else}
             <p class="range">{t('merge.needTwo')}</p>
           {/if}
-          {#if findings.length}
+          {#if remarks.length}
             <ul class="findings">
-              {#each findings as finding (finding.code + finding.frames)}
+              {#each remarks as finding (finding.code + finding.frames)}
                 <li>{t(`merge.found.${finding.code}`,
                        { frames: named(finding), value: n(Math.abs(finding.value), 1),
                          count: finding.frames.length })}</li>
@@ -288,11 +355,20 @@
             </label>
             <small>{t('merge.deghostHint')}</small>
           </div>
+          <!--
+            Still offered when the frames fall into several brackets, since refusing
+            outright would be deciding for someone who may have meant it.
+          -->
           <button
             class="run"
+            class:secondary={split}
             disabled={frames.length < 2 || app.busy}
             onclick={run}
-          >{app.busy ? t('merge.running') : t('merge.run')}</button>
+          >{app.busy
+              ? t('merge.running')
+              : split
+                ? t('merge.split.anyway', { count: frames.length })
+                : t('merge.run')}</button>
         </section>
       {/if}
 
@@ -469,6 +545,43 @@
     small { display: block; }
   }
   .run { margin-top: 4px; }
+
+  /* Merging everything is still allowed when the frames fall into several
+     brackets, but it is no longer the thing the eye lands on. */
+  .run.secondary {
+    background: transparent; color: var(--color-muted);
+    box-shadow: inset 0 0 0 1px var(--color-line);
+  }
+
+  .split {
+    h2 { color: var(--color-accent); }
+    p { margin: 0 0 12px; font-size: 13.5px; line-height: 1.55; color: var(--color-muted); }
+  }
+
+  .brackets {
+    list-style: none; margin: 0; padding: 0; display: grid; gap: 2px;
+    li {
+      display: grid; grid-template-columns: 28px 1fr auto;
+      align-items: center; gap: 12px;
+      padding: 8px 10px; border-radius: 8px; font-size: 13.5px;
+      &:nth-child(odd) { background: var(--color-panel-2); }
+    }
+    /* Which bracket this is, in the order they were shot. */
+    .which {
+      display: grid; place-items: center;
+      width: 22px; height: 22px; border-radius: 999px;
+      background: var(--color-panel-2); color: var(--color-muted);
+      font-size: 12px; font-variant-numeric: tabular-nums;
+    }
+    .what { display: grid; gap: 2px; min-width: 0; }
+    .what strong { overflow-wrap: anywhere; font-weight: 600; }
+    .what small { color: var(--color-muted); font-size: 12.5px; }
+    /* Narrow: the action drops below the frames it acts on. */
+    @include card {
+      li { grid-template-columns: 22px 1fr; }
+      button { grid-column: 2; justify-self: start; }
+    }
+  }
 
   .notes {
     margin: 0 0 14px; padding-left: 18px; color: var(--color-muted); font-size: 13px;

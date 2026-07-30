@@ -61,23 +61,120 @@ impl Finding {
     }
 }
 
+/// Whether two frames are the same camera, through the same glass, at the same
+/// focal length.
+fn same_setup(a: &Frame, b: &Frame) -> bool {
+    let (x, y) = (&a.meta, &b.meta);
+    x.make == y.make
+        && x.model == y.model
+        && x.lens_model == y.lens_model
+        // Rounded, as the mixed_focal check rounds.
+        && format!("{:.0}", x.focal_mm) == format!("{:.0}", y.focal_mm)
+}
+
+/// How long the camera was left alone between two frames, or `None` when one of
+/// them does not say when it was taken.
+fn pause_between(a: &Frame, b: &Frame) -> Option<i64> {
+    if a.meta.captured_s == 0 || b.meta.captured_s == 0 {
+        return None;
+    }
+    // The exposure comes off the gap rather than the gap being compared raw.
+    let exposure = a.meta.shutter_s.max(b.meta.shutter_s).max(0.0).ceil() as i64;
+    Some(((b.meta.captured_s - a.meta.captured_s).abs() - exposure).max(0))
+}
+
+/// Whether one frame is the next frame of the same bracket as the other.
+fn one_burst(a: &Frame, b: &Frame) -> bool {
+    match pause_between(a, b) {
+        Some(pause) => pause <= BURST_GAP_S,
+        // A frame with no capture time cannot be placed on the clock at all.
+        None => true,
+    }
+}
+
+/// Which of the frames handed in actually belong to the same bracket.
+pub fn group(frames: &[Frame]) -> Vec<Vec<usize>> {
+    // Sorted, because "the same burst" is a claim about neighbours in time and
+    // the interface hands frames over in whatever order the file picker gave
+    // it.
+    let mut order: Vec<usize> = (0..frames.len()).collect();
+    order.sort_by_key(|&j| (frames[j].meta.captured_s == 0, frames[j].meta.captured_s, j));
+
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for j in order {
+        let joins = groups.last().is_some_and(|g| {
+            let previous = &frames[*g.last().unwrap()];
+            same_setup(previous, &frames[j]) && one_burst(previous, &frames[j])
+        });
+        if joins {
+            groups.last_mut().unwrap().push(j);
+        } else {
+            groups.push(vec![j]);
+        }
+    }
+    groups
+}
+
 /// Everything wrong with a bracket that its metadata alone can reveal.
 pub fn inspect(frames: &[Frame]) -> Vec<Finding> {
     let mut findings = Vec::new();
-    if frames.len() < 2 {
+    let groups = group(frames);
+
+    // The split comes first.
+    if groups.len() > 1 {
+        for (nth, members) in groups.iter().enumerate() {
+            findings.push(Finding::new("separate_shot", members.clone(), nth as f32 + 1.0));
+        }
+        // And where a split was a judgement rather than a measurement, say
+        // which seam and how long the pause was, so it can be overruled by
+        // someone who was there.
+        for pair in groups.windows(2) {
+            let last = *pair[0].last().unwrap();
+            let first = pair[1][0];
+            let Some(pause) = pause_between(&frames[last], &frames[first]) else { continue };
+            if pause < UNRELATED_GAP_S && same_setup(&frames[last], &frames[first]) {
+                findings.push(Finding::new("borderline_split", vec![last, first], pause as f32));
+            }
+        }
+    }
+
+    // Frames the clock could not place at all.
+    let undated: Vec<usize> =
+        (0..frames.len()).filter(|j| frames[*j].meta.captured_s == 0).collect();
+    if !undated.is_empty() && frames.len() > 1 {
+        findings.push(Finding::new("undated", undated, 0.0));
+    }
+
+    // The exposure ladder is a question about one bracket, so it is asked once
+    // per bracket.
+    for members in &groups {
+        findings.extend(inspect_bracket(frames, members));
+    }
+
+    // There used to be a mixed_camera / mixed_lens / mixed_focal check here,
+    // asked of the whole pile.
+    findings
+}
+
+/// The same question asked of a single bracket.
+fn inspect_bracket(frames: &[Frame], members: &[usize]) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    if members.len() < 2 {
         return findings;
     }
-    let base = &frames[0];
-    let stops: Vec<f32> = frames.iter().map(|f| f.stops_from(base)).collect();
-    let dials: Vec<f32> = frames.iter().map(|f| f.meta.exposure_comp).collect();
+    let n = members.len();
+    let at = |k: usize| &frames[members[k]];
+    let base = at(0);
+    let stops: Vec<f32> = (0..n).map(|k| at(k).stops_from(base)).collect();
+    let dials: Vec<f32> = (0..n).map(|k| at(k).meta.exposure_comp).collect();
 
     // Frames that came out at the same exposure.
-    let mut grouped = vec![false; frames.len()];
-    for j in 0..frames.len() {
+    let mut grouped = vec![false; n];
+    for j in 0..n {
         if grouped[j] {
             continue;
         }
-        let same: Vec<usize> = (0..frames.len())
+        let same: Vec<usize> = (0..n)
             .filter(|k| (stops[*k] - stops[j]).abs() < SAME_EXPOSURE_EV)
             .collect();
         if same.len() < 2 {
@@ -97,7 +194,7 @@ pub fn inspect(frames: &[Frame]) -> Vec<Finding> {
             .map(|(a, b)| (dials[*a] - dials[*b]).abs())
             .fold(0.0f32, f32::max);
         let code = if dialled_apart { "dial_ignored" } else { "same_exposure" };
-        findings.push(Finding::new(code, same, apart));
+        findings.push(Finding::new(code, same.iter().map(|k| members[*k]).collect(), apart));
     }
 
     // A gap in the ladder. The tones that fall in it rest on one frame, so
@@ -107,23 +204,6 @@ pub fn inspect(frames: &[Frame]) -> Vec<Finding> {
     let gap = ladder.windows(2).map(|w| w[1] - w[0]).fold(0.0f32, f32::max);
     if gap > WIDE_GAP_EV {
         findings.push(Finding::new("wide_gap", Vec::new(), gap));
-    }
-
-    // Frames that are not of the same setup.
-    let odd = |pick: &dyn Fn(&Frame) -> String| -> Vec<usize> {
-        let first = pick(&frames[0]);
-        (0..frames.len()).filter(|j| pick(&frames[*j]) != first).collect()
-    };
-    for (code, differing) in [
-        ("mixed_camera", odd(&|f: &Frame| format!("{} {}", f.meta.make, f.meta.model))),
-        ("mixed_lens", odd(&|f: &Frame| f.meta.lens_model.clone())),
-        // Rounded: a zoom reports a focal length to the nearest millimetre and
-        // will not repeat it exactly between frames.
-        ("mixed_focal", odd(&|f: &Frame| format!("{:.0}", f.meta.focal_mm))),
-    ] {
-        if !differing.is_empty() {
-            findings.push(Finding::new(code, differing, 0.0));
-        }
     }
     findings
 }
@@ -169,6 +249,12 @@ const METADATA_WRONG_EV: f32 = 0.75;
 // And how tightly the frame has to agree with itself before that measurement
 // is worth acting on.
 const MEASURE_SPREAD_EV: f32 = 0.25;
+// How long a pause can be and still be inside one bracket, before the exposures
+// themselves are added on.
+const BURST_GAP_S: i64 = 15;
+// Past this pause a split is no longer a judgement call, so there is nothing to
+// ask about.
+const UNRELATED_GAP_S: i64 = 126;
 // Two frames this close in exposure are the same exposure, whatever their
 // compensation dials say about it.
 const SAME_EXPOSURE_EV: f32 = 0.5;
@@ -532,12 +618,12 @@ fn deghost(out: &mut Image, frames: &[Frame], scale: &[f32], shifts: &[(i32, i32
 // -------------------------------------------------------------------------
 
 /// A frame reduced to what survives a change of exposure.
-struct Bitmaps {
+pub struct Bitmaps {
     levels: Vec<(Vec<bool>, Vec<bool>, usize, usize)>, // above median, worth counting, w, h
 }
 
 /// Threshold a frame at its own median.
-fn median_bitmaps(img: &Image) -> Bitmaps {
+pub fn median_bitmaps(img: &Image) -> Bitmaps {
     let mut grey = ops::luminance(img);
     // Work in a perceptual-ish scale so the median sits somewhere useful.
     for v in grey.d.iter_mut() {
@@ -560,7 +646,7 @@ fn median_bitmaps(img: &Image) -> Bitmaps {
 }
 
 /// The shift that best lines up two frames, found coarse to fine.
-fn align(anchor: &Bitmaps, other: &Bitmaps) -> Option<(i32, i32)> {
+pub fn align(anchor: &Bitmaps, other: &Bitmaps) -> Option<(i32, i32)> {
     let depth = anchor.levels.len().min(other.levels.len());
     if depth == 0 {
         return None;
@@ -779,6 +865,52 @@ mod tests {
                    "nothing matched, so it should say so rather than report no shift");
     }
 
+    /// A handheld bracket turns a little as well as shifting, and the aligner
+    /// answers with a translation only.
+    #[test]
+    fn alignment_absorbs_a_handheld_rotation() {
+        let (w, h) = (128usize, 96usize);
+        let scene = |x: f32, y: f32| {
+            let mut radiance = 0.002 * 2f32.powf(10.0 * x / w as f32);
+            // Texture, because a bare ramp is a trap for a median threshold.
+            radiance *= 1.0 + 0.6 * (x * 0.7).sin() * (y * 0.9).sin();
+            for (bx, by, r) in [(20.0f32, 15.0f32, 9.0f32), (70.0, 60.0, 12.0),
+                                (100.0, 25.0, 7.0), (40.0, 75.0, 10.0)] {
+                let (dx, dy) = (x - bx, y - by);
+                if dx * dx + dy * dy < r * r {
+                    radiance *= 3.5;
+                }
+            }
+            radiance
+        };
+        let paint = |stops: f32, shift: (i32, i32), degrees: f32| {
+            let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+            let (sin, cos) = degrees.to_radians().sin_cos();
+            let mut img = Image::new(w, h);
+            for y in 0..h {
+                for x in 0..w {
+                    // Undo the shift and then the turn, so the content ends up
+                    // moved by both, the way the merge reads a frame back.
+                    let ux = x as f32 - shift.0 as f32 - cx;
+                    let uy = y as f32 - shift.1 as f32 - cy;
+                    let sx = (cos * ux + sin * uy + cx).clamp(0.0, w as f32 - 1.0);
+                    let sy = (-sin * ux + cos * uy + cy).clamp(0.0, h as f32 - 1.0);
+                    let seen = (scene(sx, sy) * 2f32.powf(stops)).min(1.0);
+                    let i = (y * w + x) * 3;
+                    for c in 0..3 {
+                        img.d[i + c] = seen;
+                    }
+                }
+            }
+            img
+        };
+
+        let anchor = median_bitmaps(&paint(0.0, (0, 0), 0.0));
+        let turned = median_bitmaps(&paint(3.0, (3, -2), 1.5));
+        assert_eq!(align(&anchor, &turned), Some((3, -2)),
+                   "a turn this size should leave the translation standing");
+    }
+
     /// Two frames is the minimum, and frames of different sizes are not a
     /// bracket at all.
     #[test]
@@ -805,6 +937,139 @@ mod tests {
         assert!(arbitrable(0.35), "a well exposed reference frame was not allowed to speak");
     }
 
+    /// One frame, described the way the grouping reads it: when it was taken,
+    /// how long for, and through what.
+    fn shot(name: &str, captured_s: i64, shutter: f32, lens: &str, focal: f32) -> Frame {
+        Frame {
+            name: name.to_string(),
+            linear: Image::new(1, 1),
+            meta: Meta {
+                make: "SONY".into(),
+                model: "ILCE-5000".into(),
+                lens_model: lens.into(),
+                focal_mm: focal,
+                captured_s,
+                ..meta(shutter, 100.0)
+            },
+            exif: Vec::new(),
+        }
+    }
+
+    /// The real bracket on disk: three frames at 09:07:40, :41 and :41,
+    /// through one lens at 35 mm. One answer, not three.
+    #[test]
+    fn a_burst_is_one_bracket() {
+        let frames = vec![
+            shot("DSC05718", 1_790_068_060, 1.0 / 4000.0, "E 35mm F1.8", 35.0),
+            shot("DSC05719", 1_790_068_061, 1.0 / 4000.0, "E 35mm F1.8", 35.0),
+            shot("DSC05720", 1_790_068_061, 1.0 / 500.0, "E 35mm F1.8", 35.0),
+        ];
+        assert_eq!(group(&frames), vec![vec![0, 1, 2]]);
+        // And nothing in the findings claims it is more than one shot.
+        assert!(!inspect(&frames).iter().any(|f| f.code == "separate_shot"));
+    }
+
+    /// The pair that shares every tag but the clock.
+    #[test]
+    fn photographs_minutes_apart_are_not_a_bracket() {
+        let frames = vec![
+            shot("DSC05549", 1_789_242_651, 1.0 / 1250.0, "E PZ 16-50mm F3.5-5.6 OSS", 50.0),
+            shot("DSC05563", 1_789_243_156, 1.0 / 1600.0, "E PZ 16-50mm F3.5-5.6 OSS", 50.0),
+        ];
+        assert_eq!(group(&frames), vec![vec![0], vec![1]],
+                   "two photographs, each its own answer");
+        let findings = inspect(&frames);
+        assert_eq!(findings.iter().filter(|f| f.code == "separate_shot").count(), 2);
+    }
+
+    /// The case the whole threshold was set for: two genuine brackets, a minute
+    /// apart, everything else identical. Two answers.
+    #[test]
+    fn two_brackets_a_minute_apart_come_back_as_two() {
+        let mut frames = Vec::new();
+        for (n, base) in [0i64, 60].iter().enumerate() {
+            for step in 0..3i64 {
+                frames.push(shot(&format!("bracket {n} frame {step}"),
+                                 1_790_000_000 + base + step,
+                                 1.0 / 4000.0 * 4f32.powi(step as i32),
+                                 "E 35mm F1.8", 35.0));
+            }
+        }
+        assert_eq!(group(&frames), vec![vec![0, 1, 2], vec![3, 4, 5]]);
+        // A minute is well inside the band where the split is a judgement, so
+        // it has to be offered as one rather than performed quietly.
+        let findings = inspect(&frames);
+        let borderline = findings.iter().find(|f| f.code == "borderline_split")
+            .expect("a minute apart is close enough to be worth querying");
+        assert_eq!(borderline.frames, vec![2, 3]);
+        assert!((borderline.value - 58.0).abs() < 1.5,
+                "the pause it reports is the one between the brackets, got {}",
+                borderline.value);
+    }
+
+    /// A bracket of long exposures must not be split by its own shutter speed.
+    #[test]
+    fn a_long_exposure_bracket_survives_its_own_shutter() {
+        let frames = vec![
+            shot("short", 1_790_000_000, 8.0, "E 35mm F1.8", 35.0),
+            shot("long", 1_790_000_032, 30.0, "E 35mm F1.8", 35.0),
+        ];
+        assert_eq!(group(&frames), vec![vec![0, 1]],
+                   "32 seconds apart, but 30 of them were the exposure");
+    }
+
+    /// Simultaneous frames through different glass are not one bracket, however
+    /// well the clock agrees. Two bodies shooting one event is the case.
+    #[test]
+    fn the_same_instant_through_a_different_lens_is_a_different_shot() {
+        let frames = vec![
+            shot("a", 1_790_000_000, 1.0 / 250.0, "E 35mm F1.8", 35.0),
+            shot("b", 1_790_000_000, 1.0 / 250.0, "E PZ 16-50mm F3.5-5.6 OSS", 35.0),
+            shot("c", 1_790_000_000, 1.0 / 250.0, "E 35mm F1.8", 16.0),
+        ];
+        assert_eq!(group(&frames).len(), 3, "different lens, and different focal length");
+    }
+
+    /// A frame with no capture time cannot be placed on the clock.
+    #[test]
+    fn undated_frames_are_admitted_to_rather_than_guessed_at() {
+        let frames = vec![
+            shot("no date", 0, 1.0 / 250.0, "E 35mm F1.8", 35.0),
+            shot("no date either", 0, 1.0 / 60.0, "E 35mm F1.8", 35.0),
+        ];
+        assert_eq!(group(&frames), vec![vec![0, 1]],
+                   "nothing says they are apart, so they stay as handed in");
+        let findings = inspect(&frames);
+        let told = findings.iter().find(|f| f.code == "undated").expect("said out loud");
+        assert_eq!(told.frames, vec![0, 1]);
+    }
+
+    /// Frames arrive in whatever order the file picker produced them, and the
+    /// grouping is a claim about neighbours in time, so it sorts first.
+    #[test]
+    fn the_order_they_arrive_in_does_not_matter() {
+        let shuffled = vec![
+            shot("late bracket b", 1_790_009_001, 1.0 / 250.0, "E 35mm F1.8", 35.0),
+            shot("early single", 1_790_000_000, 1.0 / 250.0, "E 35mm F1.8", 35.0),
+            shot("late bracket a", 1_790_009_000, 1.0 / 60.0, "E 35mm F1.8", 35.0),
+        ];
+        assert_eq!(group(&shuffled), vec![vec![1], vec![2, 0]]);
+    }
+
+    /// A pile of unrelated photographs is not a bracket with problems, it is
+    /// not a bracket. Every frame comes back as itself.
+    #[test]
+    fn a_pile_of_unrelated_photographs_refuses_to_be_a_stack() {
+        let frames: Vec<Frame> = (0..5)
+            .map(|j| shot(&format!("frame {j}"), 1_790_000_000 + j * 3_600,
+                          1.0 / 250.0, "E 35mm F1.8", 35.0))
+            .collect();
+        let groups = group(&frames);
+        assert_eq!(groups.len(), 5, "an hour apart each, so five photographs");
+        assert!(groups.iter().all(|g| g.len() == 1));
+        // An hour is past any judgement call, so there is nothing to query.
+        assert!(!inspect(&frames).iter().any(|f| f.code == "borderline_split"));
+    }
     /// Shot noise, laid over a bracket so the deghosting has something to be
     /// confused by.
     fn add_shot_noise(frames: &mut [Frame], strength: f32) {

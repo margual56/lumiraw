@@ -15,6 +15,8 @@ pub struct Meta {
     pub exposure_comp: f32,
     pub flash: bool,
     pub orientation: u16,
+    /// When the shutter opened, in seconds, or zero when the file does not say.
+    pub captured_s: i64,
 }
 
 pub struct Decoded {
@@ -426,11 +428,152 @@ fn invert3(m: &[[f32; 3]; 3]) -> Option<[[f32; 3]; 3]> {
 }
 
 // -------------------------------------------------------------------------
-// demosaic, Malvar-He-Cutler, the 5x5 linear interpolator
+// demosaic
 // -------------------------------------------------------------------------
+// Two passes.
+
+/// Interpolate a Bayer mosaic to full colour, choosing a direction for green
+/// and reconstructing red and blue as differences from it.
+pub fn demosaic_directional(cfa: &Plane, pattern: &rawloader::CFA, x0: usize, y0: usize,
+                            w: usize, h: usize) -> Image {
+    // Everything below assumes the four-site Bayer quad.
+    if pattern.width != 2 || pattern.height != 2 {
+        return demosaic(cfa, pattern, x0, y0, w, h);
+    }
+    let mut out = Image::new(w, h);
+
+    // The pattern repeats every two rows and columns, so resolve it once for
+    // the crop's phase rather than paying color_at's modulo indexing on every
+    // one of the dozen-odd reads each pixel makes.
+    let phase = [
+        [pattern.color_at(y0, x0), pattern.color_at(y0, x0 + 1)],
+        [pattern.color_at(y0 + 1, x0), pattern.color_at(y0 + 1, x0 + 1)],
+    ];
+    let colour = |x: usize, y: usize| phase[y & 1][x & 1];
+    let is_green = |c: usize| c == 1 || c == 3;
+
+    // Out-of-frame neighbours are reflected, not clamped.
+    let reflect = |v: i64, n: usize| -> usize {
+        let n = n as i64;
+        let folded = if v < 0 { -v } else if v >= n { 2 * (n - 1) - v } else { v };
+        // The guard is for a frame narrower than the neighbourhood, where one
+        // fold is not enough to land inside.
+        folded.clamp(0, n - 1) as usize
+    };
+    // Reflection happens in crop coordinates so that the second pass, which
+    // reads a sensor value and a reconstructed green at what must be the same
+    // pixel, cannot have the two disagree about where the edge is.
+    let row = |dy: i64, y: usize| -> usize { reflect(y as i64 + dy, h) };
+    let col = |dx: i64, x: usize| -> usize { reflect(x as i64 + dx, w) };
+    let sensor_row = |r: usize| -> usize { (y0 + r) * cfa.w };
+    let sensor_col = |c: usize| -> usize { x0 + c };
+
+    // --- pass 1: green at every pixel -----------------------------------
+    // At a red or blue site green has four neighbours, two horizontal and two
+    // vertical.
+    for y in 0..h {
+        let (rm2, rm1, r0, rp1, rp2) = (
+            sensor_row(row(-2, y)), sensor_row(row(-1, y)), sensor_row(row(0, y)),
+            sensor_row(row(1, y)), sensor_row(row(2, y)),
+        );
+        for x in 0..w {
+            let i = (y * w + x) * 3;
+            let (cm2, cm1, c0, cp1, cp2) = (
+                sensor_col(col(-2, x)), sensor_col(col(-1, x)), sensor_col(col(0, x)),
+                sensor_col(col(1, x)), sensor_col(col(2, x)),
+            );
+            let centre = cfa.d[r0 + c0];
+            if is_green(colour(x, y)) {
+                out.d[i + 1] = centre;
+                continue;
+            }
+            let (n1, s1) = (cfa.d[rm1 + c0], cfa.d[rp1 + c0]);
+            let (w1, e1) = (cfa.d[r0 + cm1], cfa.d[r0 + cp1]);
+            let (n2, s2) = (cfa.d[rm2 + c0], cfa.d[rp2 + c0]);
+            let (w2, e2) = (cfa.d[r0 + cm2], cfa.d[r0 + cp2]);
+
+            let curve_h = 2.0 * centre - w2 - e2;
+            let curve_v = 2.0 * centre - n2 - s2;
+            let g_h = 0.5 * (w1 + e1) + 0.25 * curve_h;
+            let g_v = 0.5 * (n1 + s1) + 0.25 * curve_v;
+
+            // How much the image is doing in each direction: the green
+            // difference across the centre plus the same-colour curvature.
+            let d_h = (w1 - e1).abs() + curve_h.abs();
+            let d_v = (n1 - s1).abs() + curve_v.abs();
+
+            // Weight each estimate by the *other* direction's activity, so the
+            // flatter direction wins.
+            let total = d_h + d_v;
+            out.d[i + 1] = if total > 0.0 {
+                // How lopsided the two directions are, -1 (all the activity
+                // vertical, so interpolate horizontally) to +1.
+                let lean = (d_v - d_h) / total;
+                // Squaring the lean while keeping its sign holds the estimate
+                // near the isotropic average until one direction is clearly
+                // flatter, and still commits fully when it is.
+                let weight_h = 0.5 * (1.0 + lean * lean.abs());
+                g_h * weight_h + g_v * (1.0 - weight_h)
+            } else {
+                // Flat both ways, so the two estimates agree anyway.
+                0.5 * (g_h + g_v)
+            };
+        }
+    }
+
+    // --- pass 2: red and blue from green plus a colour difference --------
+    // Interpolating red directly would carry every edge in the scene into the
+    // estimate, and since red is sampled at half green's density it cannot
+    // follow those edges.
+    for y in 0..h {
+        let (rm1, r0, rp1) = (row(-1, y), row(0, y), row(1, y));
+        for x in 0..w {
+            let i = (y * w + x) * 3;
+            let (cm1, c0, cp1) = (col(-1, x), col(0, x), col(1, x));
+            let g = out.d[(r0 * w + c0) * 3 + 1];
+            // A sensor reading minus the green reconstructed at the same pixel,
+            // both addressed from one pair of crop coordinates so they cannot
+            // drift apart at the frame edge.
+            let diff = |r: usize, c: usize| -> f32 {
+                cfa.d[sensor_row(r) + sensor_col(c)] - out.d[(r * w + c) * 3 + 1]
+            };
+            let (r, b);
+            if is_green(colour(x, y)) {
+                // A green site has red on one axis and blue on the other.
+                let across = 0.5 * (diff(r0, cm1) + diff(r0, cp1));
+                let along = 0.5 * (diff(rm1, c0) + diff(rp1, c0));
+                if colour(x + 1, y) == 0 {
+                    r = g + across;
+                    b = g + along;
+                } else {
+                    r = g + along;
+                    b = g + across;
+                }
+            } else {
+                // A red site has blue only on the diagonals, and vice versa.
+                let other = g
+                    + 0.25
+                        * (diff(rm1, cm1) + diff(rm1, cp1)
+                            + diff(rp1, cm1) + diff(rp1, cp1));
+                let centre = cfa.d[sensor_row(r0) + sensor_col(c0)];
+                if colour(x, y) == 0 {
+                    r = centre;
+                    b = other;
+                } else {
+                    b = centre;
+                    r = other;
+                }
+            }
+            out.d[i] = r.max(0.0);
+            out.d[i + 2] = b.max(0.0);
+        }
+    }
+    out
+}
 
 /// Gradient-corrected bilinear interpolation (Malvar, He & Cutler 2004).
-fn demosaic(cfa: &Plane, pattern: &rawloader::CFA, x0: usize, y0: usize, w: usize, h: usize) -> Image {
+pub fn demosaic(cfa: &Plane, pattern: &rawloader::CFA, x0: usize, y0: usize, w: usize,
+                h: usize) -> Image {
     let mut out = Image::new(w, h);
     let at = |x: i64, y: i64| -> f32 {
         let xx = (x0 as i64 + x).clamp(0, cfa.w as i64 - 1) as usize;
@@ -604,12 +747,55 @@ fn read_exif(bytes: &[u8]) -> Meta {
     if let Some(v) = num(Tag::Orientation) {
         m.orientation = v as u16;
     }
+    // DateTimeOriginal is when the photograph was taken.
+    for tag in [Tag::DateTimeOriginal, Tag::DateTime] {
+        if let Some(field) = exif.get_field(tag, In::PRIMARY) {
+            if let exif::Value::Ascii(ref v) = field.value {
+                if let Some(when) = v.first().and_then(|a| exif::DateTime::from_ascii(a).ok()) {
+                    m.captured_s = epoch_seconds(&when);
+                    break;
+                }
+            }
+        }
+    }
     m
+}
+
+/// A civil date and time as seconds from 1970, ignoring leap seconds and time
+/// zones alike.
+fn epoch_seconds(t: &exif::DateTime) -> i64 {
+    let (y, m, d) = (t.year as i64, t.month as i64, t.day as i64);
+    let y = y - if m <= 2 { 1 } else { 0 };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    days * 86_400 + t.hour as i64 * 3_600 + t.minute as i64 * 60 + t.second as i64
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The capture time is the only thing that tells two frames of one burst
+    /// apart from two photographs of different things, so the arithmetic that
+    /// produces it is worth pinning to known answers.
+    #[test]
+    fn a_civil_date_becomes_the_right_instant() {
+        let at = |y, mo, d, h, mi, s| epoch_seconds(&::exif::DateTime {
+            year: y, month: mo, day: d, hour: h, minute: mi, second: s,
+            nanosecond: None, offset: None,
+        });
+        assert_eq!(at(1970, 1, 1, 0, 0, 0), 0, "the epoch itself");
+        assert_eq!(at(2000, 1, 1, 0, 0, 0), 946_684_800, "a century boundary that is a leap year");
+        assert_eq!(at(2024, 2, 29, 12, 0, 0), 1_709_208_000, "a leap day");
+        assert_eq!(at(2026, 9, 22, 9, 7, 40), 1_790_068_060, "the sample bracket");
+        // What the grouping actually reads: the gap between two frames.
+        assert_eq!(at(2026, 9, 22, 9, 7, 41) - at(2026, 9, 22, 9, 7, 40), 1);
+        assert_eq!(at(2026, 9, 12, 19, 59, 16) - at(2026, 9, 12, 19, 50, 51), 505);
+    }
 
     /// A highlight that clipped in every channel must come out neutral, not
     /// tinted by the inverse of the white balance.
@@ -705,6 +891,93 @@ mod tests {
         }
         // and the ordinary description of the photograph is still there
         assert!(entries.iter().any(|e| e.tag == 0x010F), "the make was lost");
+    }
+
+    /// Mosaic a known image and demosaic it back.
+    fn round_trip(method: fn(&Plane, &rawloader::CFA, usize, usize, usize, usize) -> Image,
+                  truth: &Image, cfa: &rawloader::CFA) -> Image {
+        let mut plane = Plane::new(truth.w, truth.h);
+        for y in 0..truth.h {
+            for x in 0..truth.w {
+                let c = cfa.color_at(y, x).min(2);
+                plane.d[y * truth.w + x] = truth.d[(y * truth.w + x) * 3 + c];
+            }
+        }
+        method(&plane, cfa, 0, 0, truth.w, truth.h)
+    }
+
+    /// A flat field has one right answer and every interpolator must find it.
+    #[test]
+    fn flat_field_survives_demosaic() {
+        let cfa = rawloader::CFA::new("RGGB");
+        let (w, h) = (32usize, 24usize);
+        let colour = [0.4f32, 0.55, 0.3];
+        let mut truth = Image::new(w, h);
+        for px in truth.d.chunks_exact_mut(3) {
+            px.copy_from_slice(&colour);
+        }
+        for (name, method) in [("demosaic", demosaic as fn(&Plane, &rawloader::CFA, usize, usize, usize, usize) -> Image),
+                               ("directional", demosaic_directional)] {
+            let got = round_trip(method, &truth, &cfa);
+            // The border reads clamped neighbours, so judge the interior.
+            for y in 2..h - 2 {
+                for x in 2..w - 2 {
+                    for c in 0..3 {
+                        let v = got.d[(y * w + x) * 3 + c];
+                        assert!((v - colour[c]).abs() < 1e-4,
+                                "{name} shifted a flat field at {x},{y} channel {c}: \
+                                 {v} against {}", colour[c]);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The interpolated channels must actually track the sensor, not merely
+    /// average it.
+    #[test]
+    fn horizontal_ramp_survives_demosaic() {
+        let cfa = rawloader::CFA::new("RGGB");
+        let (w, h) = (48usize, 16usize);
+        let mut truth = Image::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let v = 0.1 + 0.6 * (x as f32 / w as f32);
+                for c in 0..3 {
+                    truth.d[(y * w + x) * 3 + c] = v;
+                }
+            }
+        }
+        for (name, method) in [("demosaic", demosaic as fn(&Plane, &rawloader::CFA, usize, usize, usize, usize) -> Image),
+                               ("directional", demosaic_directional)] {
+            let got = round_trip(method, &truth, &cfa);
+            for y in 2..h - 2 {
+                for x in 2..w - 2 {
+                    let i = (y * w + x) * 3;
+                    let want = truth.d[i];
+                    for c in 0..3 {
+                        assert!((got.d[i + c] - want).abs() < 2e-3,
+                                "{name} lost a linear ramp at {x},{y} channel {c}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// The directional interpolator only knows the Bayer quad, so it has to
+    /// hand anything else to the one that does not care.
+    #[test]
+    fn non_bayer_falls_back() {
+        let xtrans = rawloader::CFA::new("GGRGGBGGBGGRBRGRBGGGBGGRGGRGGBRBGBRG");
+        let (w, h) = (24usize, 24usize);
+        let mut plane = Plane::new(w, h);
+        for (i, v) in plane.d.iter_mut().enumerate() {
+            *v = (i % 17) as f32 / 17.0;
+        }
+        let fallback = demosaic_directional(&plane, &xtrans, 0, 0, w, h);
+        let linear = demosaic(&plane, &xtrans, 0, 0, w, h);
+        assert_eq!(fallback.d, linear.d,
+                   "a non-Bayer pattern must go to the linear filter untouched");
     }
 
     /// The same thing through the real Bayer path.

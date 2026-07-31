@@ -53,6 +53,7 @@ export default {
   'brightness.shadows': 'Shadows',
   'brightness.midtones': 'Midtones',
   'brightness.highlights': 'Highlights',
+  'brightness.zoneMask': 'Point at one of the three to tint the parts of the picture it reaches. The tint fades where the hold does: the zones overlap, and no tone belongs to only one of them.',
   'brightness.zonesReset': 'Reset the three zones',
   'brightness.clear': 'Clear · meter the whole frame',
 

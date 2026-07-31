@@ -186,16 +186,29 @@ pub fn auto_levels(lightness: &Plane, strength: f32, clip_pct: f64) -> (f32, f32
     )
 }
 
-/// S-curve strength from how flat the histogram is, plus its pivot.
-pub fn auto_contrast(lightness: &Plane, target_spread: f32, max_amount: f32) -> (f32, f32, Value) {
+/// How much of a look's curve every frame gets, whatever it measures.
+const CURVE_FLOOR: f32 = 0.40;
+
+/// How much curve the tone map's own compression is allowed to ask for.
+const SQUEEZE_TO_CURVE: f32 = 1.72;
+
+/// S-curve strength and its pivot.
+pub fn auto_contrast(lightness: &Plane, target_spread: f32, max_amount: f32, compression: f32)
+    -> (f32, f32, Value) {
     let spread = ops::std_dev(&lightness.d);
-    let amount = ((target_spread - spread) / target_spread).clamp(0.0, 1.0) * max_amount;
+    // How flat the histogram is.
+    let flat = ((target_spread - spread) / target_spread).clamp(0.0, 1.0);
+    // How much slope the tone map took out on the way here.
+    let squeezed = ((1.0 - compression) * SQUEEZE_TO_CURVE).clamp(0.0, 1.0);
+    let want = CURVE_FLOOR + (1.0 - CURVE_FLOOR) * flat.max(squeezed);
+    let amount = want * max_amount;
     let pivot = ops::median(&lightness.d).clamp(0.2, 0.8);
     (
         amount,
         pivot,
         json!({"spread": round_to(spread, 4), "s_curve": round_to(amount, 3),
-               "pivot": round_to(pivot, 3)}),
+               "pivot": round_to(pivot, 3), "flat": round_to(flat, 3),
+               "squeezed": round_to(squeezed, 3)}),
     )
 }
 
@@ -301,6 +314,51 @@ mod tests {
             }
         }
         img
+    }
+
+    /// A plane of a given lightness spread, to ask `auto_contrast` about.
+    fn lightness(spread: f32, w: usize, h: usize) -> Plane {
+        let mut p = Plane::new(w, h);
+        for i in 0..w * h {
+            // Two clumps at either end, which is what a wide but flat
+            // histogram looks like: a dark subject against a bright sky.
+            p.d[i] = if i % 2 == 0 { 0.5 - spread } else { 0.5 + spread };
+        }
+        p
+    }
+
+    /// Every frame gets a curve.
+    #[test]
+    fn a_contrasty_frame_still_gets_a_curve() {
+        let wide = lightness(0.35, 64, 48);
+        let (amount, _, info) = auto_contrast(&wide, 0.20, 0.45, 1.0);
+        assert_eq!(info["flat"].as_f64().unwrap(), 0.0,
+                   "this frame is past the target spread, so nothing is missing: {info}");
+        assert!((amount - 0.45 * CURVE_FLOOR).abs() < 1e-4,
+                "it should still get the floor, got {amount}");
+    }
+
+    /// A flat frame still gets more than a contrasty one, which is the part of
+    /// the old behaviour worth keeping.
+    #[test]
+    fn a_flat_frame_gets_more_curve_than_a_wide_one() {
+        let flat = auto_contrast(&lightness(0.02, 64, 48), 0.20, 0.45, 1.0).0;
+        let wide = auto_contrast(&lightness(0.35, 64, 48), 0.20, 0.45, 1.0).0;
+        assert!(flat > wide + 0.1, "flat {flat} should ask for much more than wide {wide}");
+        assert!(flat <= 0.45, "nothing may exceed the look's own maximum, got {flat}");
+    }
+
+    /// The tone map squeezing a scene toward the middle is invisible to the
+    /// spread, because it preserves the extremes that set it.
+    #[test]
+    fn a_squeezed_frame_gets_a_curve_its_histogram_cannot_ask_for() {
+        let wide = lightness(0.35, 64, 48);
+        let untouched = auto_contrast(&wide, 0.20, 0.45, 1.0).0;
+        let squeezed = auto_contrast(&wide, 0.20, 0.45, 0.64).0;
+        assert!(squeezed > untouched * 1.5,
+                "ten stops pulled into a display should ask for far more curve: \
+                 {squeezed} against {untouched}");
+        assert!(squeezed <= 0.45, "still bounded by the look, got {squeezed}");
     }
 
     /// An underexposed frame has to be lifted past the usual restraint, or the

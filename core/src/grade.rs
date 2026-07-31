@@ -382,7 +382,7 @@ pub fn apply_exposure(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
 
 /// Compress the scene's range on the low-frequency layer only.
 pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
-                            report: &mut Report) {
+                            report: &mut Report) -> f32 {
     let (factor, mut info) = analyze::auto_tone_compression(thumb, p.comfortable_stops, 0.45);
     if let Some(o) = info.as_object_mut() {
         o.insert("detail_boost".into(), json!(round_to(p.detail_boost, 3)));
@@ -394,11 +394,11 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
             o.insert("reason".into(), json!("switched_off"));
         }
         report.add("tone mapping", off);
-        return;
+        return 1.0;
     }
     report.add("tone mapping", info);
     if factor >= 0.995 && p.detail_boost <= 1.0 {
-        return;
+        return factor;
     }
 
     let y = ops::luminance(img);
@@ -426,6 +426,7 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
             img.d[i * 3 + c] *= scale;
         }
     }
+    factor
 }
 
 /// Scene-linear -> display-linear with a filmic shoulder.
@@ -506,7 +507,7 @@ fn centre_crop(img: &Image, size: usize) -> Image {
 
 /// Levels, contrast, vibrance, denoising and sharpening in Oklab.
 pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharpen_sigma: f32,
-                        report: &mut Report, stats_rect: Option<Rect>) -> Image {
+                        compression: f32, report: &mut Report, stats_rect: Option<Rect>) -> Image {
     let n = img.w * img.h;
     let mut lightness = Plane::new(img.w, img.h);
     let mut a = Plane::new(img.w, img.h);
@@ -548,7 +549,8 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     let measured = stats_view_plane(&light_new, stats_rect);
     let (tw, th) = thumb_size(measured.w, measured.h);
     let small = ops::resize_plane(&measured, tw, th);
-    let (amount, pivot, info) = analyze::auto_contrast(&small, 0.20, p.contrast_amount);
+    let (amount, pivot, info) =
+        analyze::auto_contrast(&small, 0.20, p.contrast_amount, compression);
     if s.on("contrast") {
         report.add("contrast", info);
         for i in 0..n {
@@ -790,12 +792,12 @@ pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut
     report.add("noise", info);
 
     step(&mut progress, &mut mark);
-    apply_local_tone_map(&mut img, &thumb, settings, &p, report);
+    let compression = apply_local_tone_map(&mut img, &thumb, settings, &p, report);
     step(&mut progress, &mut mark);
     filmic(&mut img);
     step(&mut progress, &mut mark);
-    let out = apply_perceptual(&img, settings, &p, noise, args.sharpen_sigma, report,
-                               args.stats_rect);
+    let out = apply_perceptual(&img, settings, &p, noise, args.sharpen_sigma, compression,
+                               report, args.stats_rect);
     step(&mut progress, &mut mark);
     out
 }

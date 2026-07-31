@@ -1,4 +1,6 @@
 <script>
+  import { lightnessPlane, paintMask } from '$lib/zones.js';
+
   /** A preview image with an optional drag-to-draw selection rectangle. */
   let {
     src = '',
@@ -9,6 +11,7 @@
     ratio = '',
     natural = null,        // { width, height } of the source, for 'orig' ratio
     transform = '',        // live client-side preview; the overlay ignores it
+    mask = null,           // 'shadows' | 'midtones' | 'highlights', to tint
     busy = false,
   } = $props();
 
@@ -16,6 +19,31 @@
   let canvas = $state(null);
   let pending = $state(null);
   let geometry = $state(0);        // bumped on load and resize, to redraw
+
+  // The lightness of the preview, and the buffer the mask is painted into.
+  let plane = null;
+  let painted = null;
+  let planeKey = '';
+
+  function readPlane(w, h) {
+    const key = `${src}|${w}x${h}`;
+    if (planeKey === key) return plane;
+    const off = document.createElement('canvas');
+    off.width = w;
+    off.height = h;
+    const octx = off.getContext('2d', { willReadFrequently: true });
+    octx.drawImage(img, 0, 0, w, h);
+    try {
+      plane = lightnessPlane(octx.getImageData(0, 0, w, h));
+    } catch {
+      // A preview the canvas will not let us read back is not worth breaking
+      // the viewer over; the picture is still there, only the overlay is not.
+      plane = null;
+    }
+    painted = plane ? new ImageData(w, h) : null;
+    planeKey = key;
+    return plane;
+  }
 
   const rectFrom = ([ax, ay], [bx, by]) =>
     [Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay)];
@@ -73,6 +101,13 @@
 
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // The mask goes down first: putImageData writes pixels rather than
+    // compositing them, so anything drawn before it would be wiped.
+    if (mask && readPlane(canvas.width, canvas.height)) {
+      ctx.putImageData(paintMask(plane, mask, painted), 0, 0);
+    }
+
     const box = pending || rect;
 
     if (guides && !box) {
@@ -83,9 +118,13 @@
 
     const [x, y, w, h] = [box[0] * canvas.width, box[1] * canvas.height,
                           box[2] * canvas.width, box[3] * canvas.height];
-    ctx.fillStyle = 'rgba(8,9,11,.55)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.clearRect(x, y, w, h);
+    // Dimming everything outside a selection would bury the mask under it, and
+    // the two say different things about the same picture.
+    if (!mask) {
+      ctx.fillStyle = 'rgba(8,9,11,.55)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.clearRect(x, y, w, h);
+    }
     if (guides) thirds(ctx, x, y, w, h, 'rgba(255,255,255,.28)');
     ctx.strokeStyle = '#e5a03c';
     ctx.lineWidth = 1.5;
@@ -110,7 +149,7 @@
   }
 
   $effect(() => {
-    src; rect; pending; guides; geometry;      // dependencies
+    src; rect; pending; guides; geometry; mask;      // dependencies
     draw();
   });
 

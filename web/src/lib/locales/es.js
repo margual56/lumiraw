@@ -53,6 +53,7 @@ export default {
   'brightness.shadows': 'Sombras',
   'brightness.midtones': 'Medios',
   'brightness.highlights': 'Luces',
+  'brightness.zoneMask': 'Señala uno de los tres para teñir las partes de la fotografía a las que llega. El tinte se desvanece igual que lo hace su efecto: las zonas se solapan, y ningún tono pertenece solo a una.',
   'brightness.zonesReset': 'Restablecer las tres zonas',
   'brightness.clear': 'Quitar · medir todo el fotograma',
 

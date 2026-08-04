@@ -2,8 +2,9 @@
   import Viewer from '$lib/components/Viewer.svelte';
   import Slider from '$lib/components/Slider.svelte';
   import { app } from '$lib/state.svelte.js';
+  import { NAME } from '$lib/brand.js';
   import { t, n } from '$lib/i18n.svelte.js';
-  import { styleLabel, formatLabel, stageText, errorText } from '$lib/format.js';
+  import { lookLabel, formatLabel, stageText, errorText } from '$lib/format.js';
   import { startExport, jobStatus, jobFile } from '$lib/api.js';
 
   let format = $state('png8');
@@ -12,12 +13,8 @@
   let working = $state(false);
 
   const lossy = $derived(['jpeg', 'webp'].includes(format));
-  const summary = $derived.by(() => {
-    const names = app.chosen.map(styleLabel);
-    return names.length === 1
-      ? t('download.one', { name: names[0] })
-      : t('download.many', { count: names.length, names: names.join(', ') });
-  });
+  // One photograph, one file.
+  const summary = $derived(t('download.one', { name: lookLabel(app.settings.curves.look) }));
 
   const SIZES = ['', '4000', '2560', '1600'];
 
@@ -31,7 +28,6 @@
       const { job } = await startExport({
         id: app.id,
         settings: app.settings,
-        styles: app.chosen,
         format,
         quality,
         max_size: maxSize || null,
@@ -55,7 +51,7 @@
       const res = await jobFile(job);
       const blob = await res.blob();
       const match = (res.headers.get('Content-Disposition') || '').match(/filename="(.+?)"/);
-      const name = match ? match[1] : 'autoraw.png';
+      const name = match ? match[1] : `${NAME.toLowerCase()}.png`;
       const url = URL.createObjectURL(blob);
       const link = Object.assign(document.createElement('a'), { href: url, download: name });
       document.body.append(link);

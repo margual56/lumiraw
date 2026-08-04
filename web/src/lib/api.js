@@ -100,12 +100,19 @@ export async function compare(body) {
   return { ...out, before: toUrl(out.before), after: toUrl(out.after) };
 }
 
-export async function styles(body, ontile) {
-  const out = await call('styles', body, {
-    ontile: ontile ? (tile) => ontile({ ...tile, image: toUrl(tile.image) }) : undefined,
-  });
-  return { tiles: out.tiles.map((tile) => ({ ...tile, image: toUrl(tile.image) })) };
+/** The named grades and their control points, once per session. */
+export const looks = () => call('looks');
+
+/** The four curves the pipeline will evaluate, baked, for drawing. */
+export const curves = (body) => call('curves', body);
+
+/** Read a `.cube` file into the module. The bytes go no further than the tab. */
+export async function lutLoad(file) {
+  const buffer = await file.arrayBuffer();
+  return call('lutLoad', { buffer }, {}, [buffer]);
 }
+
+export const lutClear = () => call('lutClear');
 
 /** Building a merge: the frames go over one at a time, then one call to
  *  combine them. The result replaces whatever the wizard was developing. */

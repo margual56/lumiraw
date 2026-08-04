@@ -1,9 +1,19 @@
 /** Turns the backend's structured reports into sentences in the current locale. */
 
+import { NAME } from './brand.js';
 import { t, n, signed, loose, shutter } from './i18n.svelte.js';
 
-export const styleLabel = (id) => t(`style.${id}`);
-export const styleDescription = (id) => t(`style.${id}.description`);
+/** A look's name in the reader's language. */
+export const lookLabel = (id, fallback = '') => {
+  const key = `look.${id}`;
+  const shown = t(key);
+  return shown === key ? (fallback || id) : shown;
+};
+export const lookDescription = (id, fallback = '') => {
+  const key = `look.${id}.description`;
+  const shown = t(key);
+  return shown === key ? fallback : shown;
+};
 export const formatLabel = (id) => t(`format.${id}`);
 
 /** One line under a correction's name, saying what it did. */
@@ -89,7 +99,6 @@ export function noteText(note) {
 /** What a running export is doing right now. */
 export function stageText(stage, params = {}) {
   const filled = { ...params };
-  if (filled.style) filled.style = styleLabel(filled.style);
   if (filled.format) filled.format = formatLabel(filled.format);
   return t(`stage.${stage}`, filled);
 }
@@ -100,7 +109,8 @@ export function errorText(error) {
     // `message` is always available as a placeholder: some reports carry
     // detail the sentence wants to quote rather than paraphrase.
     const translated = t(`error.${error.reason}`,
-                         { message: error.message ?? '', ...(error.params ?? {}) });
+                         { app: NAME, message: error.message ?? '',
+                           ...(error.params ?? {}) });
     if (translated !== `error.${error.reason}`) return translated;
   }
   return error?.message ?? String(error);

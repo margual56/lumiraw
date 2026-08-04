@@ -23,6 +23,18 @@ export const defaultSettings = () => ({
   tint: 0,
   vibrance: 0,
   preset: 'natural',
+  // The grade.
+  curves: { look: 'none', strength: 1, rgb: [], r: [], g: [], b: [] },
+  // Eight hue bands, each with a hue, a saturation and a lightness. Only the
+  // bands that have been touched are here; the rest are absent and mean zero.
+  mixer: {},
+  // How much of the loaded 3D table to apply, and which one is loaded.
+  lut: 0,
+  lut_id: '',
+  // The three things a curve cannot do, each 0..1. See `core/src/effects.rs`.
+  monochrome: 0,
+  vignette: 0,
+  grain: 0,
   enabled: {},
 });
 
@@ -32,12 +44,14 @@ export const app = $state({
   info: null,
   step: UPLOAD,
   settings: defaultSettings(),
-  chosen: ['original'],
   ratio: '',                 // locked crop aspect, '' = free
   coverCrop: null,           // largest empty-corner-free crop for the current tilt
   framingHint: null,         // what the framing step measured and could offer
   focus: null,               // { verdict, edge_px, blur_px } from the pipeline
   toggles: [],
+  looks: [],                 // the named grades, read out of the wasm once
+  curve: null,               // { rgb, r, g, b } baked tables, for the plot
+  lut: null,                 // the loaded .cube, if any: { size, title, id, bytes, name }
 
   // What is happening right now, for the progress bar.
   busy: false,
@@ -52,8 +66,7 @@ export const app = $state({
   frame: { key: null, image: '', angle: 0 },   // framing step: whole canvas, uncropped
   preview: { key: null, image: '' },    // the cropped picture
   wipe: { key: null, before: '', after: '' },
-  grid: { key: null, tiles: [] },
-  output: { key: null, image: '' },     // download step, with the look applied
+  output: { key: null, image: '' },     // download step, fully graded
 });
 
 /** Everything a render depends on. */
@@ -64,18 +77,19 @@ export function settingsKey() {
 /** A crop rectangle or a metering box belongs to the picture it was drawn on;
  *  carrying either onto the next file silently develops it wrongly. */
 export function resetForNewPhoto() {
-  app.settings = defaultSettings();
-  app.chosen = ['original'];
+  // A loaded 3D table outlives the photograph it was first tried on.
+  const table = app.lut ? { lut: app.settings.lut, lut_id: app.settings.lut_id } : {};
+  app.settings = { ...defaultSettings(), ...table };
   app.ratio = '';
   app.coverCrop = null;
   app.focus = null;
   app.toggles = [];
+  app.curve = null;
   app.exportState = '';
   app.job = null;
   app.progress = null;
   app.frame = { key: null, image: '', angle: 0 };
   app.preview = { key: null, image: '' };
   app.wipe = { key: null, before: '', after: '' };
-  app.grid = { key: null, tiles: [] };
   app.output = { key: null, image: '' };
 }

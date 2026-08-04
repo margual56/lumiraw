@@ -17,6 +17,7 @@
   import * as api from '$lib/api.js';
   import { t, n } from '$lib/i18n.svelte.js';
   import { errorText } from '$lib/format.js';
+  import { NAME } from '$lib/brand.js';
   import {
     app, resetForNewPhoto, settingsKey, stepVisible,
     STEPS, UPLOAD, FRAME, REFOCUS, EXPOSURE, WB, VIBRANCE, COMPARE, LOOKS, DOWNLOAD,
@@ -40,11 +41,14 @@
     // Fetch the wasm module and the lens database while the drop zone is still
     // on screen, so the first render does not pay for them.
     api.ready()
-      .then((info) => {
+      .then(async (info) => {
         if (info?.version && info.version !== app.version) {
-          console.warn(`autoraw: page is ${app.version} but the pipeline is `
+          console.warn(`${NAME}: page is ${app.version} but the pipeline is `
                        + `${info.version}; a stale cached module is in play`);
         }
+        // The named grades, once. They are the same for every photograph and
+        // they come from the wasm so there is only one copy of them.
+        app.looks = (await api.looks()).looks ?? [];
       })
       .catch(() => {});
   });
@@ -94,7 +98,7 @@
     [WB]: 'busy.preview',
     [VIBRANCE]: 'busy.preview',
     [COMPARE]: 'busy.compare',
-    [LOOKS]: 'busy.looks',
+    [LOOKS]: 'busy.preview',
     [DOWNLOAD]: 'busy.preview',
   };
 
@@ -116,7 +120,8 @@
           app.focus = out.report?.focus ?? null;
           app.toggles = out.toggles;
         });
-      } else if ([REFOCUS, EXPOSURE, WB, VIBRANCE].includes(step) && app.preview.key !== key) {
+      } else if ([REFOCUS, EXPOSURE, WB, VIBRANCE, LOOKS].includes(step)
+                 && app.preview.key !== key) {
         const out = await api.render({ id: app.id, settings: app.settings, size: 1300 });
         done(() => {
           app.preview = { key, image: out.image };
@@ -129,21 +134,10 @@
           app.wipe = { key, before: out.before, after: out.after };
           app.toggles = out.toggles;
         });
-      } else if (step === LOOKS && app.grid.key !== key) {
-        // Tiles arrive one at a time, so the grid fills in instead of waiting
-        // for all ten looks to finish.
-        const out = await api.styles({ id: app.id, settings: app.settings, size: 1200 },
-          (tile) => done(() => {
-            const tiles = app.grid.key === key ? [...app.grid.tiles, tile] : [tile];
-            app.grid = { key, tiles };
-          }));
-        done(() => (app.grid = { key, tiles: out.tiles }));
-      } else if (step === DOWNLOAD) {
-        const style = app.chosen[0] || 'original';
-        if (app.output.key === `${key}|${style}`) return;
-        const out = await api.render({ id: app.id, settings: app.settings, style, size: 1300 });
+      } else if (step === DOWNLOAD && app.output.key !== key) {
+        const out = await api.render({ id: app.id, settings: app.settings, size: 1300 });
         done(() => {
-          app.output = { key: `${key}|${style}`, image: out.image };
+          app.output = { key, image: out.image };
           app.toggles = out.toggles;
         });
       }
@@ -161,10 +155,18 @@
   $effect(() => {
     const step = app.step;
     const key = settingsKey();
-    const style = app.chosen[0];          // only the download preview cares
     if (!app.id) return;
     const timer = setTimeout(() => refresh(step, key), 200);
     return () => clearTimeout(timer);
+  });
+
+  // The curve plot, kept in step with the settings.
+  $effect(() => {
+    const curves = JSON.stringify(app.settings.curves);
+    if (!app.id) return;
+    api.curves({ id: app.id, settings: { curves: JSON.parse(curves) } })
+       .then((out) => (app.curve = out))
+       .catch(() => {});
   });
 
   /** Move to a step, stepping over any that this photograph does not need. */
@@ -182,7 +184,7 @@
 <div class="shell">
   <header>
     <div class="brand">
-      autoraw
+      {NAME}
       <span>
         <span class="tagline">{t('app.tagline')}</span>
         {#if app.version}<span class="ver">v{app.version}</span>{/if}

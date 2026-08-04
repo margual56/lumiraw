@@ -1,6 +1,7 @@
 //! The grading pipeline: linear raw in, display-ready sRGB out.
 
 use crate::analyze::{self, Report};
+use crate::curve;
 use crate::geometry::{stats_view_img, stats_view_plane, Framing, Rect};
 use crate::ops::{self, Image, Plane};
 use serde_json::{json, Map, Value};
@@ -115,6 +116,20 @@ pub struct Settings {
     /// frame was measured soft and the photographer asked for it.
     pub refocus: f32,
     pub preset: String,
+    /// The grade: a curve on all three channels and one each on red, green and
+    /// blue.
+    pub curves: curve::Stack,
+    /// Eight hue bands, each with a hue, a saturation and a lightness. What
+    /// curves cannot do: pick out one colour and leave the rest.
+    pub mixer: crate::mixer::Mixer,
+    /// How much of the loaded 3D table to apply, 0..1, and an id for the one
+    /// that is loaded.
+    pub lut: f32,
+    pub lut_id: String,
+    /// The three things a curve cannot do, each 0..1. See `effects.rs`.
+    pub monochrome: f32,
+    pub vignette: f32,
+    pub grain: f32,
     pub render_scale: f32,
     pub enabled: HashMap<String, bool>,
 }
@@ -134,6 +149,13 @@ impl Default for Settings {
             highlights: 0.0,
             refocus: 0.0,
             preset: "natural".into(),
+            curves: curve::Stack::identity(),
+            mixer: crate::mixer::Mixer::default(),
+            lut: 0.0,
+            lut_id: String::new(),
+            monochrome: 0.0,
+            vignette: 0.0,
+            grain: 0.0,
             render_scale: 1.0,
             enabled: HashMap::new(),
         }
@@ -176,6 +198,15 @@ impl Settings {
         if let Some(p) = obj.get("preset").and_then(|x| x.as_str()) {
             s.preset = p.to_string();
         }
+        s.curves = curve::Stack::from_json(obj.get("curves"));
+        s.mixer = crate::mixer::Mixer::from_json(obj.get("mixer"));
+        s.lut = f("lut").unwrap_or(0.0).clamp(0.0, 1.0);
+        if let Some(id) = obj.get("lut_id").and_then(|x| x.as_str()) {
+            s.lut_id = id.to_string();
+        }
+        s.monochrome = f("monochrome").unwrap_or(0.0).clamp(0.0, 1.0);
+        s.vignette = f("vignette").unwrap_or(0.0).clamp(0.0, 1.0);
+        s.grain = f("grain").unwrap_or(0.0).clamp(0.0, 1.0);
         if let Some(fr) = obj.get("framing").and_then(|x| x.as_object()) {
             let g = |k: &str| fr.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
             s.framing.angle = g("angle");
@@ -207,7 +238,7 @@ impl Settings {
             self.enabled.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
         flags.sort();
         format!(
-            "{}|{:?}|{:?}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{}|{}",
+            "{}|{:?}|{:?}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{}|{:x}|{:x}|{:.4}|{}|{:.4}|{:.4}|{:.4}|{}",
             self.framing.key(),
             self.exposure_rect,
             self.wb_rect,
@@ -220,6 +251,13 @@ impl Settings {
             self.highlights,
             self.refocus,
             self.preset,
+            self.curves.fingerprint(),
+            self.mixer.fingerprint(),
+            self.lut,
+            self.lut_id,
+            self.monochrome,
+            self.vignette,
+            self.grain,
             flags.join(",")
         )
     }

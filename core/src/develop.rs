@@ -7,8 +7,8 @@ use crate::grade::{self, ProcessArgs, Settings, TOGGLES};
 use crate::lensdb::{self, Database, LensMatch};
 use crate::ops::{self, Image};
 use crate::profile::{self, CaptureProfile};
+use crate::effects;
 use crate::straighten;
-use crate::styles;
 use serde_json::{json, Map, Value};
 
 pub struct Development {
@@ -179,8 +179,8 @@ impl Development {
         (src, infos, eff)
     }
 
-    /// Develop the picture, optionally under a look.
-    pub fn render(&mut self, settings: &Settings, style: Option<&styles::Style>,
+    /// Develop the picture.
+    pub fn render(&mut self, settings: &Settings,
                   long_edge: Option<usize>, crop: bool,
                   mut progress: Option<&mut dyn FnMut(f32, &str)>)
                   -> (Image, Report) {
@@ -254,10 +254,37 @@ impl Development {
                 report.add("framing", hint.to_json());
             }
         }
-        if let Some(style) = style.filter(|s| s.look.is_some()) {
-            rgb = styles::apply(&rgb, style);
-            report.add("style", json!({"applied": true, "id": style.id}));
+        // Taste, in the order the darkroom had it.
+        if !settings.mixer.is_identity() {
+            rgb = crate::mixer::apply(&rgb, &settings.mixer);
         }
+        report.add("mixer", json!({"applied": !settings.mixer.is_identity()}));
+
+        effects::monochrome(&mut rgb, settings.monochrome);
+
+        let counts = settings.curves.counts();
+        report.add("curves", match settings.curves.is_identity() {
+            true => json!({"applied": false}),
+            false => {
+                rgb = settings.curves.apply(&rgb);
+                json!({"applied": true, "points": {"rgb": counts[0], "r": counts[1],
+                                                   "g": counts[2], "b": counts[3]}})
+            }
+        });
+
+        // The 3D table is the end of the colour stack and runs after the
+        // curves, which is both where the format expects to sit and the only
+        // place it can sit.
+        let lut_applied = crate::lut::apply_current(&mut rgb, settings.lut);
+        report.add("lut", json!({"applied": lut_applied,
+                                 "strength": grade::round_to(settings.lut, 3)}));
+
+        effects::vignette(&mut rgb, settings.vignette);
+        effects::grain(&mut rgb, settings.grain);
+        report.add("effects", json!({
+            "monochrome": grade::round_to(settings.monochrome, 3),
+            "vignette": grade::round_to(settings.vignette, 3),
+            "grain": grade::round_to(settings.grain, 3)}));
         (rgb, report)
     }
 
@@ -265,6 +292,8 @@ impl Development {
     pub fn baseline(&mut self, settings: &Settings, long_edge: Option<usize>) -> Image {
         let mut flat = settings.clone();
         flat.enabled.clear();
+        // The grade comes off the "before" for the same reason the look does.
+        flat.curves = crate::curve::Stack::identity();
         for (key, _, _) in TOGGLES.iter() {
             // Hold on to what the user asked for themselves, drop what was
             // decided for them.
@@ -291,7 +320,7 @@ impl Development {
                 return img.clone();
             }
         }
-        let (img, _) = self.render(&flat, None, long_edge, true, None);
+        let (img, _) = self.render(&flat, long_edge, true, None);
         self.baseline_key = key;
         self.baseline_img = Some(img.clone());
         img

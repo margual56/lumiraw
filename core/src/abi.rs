@@ -4,7 +4,6 @@ use crate::develop::Development;
 use crate::grade::Settings;
 use crate::lensdb::Database;
 use crate::output;
-use crate::styles;
 use serde_json::json;
 use std::cell::RefCell;
 
@@ -18,7 +17,6 @@ thread_local! {
     static BYTES: RefCell<Vec<u8>> = RefCell::new(Vec::new());
     static SIZE: RefCell<(u32, u32)> = RefCell::new((0, 0));
     static SIZE_B: RefCell<(u32, u32)> = RefCell::new((0, 0));
-    static STYLE_BASE: RefCell<Option<crate::ops::Image>> = RefCell::new(None);
 }
 
 // -- progress out to the host ---------------------------------------------
@@ -175,9 +173,7 @@ pub extern "C" fn ar_open(name_ptr: *const u8, name_len: usize, ptr: *const u8, 
                 o.insert("formats".into(), json!(output::FORMATS.iter()
                     .map(|f| json!({"id": f.id, "label": f.label, "ext": f.ext, "mime": f.mime}))
                     .collect::<Vec<_>>()));
-                o.insert("styles".into(), json!(styles::STYLES.iter()
-                    .map(|s| json!({"id": s.id, "label": s.label, "description": s.description}))
-                    .collect::<Vec<_>>()));
+
             }
             DEV.with(|d| *d.borrow_mut() = Some(dev));
             set_json(description);
@@ -209,24 +205,15 @@ fn store_b(img: &crate::ops::Image) {
 /// renders the whole framing canvas (what the framing step shows).
 #[no_mangle]
 pub extern "C" fn ar_render(settings_ptr: *const u8, settings_len: usize, long_edge: i32,
-                            crop: i32, style_ptr: *const u8, style_len: usize) -> i32 {
+                            crop: i32) -> i32 {
     let settings_json: serde_json::Value =
         serde_json::from_slice(unsafe { slice(settings_ptr, settings_len) }).unwrap_or(json!({}));
     let settings = Settings::from_json(&settings_json);
-    let style = String::from_utf8_lossy(unsafe { slice(style_ptr, style_len) }).to_string();
     let edge = if long_edge > 0 { Some(long_edge as usize) } else { None };
-    // A name from outside is only a look if the table says so.
-    let look = match style.as_str() {
-        "" | "original" => None,
-        id => match styles::find(id) {
-            Some(found) => Some(found),
-            None => return set_error(&format!("there is no look called {id}"), "unknown_style"),
-        },
-    };
 
     let out = with_dev(|dev| {
         let mut cb = |f: f32, code: &str| progress(f, code);
-        let (img, report) = dev.render(&settings, look, edge, crop != 0, Some(&mut cb));
+        let (img, report) = dev.render(&settings, edge, crop != 0, Some(&mut cb));
         let toggles = dev.toggles(&settings, &report);
         let eff = crate::geometry::effective_crop(dev.width(), dev.height(), &settings.framing);
         (img, report.to_json(), toggles, eff)
@@ -254,7 +241,7 @@ pub extern "C" fn ar_compare(settings_ptr: *const u8, settings_len: usize, long_
 
     let out = with_dev(|dev| {
         let mut cb = |f: f32, code: &str| progress(f * 0.5, code);
-        let (after, report) = dev.render(&settings, None, edge, true, Some(&mut cb));
+        let (after, report) = dev.render(&settings, edge, true, Some(&mut cb));
         progress(0.5, "baseline");
         let before = dev.baseline(&settings, edge);
         let toggles = dev.toggles(&settings, &report);
@@ -273,84 +260,24 @@ pub extern "C" fn ar_compare(settings_ptr: *const u8, settings_len: usize, long_
     }
 }
 
-/// Render the shared base for the looks grid once; `ar_style_tile` then costs
-/// only the look itself.
-#[no_mangle]
-pub extern "C" fn ar_styles_prepare(settings_ptr: *const u8, settings_len: usize, size: i32) -> i32 {
-    let settings_json: serde_json::Value =
-        serde_json::from_slice(unsafe { slice(settings_ptr, settings_len) }).unwrap_or(json!({}));
-    let settings = Settings::from_json(&settings_json);
-    let edge = (size.max(200).min(1400)) as usize;
-    let out = with_dev(|dev| {
-        let mut cb = |f: f32, code: &str| progress(f * 0.5, code);
-        let (img, _) = dev.render(&settings, None, Some(edge), true, Some(&mut cb));
-        img
-    });
-    match out {
-        Some(img) => {
-            STYLE_BASE.with(|b| *b.borrow_mut() = Some(img));
-            set_json(json!({"count": styles::STYLES.len(),
-                            "styles": styles::STYLES.iter().map(|s| json!({
-                                "id": s.id, "label": s.label, "description": s.description}))
-                                .collect::<Vec<_>>()}));
-            styles::STYLES.len() as i32
-        }
-        None => set_error("no image open", "no_session"),
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn ar_style_tile(index: i32) -> i32 {
-    let i = index.max(0) as usize;
-    if i >= styles::STYLES.len() {
-        return set_error("no such style", "range");
-    }
-    let s = &styles::STYLES[i];
-    let done = STYLE_BASE.with(|b| {
-        b.borrow().as_ref().map(|base| {
-            let img = styles::apply(base, s);
-            store(&img);
-            (img.w, img.h)
-        })
-    });
-    match done {
-        Some((w, h)) => {
-            progress(0.5 + 0.5 * (i as f32 + 1.0) / styles::STYLES.len() as f32, "style");
-            set_json(json!({"id": s.id, "label": s.label, "description": s.description,
-                            "width": w, "height": h}));
-            0
-        }
-        None => set_error("looks not prepared", "no_session"),
-    }
-}
-
 /// Encode a finished image for download.  Full resolution unless `long_edge`
 /// says otherwise; the bytes land in the BYTES buffer.
 #[no_mangle]
-pub extern "C" fn ar_export(settings_ptr: *const u8, settings_len: usize, style_ptr: *const u8,
-                            style_len: usize, fmt_ptr: *const u8, fmt_len: usize, quality: i32,
+pub extern "C" fn ar_export(settings_ptr: *const u8, settings_len: usize,
+                            fmt_ptr: *const u8, fmt_len: usize, quality: i32,
                             long_edge: i32, now_ptr: *const u8, now_len: usize) -> i32 {
     let settings_json: serde_json::Value =
         serde_json::from_slice(unsafe { slice(settings_ptr, settings_len) }).unwrap_or(json!({}));
     let settings = Settings::from_json(&settings_json);
-    let style = String::from_utf8_lossy(unsafe { slice(style_ptr, style_len) }).to_string();
     let fmt = String::from_utf8_lossy(unsafe { slice(fmt_ptr, fmt_len) }).to_string();
     let edge = if long_edge > 0 { Some(long_edge as usize) } else { None };
     // There is no clock in this target, so the host passes the time in.
     let now = String::from_utf8_lossy(unsafe { slice(now_ptr, now_len) }).to_string();
     let modified = if now.is_empty() { None } else { Some(now.as_str()) };
-    // A name from outside is only a look if the table says so.
-    let look = match style.as_str() {
-        "" | "original" => None,
-        id => match styles::find(id) {
-            Some(found) => Some(found),
-            None => return set_error(&format!("there is no look called {id}"), "unknown_style"),
-        },
-    };
 
     let developed = with_dev(|dev| {
         let mut cb = |f: f32, code: &str| progress(f * 0.8, code);
-        let (img, _) = dev.render(&settings, look, edge, true, Some(&mut cb));
+        let (img, _) = dev.render(&settings, edge, true, Some(&mut cb));
         (img, dev.exif.clone())
     });
     let (img, meta) = match developed {
@@ -490,9 +417,6 @@ pub extern "C" fn ar_merge_finish(align: i32, deghost: f32) -> i32 {
         o.insert("formats".into(), json!(output::FORMATS.iter()
             .map(|f| json!({"id": f.id, "label": f.label, "ext": f.ext, "mime": f.mime}))
             .collect::<Vec<_>>()));
-        o.insert("styles".into(), json!(styles::STYLES.iter()
-            .map(|s| json!({"id": s.id, "label": s.label, "description": s.description}))
-            .collect::<Vec<_>>()));
         let ev = |v: f32| (v * 100.0).round() / 100.0;
         o.insert("merge".into(), json!({
             "frames": notes.stops.len(),
@@ -527,8 +451,81 @@ pub extern "C" fn ar_merge_finish(align: i32, deghost: f32) -> i32 {
     0
 }
 
-/// Which build this is. Read once at start-up so the interface can show it
-/// and so every exported file can be stamped with the same string.
+/// Which build this is.
+#[no_mangle]
+pub extern "C" fn ar_lut_load(ptr: *const u8, len: usize) -> i32 {
+    let bytes = unsafe { slice(ptr, len) };
+    let text = String::from_utf8_lossy(bytes);
+    match crate::lut::Lut::parse(&text) {
+        // Whatever was loaded stays loaded.
+        Err(why) => set_error(&why, "bad_cube"),
+        Ok(lut) => {
+            let (size, title) = (lut.size, lut.title.clone());
+            // A cheap digest of the file, which is all the cache key needs: it
+            // has to differ when the file differs, not resist an adversary.
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            for b in bytes {
+                h ^= *b as u64;
+                h = h.wrapping_mul(0x100_0000_01b3);
+            }
+            crate::lut::set(Some(lut));
+            set_json(json!({"size": size, "title": title, "id": format!("{h:x}"),
+                            "bytes": bytes.len()}));
+            0
+        }
+    }
+}
+
+/// Forget the loaded table.
+#[no_mangle]
+pub extern "C" fn ar_lut_clear() -> i32 {
+    crate::lut::set(None);
+    set_json(json!({"loaded": false}));
+    0
+}
+
+/// Every named grade, with its control points.
+#[no_mangle]
+pub extern "C" fn ar_looks() -> i32 {
+    let points = |p: &[(f32, f32)]| {
+        p.iter().map(|(x, y)| json!([crate::grade::round_to(*x, 4),
+                                     crate::grade::round_to(*y, 4)])).collect::<Vec<_>>()
+    };
+    set_json(json!({"looks": crate::looks::LOOKS.iter().map(|l| json!({
+        "id": l.id, "label": l.label, "description": l.description,
+        "points": {"rgb": points(l.rgb), "r": points(l.r), "g": points(l.g),
+                   "b": points(l.b)},
+    })).collect::<Vec<_>>()}));
+    0
+}
+
+/// The curves a settings object comes to, as the pipeline will evaluate them.
+#[no_mangle]
+pub extern "C" fn ar_curves(settings_ptr: *const u8, settings_len: usize) -> i32 {
+    let settings_json: serde_json::Value =
+        serde_json::from_slice(unsafe { slice(settings_ptr, settings_len) }).unwrap_or(json!({}));
+    let settings = Settings::from_json(&settings_json);
+    let stack = &settings.curves;
+    let table = |c: &crate::curve::Curve| {
+        c.table().iter().map(|v| crate::grade::round_to(*v, 4)).collect::<Vec<_>>()
+    };
+    let counts = stack.counts();
+    // Two sets, and the difference matters.
+    let raw = crate::curve::edited(settings_json.get("curves"));
+    set_json(json!({
+        "identity": stack.is_identity(),
+        "size": crate::curve::TABLE,
+        "rgb": table(stack.composite()),
+        "r": table(stack.channel(0)),
+        "g": table(stack.channel(1)),
+        "b": table(stack.channel(2)),
+        "edited": {"regions": table(&raw[0]), "rgb": table(&raw[1]), "r": table(&raw[2]),
+                   "g": table(&raw[3]), "b": table(&raw[4])},
+        "points": {"rgb": counts[0], "r": counts[1], "g": counts[2], "b": counts[3]},
+    }));
+    0
+}
+
 #[no_mangle]
 pub extern "C" fn ar_version() -> i32 {
     set_json(json!({"version": crate::VERSION, "software": crate::SOFTWARE}));
@@ -539,7 +536,6 @@ pub extern "C" fn ar_version() -> i32 {
 #[no_mangle]
 pub extern "C" fn ar_close() {
     DEV.with(|d| *d.borrow_mut() = None);
-    STYLE_BASE.with(|b| *b.borrow_mut() = None);
     PIXELS.with(|p| p.borrow_mut().clear());
     PIXELS_B.with(|p| p.borrow_mut().clear());
     BYTES.with(|b| b.borrow_mut().clear());

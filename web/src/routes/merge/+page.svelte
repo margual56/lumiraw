@@ -192,7 +192,7 @@
 <div class="shell">
   <header>
     <a class="brand" href="{base}/">
-      autoraw
+      {NAME}
       <span>
         <span class="tagline">{t('merge.title')}</span>
         {#if app.version}<span class="ver">v{app.version}</span>{/if}

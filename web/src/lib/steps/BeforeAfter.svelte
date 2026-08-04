@@ -1,5 +1,6 @@
 <script>
   import Compare from '$lib/components/Compare.svelte';
+  import Rendering from '$lib/components/Rendering.svelte';
   import Toggles from '$lib/components/Toggles.svelte';
   import CaptureProfile from '$lib/components/CaptureProfile.svelte';
   import { app } from '$lib/state.svelte.js';
@@ -11,6 +12,7 @@
   <aside>
     <h2>{t('compare.title')}</h2>
     <p class="lede">{@html t('compare.lede')}</p>
+    <Rendering />
     <Toggles />
     <CaptureProfile />
   </aside>

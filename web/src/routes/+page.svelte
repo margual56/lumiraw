@@ -4,6 +4,7 @@
   import Dropzone from '$lib/components/Dropzone.svelte';
   import Privacy from '$lib/components/Privacy.svelte';
   import Framing from '$lib/steps/Framing.svelte';
+  import Refocus from '$lib/steps/Refocus.svelte';
   import Brightness from '$lib/steps/Brightness.svelte';
   import WhiteBalance from '$lib/steps/WhiteBalance.svelte';
   import Vibrance from '$lib/steps/Vibrance.svelte';
@@ -17,8 +18,8 @@
   import { t, n } from '$lib/i18n.svelte.js';
   import { errorText } from '$lib/format.js';
   import {
-    app, resetForNewPhoto, settingsKey,
-    STEPS, UPLOAD, FRAME, EXPOSURE, WB, VIBRANCE, COMPARE, LOOKS, DOWNLOAD,
+    app, resetForNewPhoto, settingsKey, stepVisible,
+    STEPS, UPLOAD, FRAME, REFOCUS, EXPOSURE, WB, VIBRANCE, COMPARE, LOOKS, DOWNLOAD,
   } from '$lib/state.svelte.js';
 
   const fileLabel = $derived(app.info
@@ -88,6 +89,7 @@
 
   const LABELS = {
     [FRAME]: 'busy.framing',
+    [REFOCUS]: 'busy.preview',
     [EXPOSURE]: 'busy.preview',
     [WB]: 'busy.preview',
     [VIBRANCE]: 'busy.preview',
@@ -111,12 +113,14 @@
           app.frame = { key, image: out.image, angle: app.settings.framing.angle };
           app.coverCrop = out.cover_crop;
           app.framingHint = out.report?.framing ?? null;
+          app.focus = out.report?.focus ?? null;
           app.toggles = out.toggles;
         });
-      } else if ([EXPOSURE, WB, VIBRANCE].includes(step) && app.preview.key !== key) {
+      } else if ([REFOCUS, EXPOSURE, WB, VIBRANCE].includes(step) && app.preview.key !== key) {
         const out = await api.render({ id: app.id, settings: app.settings, size: 1300 });
         done(() => {
           app.preview = { key, image: out.image };
+          app.focus = out.report?.focus ?? app.focus;
           app.toggles = out.toggles;
         });
       } else if (step === COMPARE && app.wipe.key !== key) {
@@ -163,7 +167,16 @@
     return () => clearTimeout(timer);
   });
 
-  const go = (step) => (app.step = Math.min(Math.max(step, 0), STEPS.length - 1));
+  /** Move to a step, stepping over any that this photograph does not need. */
+  function go(step) {
+    const target = Math.min(Math.max(step, 0), STEPS.length - 1);
+    const direction = target >= app.step ? 1 : -1;
+    let next = target;
+    while (next > 0 && next < STEPS.length - 1 && !stepVisible(next)) {
+      next += direction;
+    }
+    app.step = stepVisible(next) ? next : app.step;
+  }
 </script>
 
 <div class="shell">
@@ -192,6 +205,8 @@
       </div>
     {:else if app.step === FRAME}
       <Framing />
+    {:else if app.step === REFOCUS}
+      <Refocus />
     {:else if app.step === EXPOSURE}
       <Brightness />
     {:else if app.step === WB}

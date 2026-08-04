@@ -5,6 +5,7 @@ export default {
 
   'step.upload': 'Subir',
   'step.framing': 'Encuadre',
+  'step.refocus': 'Enfoque',
   'step.brightness': 'Luminosidad',
   'step.wb': 'Balance de blancos',
   'step.vibrance': 'Intensidad',
@@ -46,6 +47,13 @@ export default {
   'framing.offer.refuse': 'Dejarlo así',
   'framing.reset': 'Restablecer el encuadre',
 
+  'refocus.title': 'Recuperar el enfoque',
+  'refocus.lede': 'Esta toma ha salido blanda. Parte de eso se puede deshacer: un desenfoque reparte cada punto de la imagen entre sus vecinos, y sabiendo cuánto lo repartió, se puede revertir en parte. <em>En parte</em> es la palabra honesta. Donde dos detalles se han fundido en uno no queda nada que separar.',
+  'refocus.measured': 'Los bordes más nítidos de esta toma miden unos {edge} píxeles de ancho. Una toma enfocada mide dos o tres, así que esta arrastra unos {blur} píxeles de desenfoque.',
+  'refocus.amount': 'Cuánto forzar',
+  'refocus.off': 'nada',
+  'refocus.hint': 'Súbelo hasta que vuelva el detalle y párate antes de que vuelva el grano. Funciona mejor con una toma limpia: si esta salió blanda porque había poca luz, casi todo lo que vuelva será ruido, y entonces lo correcto es dejarlo como está.',
+  'refocus.reset': 'Dejarlo como estaba',
   'brightness.title': 'Luminosidad',
   'brightness.lede': 'Arrastra un recuadro sobre lo que debe quedar bien expuesto: una cara, el sujeto, aquello de lo que <em>trata</em> la fotografía. Esa zona se mide al gris medio y el resto del fotograma la sigue.',
   'brightness.fine': 'Luminosidad general',

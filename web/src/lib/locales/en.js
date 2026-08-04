@@ -5,6 +5,7 @@ export default {
 
   'step.upload': 'Upload',
   'step.framing': 'Framing',
+  'step.refocus': 'Focus',
   'step.brightness': 'Brightness',
   'step.wb': 'White balance',
   'step.vibrance': 'Vibrance',
@@ -46,6 +47,13 @@ export default {
   'framing.offer.refuse': 'Leave it',
   'framing.reset': 'Reset framing',
 
+  'refocus.title': 'Rescue the focus',
+  'refocus.lede': 'This frame came out soft. Some of that can be undone: a blur spreads every point of the picture over its neighbours, and knowing how far it spread, the spreading can be partly reversed. <em>Partly</em> is the honest word. Where two details were blurred into each other there is nothing left to pull apart.',
+  'refocus.measured': 'The sharpest edges in this frame are about {edge} pixels across. A frame in focus measures two or three, which puts roughly {blur} pixels of blur over this one.',
+  'refocus.amount': 'How hard to pull',
+  'refocus.off': 'off',
+  'refocus.hint': 'Push it until the detail comes back and stop before the grain does. It works best on a clean frame: if this one was soft because the light was low, most of what comes back will be noise, and leaving this alone is the right answer.',
+  'refocus.reset': 'Leave it as it was',
   'brightness.title': 'Brightness',
   'brightness.lede': 'Drag a box over what must be correctly exposed: a face, the subject, whatever the picture is <em>about</em>. That region is metered to middle grey and the rest of the frame follows.',
   'brightness.fine': 'Overall brightness',

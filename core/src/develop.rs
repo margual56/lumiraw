@@ -19,6 +19,9 @@ pub struct Development {
     pub exif: Vec<crate::exif::Entry>,
     /// The capture's noise floor, measured once from the full-resolution frame.
     noise_floor: Option<f32>,
+    /// How wide this capture's edges are at `crate::analyze::FOCUS_LONG_EDGE`, and
+    /// whether that could be measured at all.
+    focus: Option<Option<f32>>,
     pub profile: CaptureProfile,
     pub lens_match: Option<LensMatch>,
     cache: Vec<(String, Image, Option<Rect>, Map<String, Value>)>,
@@ -49,6 +52,7 @@ impl Development {
             profile: prof,
             lens_match,
             cache: Vec::new(),
+            focus: None,
             baseline_key: String::new(),
             baseline_img: None,
         })
@@ -71,6 +75,16 @@ impl Development {
         let floor = crate::analyze::noise_floor(&sqrt_luma);
         self.noise_floor = Some(floor);
         floor
+    }
+
+    /// How wide this frame's edges are, measured once from the whole picture.
+    pub fn focus_width(&mut self) -> Option<f32> {
+        if let Some(cached) = self.focus {
+            return cached;
+        }
+        let measured = crate::analyze::focus_width(&self.linear, |p| crate::analyze::noise_floor(p));
+        self.focus = Some(measured);
+        measured
     }
 
     /// A development whose frame came from a merge rather than a single file.
@@ -96,6 +110,7 @@ impl Development {
             profile: prof,
             lens_match,
             cache: Vec::new(),
+            focus: None,
             baseline_key: String::new(),
             baseline_img: None,
         }
@@ -197,6 +212,17 @@ impl Development {
         };
 
         let native_noise_floor = Some(self.native_noise_floor());
+        // The width was measured at a fixed working size, so the blur it
+        // describes is that many pixels *there*.
+        let measured_width = self.focus_width();
+        let focus_sigma = match measured_width {
+            Some(w) if w >= crate::analyze::FOCUS_SOFT => {
+                let at_work = crate::analyze::focus_sigma(w);
+                let long = src.w.max(src.h) as f32;
+                at_work * (long / crate::analyze::FOCUS_LONG_EDGE as f32).min(4.0)
+            }
+            _ => 0.0,
+        };
         let args = ProcessArgs {
             iso: self.profile.iso,
             sharpen_sigma: self.profile.sharpen_sigma,
@@ -204,9 +230,21 @@ impl Development {
             stats_rect,
             preset: Some(tuned),
             native_noise_floor,
+            focus_sigma,
             progress: boxed.take(),
         };
         let mut rgb = grade::process(&src, &s, args, &mut report);
+
+        // What the frame measured, said out loud whichever way it came out.
+        report.add("focus", match measured_width {
+            None => json!({"measured": false, "verdict": "unknown"}),
+            Some(w) => json!({"measured": true,
+                "verdict": if w >= crate::analyze::FOCUS_SOFT { "soft" }
+                           else if w <= crate::analyze::FOCUS_SHARP { "sharp" }
+                           else { "slightly_soft" },
+                "edge_px": grade::round_to(w, 2),
+                "blur_px": grade::round_to(crate::analyze::focus_sigma(w), 2)}),
+        });
 
         // Framing is the one step that had nothing of its own to propose, so
         // the measurement rides along with the preview it was taken from,

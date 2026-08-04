@@ -1,5 +1,5 @@
 <script>
-  import { app, STEPS } from '$lib/state.svelte.js';
+  import { app, STEPS, stepVisible } from '$lib/state.svelte.js';
   import { t } from '$lib/i18n.svelte.js';
 
   let { onstep } = $props();
@@ -7,20 +7,23 @@
 
   // On a phone the steps are a horizontal strip, so the one you are on has to
   // be brought into view when it changes.
+  const shown = $derived(STEPS.map((label, i) => ({ label, i }))
+    .filter(({ i }) => stepVisible(i)));
+
   $effect(() => {
-    const current = nav?.children[app.step];
+    const current = nav?.children[shown.findIndex(({ i }) => i === app.step)];
     current?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
   });
 </script>
 
 <nav bind:this={nav}>
-  {#each STEPS as label, i}
+  {#each shown as { label, i }, nth (label)}
     <button
       type="button"
       aria-current={app.step === i}
       disabled={!app.id && i > 0}
       onclick={() => onstep(i)}
-    >{i + 1}. {t(label)}</button>
+    >{nth + 1}. {t(label)}</button>
   {/each}
 </nav>
 

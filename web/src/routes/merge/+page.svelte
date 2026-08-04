@@ -515,9 +515,6 @@
 
   .range {
     margin: 10px 2px 0; font-size: 13px; color: var(--color-muted);
-    /* A bracket the camera could not deliver is worth more than a remark, so
-       it is the one line here that is allowed to be loud. */
-    &.warn { color: var(--color-accent); }
   }
 
 

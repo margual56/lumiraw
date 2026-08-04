@@ -1,10 +1,14 @@
 /** The whole wizard's state, as runes. */
 
-export const STEPS = ['step.upload', 'step.framing', 'step.brightness', 'step.wb',
-                      'step.vibrance', 'step.compare', 'step.looks', 'step.download'];
+export const STEPS = ['step.upload', 'step.framing', 'step.refocus', 'step.brightness',
+                      'step.wb', 'step.vibrance', 'step.compare', 'step.looks',
+                      'step.download'];
 
-export const UPLOAD = 0, FRAME = 1, EXPOSURE = 2, WB = 3,
-             VIBRANCE = 4, COMPARE = 5, LOOKS = 6, DOWNLOAD = 7;
+export const UPLOAD = 0, FRAME = 1, REFOCUS = 2, EXPOSURE = 3, WB = 4,
+             VIBRANCE = 5, COMPARE = 6, LOOKS = 7, DOWNLOAD = 8;
+
+/** Whether a step is worth showing for the photograph in hand. */
+export const stepVisible = (i) => i !== REFOCUS || app.focus?.verdict === 'soft';
 
 export const defaultSettings = () => ({
   framing: { angle: 0, perspective_v: 0, perspective_h: 0, crop: null, auto_fit: true },
@@ -13,6 +17,7 @@ export const defaultSettings = () => ({
   shadows: 0,
   midtones: 0,
   highlights: 0,
+  refocus: 0,
   wb_rect: null,
   temperature: 0,
   tint: 0,
@@ -31,6 +36,7 @@ export const app = $state({
   ratio: '',                 // locked crop aspect, '' = free
   coverCrop: null,           // largest empty-corner-free crop for the current tilt
   framingHint: null,         // what the framing step measured and could offer
+  focus: null,               // { verdict, edge_px, blur_px } from the pipeline
   toggles: [],
 
   // What is happening right now, for the progress bar.
@@ -62,6 +68,7 @@ export function resetForNewPhoto() {
   app.chosen = ['original'];
   app.ratio = '';
   app.coverCrop = null;
+  app.focus = null;
   app.toggles = [];
   app.exportState = '';
   app.job = null;

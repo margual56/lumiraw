@@ -81,7 +81,7 @@ pub fn preset_by_name(name: &str) -> Preset {
 
 /// Every automatic correction the user is allowed to switch off, in the order
 /// the pipeline applies them.  The UI builds its toggle list straight from here.
-pub const TOGGLES: [(&str, &str, &str); 12] = [
+pub const TOGGLES: [(&str, &str, &str); 13] = [
     ("lens_vignetting", "Vignetting", "Lens"),
     ("lens_distortion", "Distortion", "Lens"),
     ("lens_tca", "Chromatic aberration", "Lens"),
@@ -93,6 +93,7 @@ pub const TOGGLES: [(&str, &str, &str); 12] = [
     ("vibrance", "Vibrance", "Colour"),
     ("denoise_chroma", "Colour noise", "Detail"),
     ("denoise_luma", "Luminance noise", "Detail"),
+    ("refocus", "Focus recovery", "Detail"),
     ("sharpen", "Sharpening", "Detail"),
 ];
 
@@ -110,6 +111,9 @@ pub struct Settings {
     pub shadows: f32,
     pub midtones: f32,
     pub highlights: f32,
+    /// How hard to pull a soft frame back, 0..1. Left at zero unless the
+    /// frame was measured soft and the photographer asked for it.
+    pub refocus: f32,
     pub preset: String,
     pub render_scale: f32,
     pub enabled: HashMap<String, bool>,
@@ -128,6 +132,7 @@ impl Default for Settings {
             shadows: 0.0,
             midtones: 0.0,
             highlights: 0.0,
+            refocus: 0.0,
             preset: "natural".into(),
             render_scale: 1.0,
             enabled: HashMap::new(),
@@ -167,6 +172,7 @@ impl Settings {
         s.shadows = f("shadows").unwrap_or(0.0).clamp(-1.0, 1.0);
         s.midtones = f("midtones").unwrap_or(0.0).clamp(-1.0, 1.0);
         s.highlights = f("highlights").unwrap_or(0.0).clamp(-1.0, 1.0);
+        s.refocus = f("refocus").unwrap_or(0.0).clamp(0.0, 1.0);
         if let Some(p) = obj.get("preset").and_then(|x| x.as_str()) {
             s.preset = p.to_string();
         }
@@ -201,7 +207,7 @@ impl Settings {
             self.enabled.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
         flags.sort();
         format!(
-            "{}|{:?}|{:?}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{}|{}",
+            "{}|{:?}|{:?}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{}|{}",
             self.framing.key(),
             self.exposure_rect,
             self.wb_rect,
@@ -212,13 +218,14 @@ impl Settings {
             self.shadows,
             self.midtones,
             self.highlights,
+            self.refocus,
             self.preset,
             flags.join(",")
         )
     }
 }
 
-fn round_to(v: f32, places: i32) -> f64 {
+pub fn round_to(v: f32, places: i32) -> f64 {
     let f = 10f64.powi(places);
     ((v as f64) * f).round() / f
 }
@@ -507,7 +514,8 @@ fn centre_crop(img: &Image, size: usize) -> Image {
 
 /// Levels, contrast, vibrance, denoising and sharpening in Oklab.
 pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharpen_sigma: f32,
-                        compression: f32, report: &mut Report, stats_rect: Option<Rect>) -> Image {
+                        compression: f32, focus_sigma: f32, report: &mut Report,
+                        stats_rect: Option<Rect>) -> Image {
     let n = img.w * img.h;
     let mut lightness = Plane::new(img.w, img.h);
     let mut a = Plane::new(img.w, img.h);
@@ -673,6 +681,21 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     }
     drop(chroma);
 
+    // --- focus recovery ---------------------------------------------------
+    // Before sharpening, because the two are not the same thing and the order
+    // matters.
+    if s.refocus > 0.0 && s.on("refocus") && focus_sigma > 0.0 {
+        let iterations = recover_focus(&mut light_new, focus_sigma, s.refocus, noise);
+        report.add("focus recovery", json!({"applied": true,
+            "sigma_px": round_to(focus_sigma, 2), "amount": round_to(s.refocus, 2),
+            "iterations": iterations}));
+    } else {
+        report.add("focus recovery", json!({"applied": false,
+            "reason": if !s.on("refocus") { "switched_off" }
+                      else if focus_sigma <= 0.0 { "sharp_enough" }
+                      else { "not_asked" }}));
+    }
+
     // --- sharpening -------------------------------------------------------
     let amount = p.sharpen * (1.0 - 0.75 * noise) * s.render_scale.clamp(0.25, 1.0);
     if s.on("sharpen") && amount > 0.02 {
@@ -692,6 +715,33 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     }
 
     to_gamut(&light_new, &a, &b)
+}
+
+/// Undo a measured blur, as far as a blur can be undone.
+pub fn recover_focus(l: &mut Plane, sigma: f32, amount: f32, noise: f32) -> usize {
+    // A wide blur needs more rounds than a narrow one, and a noisy frame can
+    // afford fewer.
+    let rounds = ((2.0 + 3.0 * sigma * amount) * (1.0 - 0.5 * noise)).round()
+        .clamp(1.0, 12.0) as usize;
+    // Held below one on purpose.
+    let step = 0.55 * amount;
+    // How far any one pixel may be moved in total.
+    let ceiling = (0.10 + 0.14 * amount).min(0.24);
+    let guard = 0.004 + 0.02 * noise;
+
+    let original = l.clone();
+    for _ in 0..rounds {
+        let blurred = ops::gaussian_blur(l, sigma);
+        for i in 0..l.d.len() {
+            let residual = original.d[i] - blurred.d[i];
+            // Where the frame disagrees with its own blur by less than its
+            // noise, the disagreement is the noise. Leave it alone.
+            let live = residual * ops::smoothstep(guard, guard * 3.0, residual.abs());
+            let moved = (l.d[i] + step * live - original.d[i]).clamp(-ceiling, ceiling);
+            l.d[i] = (original.d[i] + moved).clamp(0.0, 1.0);
+        }
+    }
+    rounds
 }
 
 /// Oklab -> linear sRGB, pulling chroma back until each pixel fits.
@@ -747,6 +797,9 @@ pub struct ProcessArgs<'a> {
     pub preset: Option<Preset>,
     /// The noise floor measured once at full resolution.
     pub native_noise_floor: Option<f32>,
+    /// The blur `analyze::focus_width` measured, in pixels of the *rendered*
+    /// frame.
+    pub focus_sigma: f32,
     pub progress: Option<&'a mut dyn FnMut(f32, &str)>,
 }
 
@@ -797,7 +850,7 @@ pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut
     filmic(&mut img);
     step(&mut progress, &mut mark);
     let out = apply_perceptual(&img, settings, &p, noise, args.sharpen_sigma, compression,
-                               report, args.stats_rect);
+                               args.focus_sigma, report, args.stats_rect);
     step(&mut progress, &mut mark);
     out
 }

@@ -1,7 +1,8 @@
 <script>
   import { lightnessPlane, paintMask } from '$lib/zones.js';
+  import { GRIP, MIN, cursor, drawn, grip, moved, resized, same } from '$lib/crop.js';
 
-  /** A preview image with an optional drag-to-draw selection rectangle. */
+  /** A preview image with an optional selection rectangle. */
   let {
     src = '',
     rect = $bindable(null),
@@ -45,19 +46,14 @@
     return plane;
   }
 
-  const rectFrom = ([ax, ay], [bx, by]) =>
-    [Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay)];
-
-  // Aspect-locked crops: the ratio is in pixels, the rectangle in fractions.
-  function constrain(r) {
-    if (!ratio || !img?.naturalWidth) return r;
+  // The locked aspect, converted for `crop.js`.
+  function aspect() {
+    if (!ratio || !img?.naturalWidth) return 0;
     const target = ratio === 'orig'
       ? (natural ? natural.width / natural.height : img.naturalWidth / img.naturalHeight)
       : Number(ratio);
-    let [x, y, w, h] = r;
-    h = (w * img.naturalWidth) / (target * img.naturalHeight);
-    if (y + h > 1) { h = 1 - y; w = (h * target * img.naturalHeight) / img.naturalWidth; }
-    return [x, y, w, h];
+    if (!Number.isFinite(target) || target <= 0) return 0;
+    return img.naturalWidth / (target * img.naturalHeight);
   }
 
   function at(event) {
@@ -68,26 +64,60 @@
     ];
   }
 
-  let origin = null;
+  // The grip in fractions, per axis, since the viewer's box is not square.
+  function reach() {
+    const box = canvas.getBoundingClientRect();
+    return [GRIP / (box.width || 1), GRIP / (box.height || 1)];
+  }
+
+  let drag = $state(null);     // { handle, from, was } while the pointer is down
+  let hover = $state(null);    // what the pointer is over, for the cursor alone
 
   function down(event) {
     if (!selectable || !canvas) return;
-    origin = at(event);
+    const from = at(event);
+    // Pressing on the existing box takes hold of it; pressing the picture
+    // outside it starts a new one, which is the only thing this used to do.
+    drag = { handle: grip(rect, from, reach()), from, was: rect };
+    hover = drag.handle;
+    pending = null;
     canvas.setPointerCapture(event.pointerId);
   }
+
   function move(event) {
-    if (!origin) return;
-    pending = constrain(rectFrom(origin, at(event)));
+    const now = at(event);
+    if (!drag) {
+      hover = selectable ? grip(rect, now, reach()) : null;
+      return;
+    }
+    if (drag.handle === 'move') {
+      pending = moved(drag.was, now[0] - drag.from[0], now[1] - drag.from[1]);
+    } else if (drag.handle) {
+      pending = resized(drag.was, drag.handle, now, aspect());
+    } else {
+      pending = drawn(drag.from, now, aspect());
+    }
   }
-  function up(event) {
-    if (!origin) return;
-    const drawn = constrain(rectFrom(origin, at(event)));
-    origin = null;
+
+  function up() {
+    const box = pending;
+    const was = drag?.was;
+    drag = null;
     pending = null;
-    // A stray click is a click, not a 0.1%-of-frame selection.
-    if (drawn[2] < 0.01 || drawn[3] < 0.01) return;
-    if (onrect) onrect(drawn);
-    else rect = drawn;
+    // A press that never moved is a click, and a click is not an edit: in the
+    // framing step committing a box is what takes automatic fitting over.
+    if (!box || same(box, was)) return;
+    // Nor is a 0.1%-of-frame sliver, whether it was swept out by mistake or
+    // squeezed out of a handle dragged onto its own anchor.
+    if (box[2] < MIN || box[3] < MIN) return;
+    if (onrect) onrect(box);
+    else rect = box;
+  }
+
+  // A cancelled pointer is not a released one.
+  function cancel() {
+    drag = null;
+    pending = null;
   }
 
   function draw() {
@@ -129,10 +159,21 @@
     ctx.strokeStyle = '#e5a03c';
     ctx.lineWidth = 1.5;
     ctx.strokeRect(x + .75, y + .75, w - 1.5, h - 1.5);
+    handles(ctx, x, y, w, h);
+  }
+
+  /** Eight marks, because there are eight things to take hold of. */
+  function handles(ctx, x, y, w, h) {
     ctx.fillStyle = '#e5a03c';
     for (const [cx, cy] of [[x, y], [x + w, y], [x, y + h], [x + w, y + h]]) {
       ctx.fillRect(cx - 3, cy - 3, 6, 6);
     }
+    const bar = Math.min(18, w / 3, h / 3);
+    if (bar < 8) return;
+    ctx.fillRect(x + (w - bar) / 2, y - 1.5, bar, 3);
+    ctx.fillRect(x + (w - bar) / 2, y + h - 1.5, bar, 3);
+    ctx.fillRect(x - 1.5, y + (h - bar) / 2, 3, bar);
+    ctx.fillRect(x + w - 1.5, y + (h - bar) / 2, 3, bar);
   }
 
   function thirds(ctx, x, y, w, h, colour) {
@@ -169,10 +210,12 @@
   <canvas
     bind:this={canvas}
     class:selectable
+    style:cursor={selectable ? cursor(drag ? drag.handle : hover) : undefined}
     onpointerdown={down}
     onpointermove={move}
     onpointerup={up}
-    onpointercancel={up}
+    onpointercancel={cancel}
+    onpointerleave={() => { if (!drag) hover = null; }}
   ></canvas>
 </div>
 
@@ -188,6 +231,8 @@
   }
   canvas {
     position: absolute; touch-action: none; pointer-events: none;
-    &.selectable { cursor: crosshair; pointer-events: auto; }
+    /* The pointer shape is set inline, from what the pointer is actually over,
+       so it is not also declared here where the two would disagree. */
+    &.selectable { pointer-events: auto; }
   }
 </style>

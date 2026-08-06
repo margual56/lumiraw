@@ -25,7 +25,7 @@ export default {
   'upload.decoding': 'Descodificando {file}…',
 
   'framing.title': 'Encuadre',
-  'framing.lede': 'Endereza el horizonte, corrige las verticales convergentes y arrastra un recuadro para recortar. Todo lo que viene después, incluidas la medición, el balance de blancos y los niveles automáticos, solo ve lo que conservas.',
+  'framing.lede': 'Endereza el horizonte, corrige las verticales convergentes y arrastra un recuadro para recortar. Cuando ya esté, muévelo desde el centro o cambia su forma por las esquinas o los lados. Todo lo que viene después, incluidas la medición, el balance de blancos y los niveles automáticos, solo ve lo que conservas.',
   'framing.tilt': 'Inclinación',
   'framing.shiftV': 'Descentramiento · vertical',
   'framing.shiftH': 'Descentramiento · horizontal',

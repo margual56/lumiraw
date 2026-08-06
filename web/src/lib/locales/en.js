@@ -25,7 +25,7 @@ export default {
   'upload.decoding': 'Decoding {file}…',
 
   'framing.title': 'Framing',
-  'framing.lede': 'Straighten the horizon, pull converging verticals back upright, and drag a box to crop. Everything after this step, including metering, white balance and the auto levels, only ever sees what you keep.',
+  'framing.lede': 'Straighten the horizon, pull converging verticals back upright, and drag a box to crop. Once it is there, move it from the middle or reshape it by its corners and sides. Everything after this step, including metering, white balance and the auto levels, only ever sees what you keep.',
   'framing.tilt': 'Tilt',
   'framing.shiftV': 'Shift · vertical',
   'framing.shiftH': 'Shift · horizontal',

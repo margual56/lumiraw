@@ -32,4 +32,7 @@ from='0 19 19' to='360 19 19' dur='.8s' repeatCount='indefinite'/></path></g></s
   position: absolute;
   inset: 0;
   background: rgb(13 14 16 / 45%) url($spinner) center / 38px no-repeat;
+  // It covers the picture, so without this it also covers the crop overlay and
+  // quietly eats every press for as long as a render takes.
+  pointer-events: none;
 }

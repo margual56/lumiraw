@@ -121,6 +121,10 @@ pub struct Settings {
     /// Noise reduction, -1..1, on top of the amount measured for this frame.
     /// Zero is the measured amount; -1 turns it off, 1 is as much as it goes.
     pub denoise: f32,
+    /// Graduated and radial filters, in fractions of the framed picture.
+    pub filters: Vec<crate::local::Filter>,
+    /// Healed spots, in fractions of the framed picture.
+    pub spots: Vec<crate::local::Spot>,
     pub preset: String,
     /// The grade: a curve on all three channels and one each on red, green and
     /// blue.
@@ -156,6 +160,8 @@ impl Default for Settings {
             refocus: 0.0,
             clarity: 0.0,
             denoise: 0.0,
+            filters: Vec::new(),
+            spots: Vec::new(),
             preset: "natural".into(),
             curves: curve::Stack::identity(),
             mixer: crate::mixer::Mixer::default(),
@@ -205,6 +211,8 @@ impl Settings {
         s.refocus = f("refocus").unwrap_or(0.0).clamp(0.0, 1.0);
         s.clarity = f("clarity").unwrap_or(0.0).clamp(-1.0, 1.0);
         s.denoise = f("denoise").unwrap_or(0.0).clamp(-1.0, 1.0);
+        s.filters = crate::local::filters_from_json(obj.get("filters"));
+        s.spots = crate::local::spots_from_json(obj.get("spots"));
         if let Some(p) = obj.get("preset").and_then(|x| x.as_str()) {
             s.preset = p.to_string();
         }
@@ -1008,6 +1016,9 @@ pub struct ProcessArgs<'a> {
 pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut Report) -> Image {
     let p = args.preset.unwrap_or_else(|| settings.preset_obj());
     let mut img = src.clone();
+    // Healing before anything is measured; see `local`.
+    crate::local::heal(&mut img, &settings.spots, args.stats_rect);
+    report.add("healing", json!({"spots": settings.spots.len()}));
     let mut progress = args.progress;
     let mut mark = 0usize;
     let step = |progress: &mut Option<&mut dyn FnMut(f32, &str)>, mark: &mut usize| {
@@ -1047,6 +1058,10 @@ pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut
 
     step(&mut progress, &mut mark);
     let compression = apply_local_tone_map(&mut img, &thumb, settings, &p, report);
+    // Local filters on the light as it will be shown, before the shoulder
+    // rolls it off; see `local` for why not earlier.
+    crate::local::apply_filters(&mut img, &settings.filters, args.stats_rect);
+    report.add("filters", json!({"count": settings.filters.len()}));
     step(&mut progress, &mut mark);
     filmic(&mut img);
     step(&mut progress, &mut mark);

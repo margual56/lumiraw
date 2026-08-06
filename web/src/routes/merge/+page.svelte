@@ -7,6 +7,7 @@
   import * as api from '$lib/api.js';
   import { t, n, signed, shutter, loose } from '$lib/i18n.svelte.js';
   import { errorText, RAW_ACCEPT } from '$lib/format.js';
+  import { NAME } from '$lib/brand.js';
   import { app, resetForNewPhoto, FRAME } from '$lib/state.svelte.js';
 
   /** One entry per frame the module is holding, in the order it holds them. */
@@ -176,6 +177,9 @@
   function develop() {
     const info = result;
     resetForNewPhoto();
+    // A merged frame is not one of the files in a roll.
+    app.roll = [];
+    app.rollAt = -1;
     app.id = info.id;
     app.info = info;
     app.step = FRAME;

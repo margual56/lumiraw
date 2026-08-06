@@ -3,12 +3,15 @@
   import Progress from '$lib/components/Progress.svelte';
   import Dropzone from '$lib/components/Dropzone.svelte';
   import GradeCarry from '$lib/components/GradeCarry.svelte';
+  import Filmstrip from '$lib/components/Filmstrip.svelte';
+  import { pickMany } from '$lib/roll.svelte.js';
   import Privacy from '$lib/components/Privacy.svelte';
   import Framing from '$lib/steps/Framing.svelte';
   import Refocus from '$lib/steps/Refocus.svelte';
   import Brightness from '$lib/steps/Brightness.svelte';
   import WhiteBalance from '$lib/steps/WhiteBalance.svelte';
   import Vibrance from '$lib/steps/Vibrance.svelte';
+  import Local from '$lib/steps/Local.svelte';
   import BeforeAfter from '$lib/steps/BeforeAfter.svelte';
   import Looks from '$lib/steps/Looks.svelte';
   import Download from '$lib/steps/Download.svelte';
@@ -21,8 +24,8 @@
   import { NAME } from '$lib/brand.js';
   import { history, observe, resetHistory, undo, redo, onKey } from '$lib/history.svelte.js';
   import {
-    app, resetForNewPhoto, settingsKey, stepVisible,
-    STEPS, UPLOAD, FRAME, REFOCUS, EXPOSURE, WB, VIBRANCE, COMPARE, LOOKS, DOWNLOAD,
+    app, settingsKey, stepVisible, setStraight,
+    STEPS, UPLOAD, FRAME, REFOCUS, EXPOSURE, WB, VIBRANCE, LOCAL, COMPARE, LOOKS, DOWNLOAD,
   } from '$lib/state.svelte.js';
 
   const fileLabel = $derived(app.info
@@ -46,6 +49,16 @@
     }
   });
 
+  // Opened through the system's "Open with" on an installed LumiRaw: the
+  // files arrive as handles, and become a roll like any other drop.
+  $effect(() => {
+    if (!('launchQueue' in window)) return;
+    window.launchQueue.setConsumer(async ({ files }) => {
+      if (!files?.length) return;
+      pickMany(await Promise.all(files.map((handle) => handle.getFile())));
+    });
+  });
+
   // The pipeline reports every stage it enters; feed that straight to the bar.
   api.setProgressListener((fraction, code) => {
     app.progress = code === 'done' ? null : { fraction, code };
@@ -67,36 +80,7 @@
       .catch(() => {});
   });
 
-  async function pick(file) {
-    app.busy = true;
-    app.busyKey = 'busy.decode';
-    app.busyParams = {};
-    app.message = t('upload.decoding', { file: file.name });
-    try {
-      const info = await api.upload(file, (fraction) => {
-        const percent = Math.round(fraction * 100);
-        const done = percent >= 100;
-        app.message = done
-          ? t('upload.decoding', { file: file.name })
-          : t('upload.sendingPct', { file: file.name, percent });
-        app.busyKey = done ? 'busy.decode' : 'busy.upload';
-        app.busyParams = done ? {} : { percent };
-      });
-      // Only once the new file is safely decoded: a rejected upload leaves the
-      // picture you were working on exactly as it was.
-      resetForNewPhoto();
-      app.id = info.id;
-      app.info = info;
-      app.message = '';
-      app.step = FRAME;
-    } catch (err) {
-      app.message = errorText(err);
-    } finally {
-      app.busy = false;
-      app.busyKey = '';
-      app.progress = null;
-    }
-  }
+
 
   /*
    * ── rendering ────────────────────────────────────────────────────────── One
@@ -111,6 +95,7 @@
     [EXPOSURE]: 'busy.preview',
     [WB]: 'busy.preview',
     [VIBRANCE]: 'busy.preview',
+    [LOCAL]: 'busy.preview',
     [COMPARE]: 'busy.compare',
     [LOOKS]: 'busy.preview',
     [DOWNLOAD]: 'busy.preview',
@@ -134,7 +119,7 @@
           app.focus = out.report?.focus ?? null;
           app.toggles = out.toggles;
         });
-      } else if ([REFOCUS, EXPOSURE, WB, VIBRANCE, LOOKS].includes(step)
+      } else if ([REFOCUS, EXPOSURE, WB, VIBRANCE, LOCAL, LOOKS].includes(step)
                  && app.preview.key !== key) {
         const out = await api.render({ id: app.id, settings: app.settings, size: 1300 });
         done(() => {
@@ -216,7 +201,12 @@
       <div class="intro">
         <Privacy />
         <GradeCarry />
-        <Dropzone onpick={pick} />
+        <label class="straight">
+          <input type="checkbox" checked={app.straight}
+                 onchange={(e) => setStraight(e.currentTarget.checked)} />
+          <span>{t('upload.straight')}</span>
+        </label>
+        <Dropzone onpick={pickMany} />
         <a class="merge-link" href="{base}/merge">
           <strong>{t('merge.link')}</strong>
           <span>{t('merge.linkHint')}</span>
@@ -232,6 +222,8 @@
       <WhiteBalance />
     {:else if app.step === VIBRANCE}
       <Vibrance />
+    {:else if app.step === LOCAL}
+      <Local />
     {:else if app.step === COMPARE}
       <BeforeAfter />
     {:else if app.step === LOOKS}
@@ -240,6 +232,8 @@
       <Download />
     {/if}
   </main>
+
+  <Filmstrip />
 
   <footer>
     <span class="nav-start">
@@ -254,9 +248,16 @@
       {/if}
     </span>
     <span class="file-label">{fileLabel}</span>
+    <span class="nav-end">
+    {#if app.id && app.step < DOWNLOAD - 1}
+      <button class="ghost" onclick={() => go(DOWNLOAD)} title={t('nav.straight.why')}>
+        {t('nav.straight')}
+      </button>
+    {/if}
     <button disabled={!app.id || app.step === STEPS.length - 1} onclick={() => go(app.step + 1)}>
       {app.step === STEPS.length - 2 ? t('step.download') : t('nav.continue')}
     </button>
+    </span>
   </footer>
 </div>
 
@@ -283,9 +284,16 @@
   }
 
   /* The way out to the other tool, under the drop zone rather than beside it. */
+  .nav-end { display: flex; gap: 8px; }
   .nav-start {
     display: flex; gap: 6px;
     .icon { min-width: 36px; padding-inline: 8px; font-size: 16px; line-height: 1; }
+  }
+
+  .straight {
+    display: flex; gap: 8px; align-items: center; margin: -4px 0 10px;
+    font-size: 12.5px; color: var(--color-muted); cursor: pointer;
+    input { accent-color: var(--color-accent); }
   }
 
   .merge-link {

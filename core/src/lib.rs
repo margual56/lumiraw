@@ -16,6 +16,7 @@ pub mod exif;
 pub mod geometry;
 pub mod grade;
 pub mod lensdb;
+pub mod local;
 pub mod looks;
 pub mod lut;
 pub mod merge;

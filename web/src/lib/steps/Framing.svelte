@@ -81,7 +81,7 @@
 </script>
 
 <div class="stage">
-  <Viewer
+  <Viewer zoomable={false}
     src={app.frame.image}
     rect={shownCrop}
     onrect={setCrop}

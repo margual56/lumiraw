@@ -117,6 +117,29 @@ fn develop_raw(raw: &raw::Raw, meta: Meta) -> Decoded {
     Decoded { img: orient(&cam, orientation), meta }
 }
 
+/// A small picture of the file for a filmstrip, from the JPEG the camera
+/// embedded rather than from the raw data.
+pub fn thumbnail(bytes: &[u8], long_edge: usize) -> Result<Image, DecodeError> {
+    use rawler::decoders::RawDecodeParams;
+    let source = rawler::rawsource::RawSource::new_from_slice(bytes);
+    let decoder = rawler::get_decoder(&source)
+        .map_err(|e| DecodeError::undecodable(e.to_string()))?;
+    let params = RawDecodeParams::default();
+    let picture = decoder.thumbnail_image(&source, &params).ok().flatten()
+        .or_else(|| decoder.preview_image(&source, &params).ok().flatten())
+        .ok_or_else(|| DecodeError { code: "no_preview", message: "no embedded preview".into(),
+                                     make: String::new(), model: String::new() })?
+        .to_rgb8();
+    let (w, h) = (picture.width() as usize, picture.height() as usize);
+    let mut img = Image::new(w, h);
+    for (i, v) in picture.as_raw().iter().enumerate() {
+        img.d[i] = crate::ops::srgb_decode_scalar(*v as f32 / 255.0);
+    }
+    let small = crate::ops::thumbnail(&img, long_edge);
+    let meta = read_exif(bytes);
+    Ok(orient(&small, Orientation::from_u16(meta.orientation)))
+}
+
 /// The camera's XYZ matrix for the light this frame was taken in.
 pub fn scene_matrix(matrices: &[(f32, [[f32; 3]; 3])], wb: &[f32; 3]) -> [[f32; 3]; 3] {
     match scene_temperature(matrices, wb) {

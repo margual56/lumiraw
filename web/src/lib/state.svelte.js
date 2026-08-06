@@ -1,11 +1,11 @@
 /** The whole wizard's state, as runes. */
 
 export const STEPS = ['step.upload', 'step.framing', 'step.refocus', 'step.brightness',
-                      'step.wb', 'step.vibrance', 'step.compare', 'step.looks',
+                      'step.wb', 'step.vibrance', 'step.local', 'step.compare', 'step.looks',
                       'step.download'];
 
 export const UPLOAD = 0, FRAME = 1, REFOCUS = 2, EXPOSURE = 3, WB = 4,
-             VIBRANCE = 5, COMPARE = 6, LOOKS = 7, DOWNLOAD = 8;
+             VIBRANCE = 5, LOCAL = 6, COMPARE = 7, LOOKS = 8, DOWNLOAD = 9;
 
 /** Whether a step is worth showing for the photograph in hand. */
 export const stepVisible = (i) => i !== REFOCUS || app.focus?.verdict === 'soft';
@@ -20,6 +20,9 @@ export const defaultSettings = () => ({
   refocus: 0,
   clarity: 0,        // local contrast, -1..1, on top of what the tone map kept
   denoise: 0,        // noise reduction, -1..1, on top of what was measured
+  // Local work, in fractions of the framed picture.
+  filters: [],
+  spots: [],         // [{ at, r }]: healed spots
   wb_rect: null,
   temperature: 0,
   tint: 0,
@@ -50,6 +53,23 @@ export function hasGrade(settings) {
   return GRADE_KEYS.some((k) => JSON.stringify(settings[k]) !== JSON.stringify(blank[k]));
 }
 
+function readStraight() {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage.getItem('lumiraw.straight') === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function setStraight(on) {
+  app.straight = on;
+  try {
+    localStorage.setItem('lumiraw.straight', on ? '1' : '0');
+  } catch {
+    // Private windows may refuse; the choice still holds for this visit.
+  }
+}
+
 export const app = $state({
   id: null,
   version: __APP_VERSION__,   // stamped in at build time, from core/Cargo.toml
@@ -58,6 +78,10 @@ export const app = $state({
   settings: defaultSettings(),
   ratio: '',                 // locked crop aspect, '' = free
   keepGrade: true,           // carry the grade to the next photograph
+  // Open photographs straight at the download step, everything automatic.
+  straight: readStraight(),
+  showHistogram: true,       // the histogram in the corner of the picture
+  showClipping: false,       // blown and crushed marked on the picture (J)
   coverCrop: null,           // largest empty-corner-free crop for the current tilt
   framingHint: null,         // what the framing step measured and could offer
   focus: null,               // { verdict, edge_px, blur_px } from the pipeline
@@ -80,7 +104,23 @@ export const app = $state({
   preview: { key: null, image: '' },    // the cropped picture
   wipe: { key: null, before: '', after: '' },
   output: { key: null, image: '' },     // download step, fully graded
+  // The full-resolution frame for the 100 % view, developed only while that
+  // view is open: { key, bitmap, width, height }.
+  full: { key: null, bitmap: null, width: 0, height: 0 },
+
+  // Every raw dropped together, for the filmstrip.
+  roll: [],
+  rollAt: -1,
 });
+
+/** The settings a photograph from the roll is exported with. */
+export function settingsFor(index) {
+  if (index === app.rollAt) return $state.snapshot(app.settings);
+  const own = app.roll[index]?.settings;
+  if (own) return own;
+  const grade = Object.fromEntries(GRADE_KEYS.map((k) => [k, $state.snapshot(app.settings[k])]));
+  return { ...defaultSettings(), ...grade };
+}
 
 /** Everything a render depends on. */
 export function settingsKey() {
@@ -110,4 +150,6 @@ export function resetForNewPhoto() {
   app.preview = { key: null, image: '' };
   app.wipe = { key: null, before: '', after: '' };
   app.output = { key: null, image: '' };
+  app.full.bitmap?.close();
+  app.full = { key: null, bitmap: null, width: 0, height: 0 };
 }

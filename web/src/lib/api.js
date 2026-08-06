@@ -99,6 +99,21 @@ export async function render(body) {
   return { ...out, image: toUrl(out.image) };
 }
 
+/** A small picture of a file for the filmstrip, from its embedded preview,
+ *  as an object URL the caller owns (and revokes). */
+export async function thumbnail(file, size = 240) {
+  const buffer = await file.arrayBuffer();
+  const out = await call('thumbnail', { buffer, size }, {}, [buffer]);
+  return URL.createObjectURL(out.image);
+}
+
+/** One export, awaited: { blob, filename, captured }. For the batch, which
+ *  reports its own progress per photograph. */
+export const exportOnce = (body, onprogress) => call('export', body, { onprogress });
+
+/** The picture at full resolution, as an ImageBitmap, for the 100 % view. */
+export const renderFull = (body) => call('full', body);
+
 export async function compare(body) {
   const out = await call('compare', body);
   return { ...out, before: toUrl(out.before), after: toUrl(out.after) };

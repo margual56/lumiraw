@@ -1,0 +1,25 @@
+{
+  "name": "LumiRaw",
+  "short_name": "LumiRaw",
+  "description": "A raw developer that runs entirely in your browser. Nothing is uploaded.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0d0e10",
+  "theme_color": "#0d0e10",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "file_handlers": [
+    {
+      "action": "./",
+      "accept": {
+        "image/x-raw": [".arw", ".sr2", ".srf", ".cr2", ".cr3", ".crw", ".nef", ".nrw", ".raf",
+                        ".orf", ".rw2", ".raw", ".rwl", ".pef", ".srw", ".3fr", ".fff", ".iiq",
+                        ".mos", ".erf", ".kdc", ".dcr", ".mef", ".mrw", ".ari", ".x3f", ".dng"]
+      }
+    }
+  ]
+}

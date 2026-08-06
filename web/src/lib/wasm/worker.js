@@ -23,6 +23,7 @@ import wasmUrl from './autoraw_core.wasm?url';
 import databaseUrl from './lensfun.json?url';
 
 const decoder = new TextDecoder();
+const TRANSFER = Symbol('transfer');
 const encoder = new TextEncoder();
 
 /** wasm calls back into here at every stage boundary. */
@@ -209,6 +210,27 @@ async function render({ settings, size, uncropped }) {
   };
 }
 
+/** The picture at full resolution, for looking at 100 %. */
+async function full({ settings }) {
+  const rc = settingsPointer(settings, (sp, sl) => wasm.ar_render(sp, sl, 0, 1));
+  const info = readJson();
+  if (rc !== 0) fail(info);
+  const { w, h, pixels } = primary();
+  const bitmap = await createImageBitmap(new ImageData(new Uint8ClampedArray(pixels.buffer), w, h));
+  return { bitmap, width: w, height: h, report: info.report ?? {}, [TRANSFER]: [bitmap] };
+}
+
+/** A filmstrip thumbnail from the file's embedded preview. The photograph
+ *  being developed stays open; nothing in the session changes. */
+async function thumbnail({ buffer, size }) {
+  const bytes = new Uint8Array(buffer);
+  const rc = withBytes(bytes, (p, n) => wasm.ar_thumbnail(p, n, size ?? 240));
+  const info = readJson();
+  if (rc !== 0) fail(info);
+  const { w, h, pixels } = primary();
+  return { image: await toBlob(pixels, w, h, 'image/jpeg', 0.85), width: w, height: h };
+}
+
 async function compare({ settings, size }) {
   const rc = settingsPointer(settings, (sp, sl) => wasm.ar_compare(sp, sl, size ?? 1300));
   const info = readJson();
@@ -276,7 +298,8 @@ async function exportImage({ settings, format, quality, max_size, original_name 
   } else {
     blob = new Blob([encodedBytes()], { type: info.mime });
   }
-  return { blob, filename: `${stem}.${info.ext ?? 'webp'}` };
+  // When the photograph was taken travels with it, for a zip entry's dates.
+  return { blob, filename: `${stem}.${info.ext ?? 'webp'}`, captured: info.captured ?? null };
 }
 
 async function mergeAdd({ name, buffer }) {
@@ -319,7 +342,7 @@ async function mergeFinish({ align, deghost }) {
   return info;
 }
 
-const HANDLERS = { open, render, compare, looks, curves, lutLoad, lutClear,
+const HANDLERS = { open, render, full, thumbnail, compare, looks, curves, lutLoad, lutClear,
                    export: exportImage,
                    mergeAdd, mergeRemove, mergeReset, mergeFinish, mergeCheck };
 
@@ -335,7 +358,11 @@ async function handle({ type, id, ...rest }) {
     if (!handler) throw new Error(`unknown request: ${type}`);
     current = id;
     const data = await handler(rest);
-    postMessage({ type: 'result', id, ok: true, data });
+    // A handler that returns something large marks what may be moved rather
+    // than copied to the page.
+    const transfer = data?.[TRANSFER] ?? [];
+    if (data) delete data[TRANSFER];
+    postMessage({ type: 'result', id, ok: true, data }, transfer);
   } catch (error) {
     if (error instanceof WebAssembly.RuntimeError) {
       // The module panicked and is unusable from here on; see `session`.

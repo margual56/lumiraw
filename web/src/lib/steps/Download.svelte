@@ -6,6 +6,7 @@
   import { t, n } from '$lib/i18n.svelte.js';
   import { lookLabel, formatLabel, stageText, errorText } from '$lib/format.js';
   import { startExport, jobStatus, jobFile } from '$lib/api.js';
+  import { exportRoll } from '$lib/roll.svelte.js';
 
   let format = $state('png8');
   let quality = $state(92);
@@ -19,6 +20,44 @@
   const SIZES = ['', '4000', '2560', '1600'];
 
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  function save(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const link = Object.assign(document.createElement('a'), { href: url, download: name });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+
+  const kept = $derived(app.roll.filter((item) => item.keep).length);
+  let batch = $state(null);      // { text, progress } while the roll exports
+
+  /** Every photograph marked in the filmstrip, developed with its own
+   *  settings (or the current grade, if never opened), in one zip. */
+  async function downloadRoll() {
+    working = true;
+    app.busy = true;
+    app.exportState = '';
+    const started = performance.now();
+    try {
+      const { blob, count, failed } = await exportRoll({
+        format, quality, max_size: maxSize || null,
+        onstatus: (text, progress) => (batch = { text, progress }),
+      });
+      const first = (app.roll.find((item) => item.keep)?.name ?? NAME).replace(/\.[^.]+$/, '');
+      save(blob, `${first}_and_${count - 1}_more.zip`);
+      app.exportState = t('roll.saved', {
+        count, size: n(blob.size / 1e6, 1), seconds: n((performance.now() - started) / 1000, 0),
+      }) + (failed.length ? `\n${t('roll.failed')}\n${failed.join('\n')}` : '');
+    } catch (err) {
+      app.exportState = errorText(err);
+    } finally {
+      working = false;
+      app.busy = false;
+      batch = null;
+    }
+  }
 
   async function download() {
     working = true;
@@ -52,12 +91,7 @@
       const blob = await res.blob();
       const match = (res.headers.get('Content-Disposition') || '').match(/filename="(.+?)"/);
       const name = match ? match[1] : `${NAME.toLowerCase()}.png`;
-      const url = URL.createObjectURL(blob);
-      const link = Object.assign(document.createElement('a'), { href: url, download: name });
-      document.body.append(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      save(blob, name);
       app.exportState = t('download.saved', {
         name, size: n(blob.size / 1e6, 1), seconds: n(status.elapsed, 0),
       });
@@ -105,6 +139,20 @@
       {working ? t('download.working') : t('download.button')}
     </button>
 
+    {#if app.roll.length > 1}
+      <button class="ghost roll" onclick={downloadRoll} disabled={working || !kept}>
+        {t('roll.button', { count: kept })}
+      </button>
+      <p class="hint small">{t('roll.explain')}</p>
+    {/if}
+
+    {#if batch}
+      <div class="job">
+        <div class="track"><div class="fill" style:width={`${batch.progress * 100}%`}></div></div>
+        <div class="row"><span>{batch.text}</span><span>{n(batch.progress * 100, 0)} %</span></div>
+      </div>
+    {/if}
+
     {#if app.job}
       <div class="job">
         <div class="track"><div class="fill" style:width={`${app.job.progress * 100}%`}></div></div>
@@ -115,12 +163,15 @@
       </div>
     {/if}
 
-    <em class="hint">{app.exportState}</em>
+    <em class="hint result">{app.exportState}</em>
   </aside>
 </div>
 
 <style lang="scss">
   .job { margin-top: 14px; }
+  .roll { margin-top: 8px; width: 100%; }
+  .small { display: block; margin-top: 4px; font-size: 11.5px; }
+  .hint { white-space: pre-line; }
   .track {
     height: 5px; border-radius: 3px; background: var(--color-panel-2); overflow: hidden;
     .fill { height: 100%; background: var(--color-accent); transition: width .3s ease-out; }

@@ -305,8 +305,12 @@ impl Development {
             };
             flat.enabled.insert(key.to_string(), if keep { settings.on(key) } else { false });
         }
+        // The photographer's own local work stays on both sides of the
+        // comparison, like the grade stays off both.
         let key = format!(
-            "{:?}|{}|{:?}|{:?}|{}|{}|{}|{}",
+            "{:?}|{:?}|{:?}|{}|{:?}|{:?}|{}|{}|{}|{}",
+            flat.filters,
+            flat.spots,
             long_edge,
             settings.framing.key(),
             flat.exposure_rect,

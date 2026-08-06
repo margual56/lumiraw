@@ -236,6 +236,21 @@ pub extern "C" fn ar_render(settings_ptr: *const u8, settings_len: usize, long_e
     }
 }
 
+/// A filmstrip thumbnail of a file, without opening it: the photograph being
+/// developed is left alone. Pixels in the primary buffer, size in the JSON.
+#[no_mangle]
+pub extern "C" fn ar_thumbnail(ptr: *const u8, len: usize, long_edge: i32) -> i32 {
+    let bytes = unsafe { slice(ptr, len) };
+    match crate::decode::thumbnail(bytes, long_edge.max(16) as usize) {
+        Ok(img) => {
+            store(&img);
+            set_json(json!({"width": img.w, "height": img.h}));
+            0
+        }
+        Err(e) => set_error(&e.message, e.code),
+    }
+}
+
 /// Before/after: the corrected frame in the primary buffer, the same frame
 /// with every automatic correction switched off in the secondary one.
 #[no_mangle]

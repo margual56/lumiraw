@@ -2,14 +2,17 @@
   import { app } from '$lib/state.svelte.js';
   import { t } from '$lib/i18n.svelte.js';
   import { RAW_ACCEPT } from '$lib/format.js';
+  import { filesFromDrop } from '$lib/roll.svelte.js';
 
   let { onpick } = $props();
   let over = $state(false);
   let input;
 
-  function take(file) {
+  /** Every file, not the first: a roll is dropped all at once, or as the
+   *  folder it came off the card in. */
+  function take(files) {
     over = false;
-    if (file) onpick(file);
+    if (files?.length) onpick([...files]);
   }
 </script>
 
@@ -20,13 +23,14 @@
   ondragenter={(e) => { e.preventDefault(); over = true; }}
   ondragover={(e) => { e.preventDefault(); over = true; }}
   ondragleave={() => (over = false)}
-  ondrop={(e) => { e.preventDefault(); take(e.dataTransfer.files[0]); }}
+  ondrop={async (e) => { e.preventDefault(); take(await filesFromDrop(e.dataTransfer)); }}
 >
   <input
     bind:this={input}
     type="file"
+    multiple
     accept={RAW_ACCEPT}
-    onchange={(e) => take(e.currentTarget.files[0])}
+    onchange={(e) => take(e.currentTarget.files)}
   />
   <strong>{t('upload.drop')}</strong>
   <span>{t('upload.formats')}</span>

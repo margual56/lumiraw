@@ -3,6 +3,23 @@
 import { NAME } from './brand.js';
 import { t, n, signed, loose, shutter } from './i18n.svelte.js';
 
+/**
+ * Every raw suffix the decoder (`rawler`, in `core/vendor`) has a reader for, for
+ * the file pickers.
+ */
+export const RAW_ACCEPT = [
+  '.arw', '.sr2', '.srf',                 // Sony
+  '.cr2', '.cr3', '.crw',                 // Canon
+  '.nef', '.nrw',                         // Nikon
+  '.raf',                                 // Fujifilm
+  '.orf',                                 // OM System, Olympus
+  '.rw2', '.raw', '.rwl',                 // Panasonic, Leica
+  '.pef',                                 // Pentax
+  '.srw',                                 // Samsung
+  '.3fr', '.fff', '.iiq', '.mos', '.erf', '.kdc', '.dcr', '.mef', '.mrw', '.ari', '.x3f',
+  '.dng',                                 // phones, Leica, Pentax, Ricoh, and converters
+].join(',');
+
 /** A look's name in the reader's language. */
 export const lookLabel = (id, fallback = '') => {
   const key = `look.${id}`;
@@ -104,6 +121,7 @@ export function stageText(stage, params = {}) {
 }
 
 /** Server errors carry a code when they have one; fall back to its English. */
+/** A failure as a sentence. */
 export function errorText(error) {
   if (error?.reason) {
     // `message` is always available as a placeholder: some reports carry

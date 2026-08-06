@@ -23,4 +23,5 @@ pub mod mixer;
 pub mod ops;
 pub mod output;
 pub mod profile;
+pub mod raw;
 pub mod straighten;

@@ -1,28 +1,28 @@
 //! Decode-only statistics, for comparing against the Python (LibRaw) decoder.
-use autoraw_core::{decode, ops};
+use autoraw_core::{decode, ops, raw};
 
 fn main() {
     for path in std::env::args().skip(1) {
         let bytes = std::fs::read(&path).expect("read");
 
-        // Straight from rawloader, before any of our own processing, so this
-        // measures the file rather than the pipeline.
-        let raw = rawloader::decode(&mut std::io::Cursor::new(&bytes)).expect("raw");
-        let values: Vec<f32> = match &raw.data {
-            rawloader::RawImageData::Integer(v) => v.iter().map(|x| *x as f32).collect(),
-            rawloader::RawImageData::Float(v) => v.clone(),
-        };
+        // Straight from the decoder, before any of our own processing, so
+        // this measures the file rather than the pipeline.
+        let raw = raw::load(&bytes).expect("raw");
         let mut reach = [0f32; 3];
         let mut saturated = [0usize; 3];
-        for y in 0..raw.height {
-            for x in 0..raw.width {
-                let c = raw.cfa.color_at(y, x).min(2);
-                let black = raw.blacklevels[c] as f32;
-                let white = raw.whitelevels[c] as f32;
-                let level = (values[y * raw.width + x] - black) / (white - black).max(1.0);
-                reach[c] = reach[c].max(level);
-                if level >= 1.0 {
-                    saturated[c] += 1;
+        let (x0, y0, w, h) = raw.area;
+        for y in y0..y0 + h {
+            for x in x0..x0 + w {
+                for k in 0..raw.cpp {
+                    let c = match &raw.layout {
+                        raw::Layout::Mosaic(cfa) => cfa.color_at(y, x).min(2),
+                        raw::Layout::Linear => k,
+                    };
+                    let level = raw.normalised(x, y, k);
+                    reach[c] = reach[c].max(level);
+                    if level >= 1.0 {
+                        saturated[c] += 1;
+                    }
                 }
             }
         }

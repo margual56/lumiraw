@@ -7,9 +7,9 @@ if [[ "${1:-}" == "--db" ]]; then
 fi
 
 if command -v cargo >/dev/null && rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown; then
-  # simd128 is baseline in every current browser.
-  RUSTFLAGS="-C target-feature=+simd128" \
-    cargo build --release --manifest-path core/Cargo.toml --target wasm32-unknown-unknown
+  # Target flags (simd128, the getrandom backend) live in .cargo/config.toml;
+  # setting RUSTFLAGS here would silently replace them.
+  cargo build --release --manifest-path core/Cargo.toml --target wasm32-unknown-unknown
   cp core/target/wasm32-unknown-unknown/release/autoraw_core.wasm web/src/lib/wasm/autoraw_core.wasm
   echo "rebuilt the wasm module from core/"
 else

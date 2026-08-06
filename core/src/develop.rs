@@ -30,7 +30,8 @@ pub struct Development {
 }
 
 impl Development {
-    pub fn open(filename: &str, bytes: &[u8], db: Option<&Database>) -> Result<Development, String> {
+    pub fn open(filename: &str, bytes: &[u8], db: Option<&Database>)
+                -> Result<Development, decode::DecodeError> {
         let d = decode::decode(bytes)?;
         let (w, h) = (d.img.w, d.img.h);
         let mut crop_factor = None;

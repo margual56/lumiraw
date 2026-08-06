@@ -6,7 +6,7 @@
   import LocalePicker from '$lib/components/LocalePicker.svelte';
   import * as api from '$lib/api.js';
   import { t, n, signed, shutter, loose } from '$lib/i18n.svelte.js';
-  import { errorText } from '$lib/format.js';
+  import { errorText, RAW_ACCEPT } from '$lib/format.js';
   import { app, resetForNewPhoto, FRAME } from '$lib/state.svelte.js';
 
   /** One entry per frame the module is holding, in the order it holds them. */
@@ -226,7 +226,7 @@
           bind:this={input}
           type="file"
           multiple
-          accept=".arw,.sr2,.srf,.cr2,.cr3,.nef,.raf,.orf,.rw2,.pef,.dng"
+          accept={RAW_ACCEPT}
           onchange={(e) => add(e.currentTarget.files)}
         />
         <strong>{frames.length ? t('merge.dropMore') : t('merge.drop')}</strong>

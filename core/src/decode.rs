@@ -1,6 +1,9 @@
 //! Raw decoding: file bytes -> linear sRGB, plus the EXIF the pipeline reasons about.
 
 use crate::ops::{smoothstep, Image, Plane};
+use crate::raw::{self, CFA};
+pub use crate::raw::DecodeError;
+use rawler::decoders::Orientation;
 
 #[derive(Default, Clone, Debug)]
 pub struct Meta {
@@ -31,96 +34,157 @@ const XYZ_RGB: [[f32; 3]; 3] = [
     [0.019334, 0.119193, 0.950227],
 ];
 
-pub fn decode(bytes: &[u8]) -> Result<Decoded, String> {
-    let mut cursor = std::io::Cursor::new(bytes);
-    let raw = rawloader::decode(&mut cursor).map_err(|e| format!("{:?}", e))?;
+pub fn decode(bytes: &[u8]) -> Result<Decoded, DecodeError> {
+    let raw = raw::load(bytes)?;
 
     let mut meta = read_exif(bytes);
     if meta.make.is_empty() {
-        meta.make = raw.clean_make.clone();
+        meta.make = raw.make.clone();
     }
     if meta.model.is_empty() {
-        meta.model = raw.clean_model.clone();
+        meta.model = raw.model.clone();
     }
+    Ok(develop_raw(&raw, meta))
+}
 
-    let data: Vec<f32> = match &raw.data {
-        rawloader::RawImageData::Integer(v) => v.iter().map(|x| *x as f32).collect(),
-        rawloader::RawImageData::Float(v) => v.clone(),
-    };
-    if raw.cpp != 1 {
-        // Already RGB (some DNGs / sRAW): just normalise.
-        let (w, h) = (raw.width, raw.height);
-        let mut img = Image::new(w, h);
-        let black = raw.blacklevels[0] as f32;
-        let white = (raw.whitelevels[0] as f32 - black).max(1.0);
-        for i in 0..w * h * 3.min(raw.cpp * w * h) {
-            img.d[i] = ((data[i] - black) / white).clamp(0.0, 1.0);
-        }
-        return Ok(Decoded { img: orient(&img, raw.orientation), meta });
-    }
-
+/// Sensor values to linear sRGB: levels, white balance, demosaic, highlight
+/// reconstruction, colour matrix, orientation.
+fn develop_raw(raw: &raw::Raw, meta: Meta) -> Decoded {
     // --- black/white levels + camera white balance ------------------------
     // dcraw normalises the multipliers by the largest one, so no channel can
     // clip further than the raw already did.
-    let mut wb = [
-        if raw.wb_coeffs[0].is_finite() && raw.wb_coeffs[0] > 0.0 { raw.wb_coeffs[0] } else { 1.0 },
-        if raw.wb_coeffs[1].is_finite() && raw.wb_coeffs[1] > 0.0 { raw.wb_coeffs[1] } else { 1.0 },
-        if raw.wb_coeffs[2].is_finite() && raw.wb_coeffs[2] > 0.0 { raw.wb_coeffs[2] } else { 1.0 },
-    ];
+    let mut wb = raw.wb;
     let wmax = wb[0].max(wb[1]).max(wb[2]);
     for g in wb.iter_mut() {
         *g /= wmax;
     }
 
-    let (fw, fh) = (raw.width, raw.height);
-    let mut cfa_plane = Plane::new(fw, fh);
-    for y in 0..fh {
-        for x in 0..fw {
-            let c = raw.cfa.color_at(y, x);
-            let black = raw.blacklevels[c.min(3)] as f32;
-            let white = raw.whitelevels[c.min(3)] as f32;
-            let v = (data[y * fw + x] - black) / (white - black).max(1.0);
-            cfa_plane.d[y * fw + x] = v.clamp(0.0, 1.0) * wb[c.min(2)];
+    let (x0, y0, w, h) = raw.area;
+    let mut cam = match &raw.layout {
+        raw::Layout::Mosaic(cfa) => {
+            let (fw, fh) = (raw.width, raw.height);
+            let mut cfa_plane = Plane::new(fw, fh);
+            for y in 0..fh {
+                for x in 0..fw {
+                    let c = cfa.color_at(y, x).min(2);
+                    cfa_plane.d[y * fw + x] = raw.normalised(x, y, 0).clamp(0.0, 1.0) * wb[c];
+                }
+            }
+            // The pattern is looked up at absolute sensor positions, so the
+            // usable area may start anywhere without swapping red and blue.
+            demosaic_any(&cfa_plane, cfa, x0, y0, w, h)
         }
-    }
-
-    // --- usable area ------------------------------------------------------
-    let (ct, cr, cb, cl) = (raw.crops[0], raw.crops[1], raw.crops[2], raw.crops[3]);
-    let (mut x0, mut y0) = (cl, ct);
-    let mut w = fw.saturating_sub(cl + cr);
-    let mut h = fh.saturating_sub(ct + cb);
-    if w < 16 || h < 16 {
-        x0 = 0;
-        y0 = 0;
-        w = fw;
-        h = fh;
-    }
-    // Keep the CFA phase: an odd offset would swap red and blue.
-    if x0 % 2 == 1 {
-        x0 -= 1;
-        w += 1;
-    }
-    if y0 % 2 == 1 {
-        y0 -= 1;
-        h += 1;
-    }
-    w = w.min(fw - x0);
-    h = h.min(fh - y0);
-
-    let mut cam = demosaic(&cfa_plane, &raw.cfa, x0, y0, w, h);
+        raw::Layout::Linear => {
+            // Already three values a pixel, but still in the camera's own
+            // colours and still unbalanced.
+            let mut img = Image::new(w, h);
+            for y in 0..h {
+                for x in 0..w {
+                    for c in 0..3 {
+                        img.d[(y * w + x) * 3 + c] =
+                            raw.normalised(x0 + x, y0 + y, c).clamp(0.0, 1.0) * wb[c];
+                    }
+                }
+            }
+            img
+        }
+    };
     reconstruct_highlights(&mut cam, &wb);
 
     // --- camera RGB -> linear sRGB ---------------------------------------
-    let m = cam_to_srgb(&raw.xyz_to_cam);
+    // Not clamped.
+    let m = cam_to_srgb(&scene_matrix(&raw.matrices, &raw.wb));
+    // What is not kept is a pixel with no light in it.
     for px in cam.d.chunks_exact_mut(3) {
         let (r, g, b) = (px[0], px[1], px[2]);
-        px[0] = (m[0][0] * r + m[0][1] * g + m[0][2] * b).max(0.0);
-        px[1] = (m[1][0] * r + m[1][1] * g + m[1][2] * b).max(0.0);
-        px[2] = (m[2][0] * r + m[2][1] * g + m[2][2] * b).max(0.0);
+        let out = [m[0][0] * r + m[0][1] * g + m[0][2] * b,
+                   m[1][0] * r + m[1][1] * g + m[1][2] * b,
+                   m[2][0] * r + m[2][1] * g + m[2][2] * b];
+        if crate::ops::luminance_px(&out) > 0.0 {
+            px.copy_from_slice(&out);
+        } else {
+            px.fill(0.0);
+        }
     }
 
-    Ok(Decoded { img: orient(&cam, raw.orientation), meta })
+    // Not every decoder reads the orientation (rawler's ARW one does not), and
+    // a portrait frame that comes up on its side is the first thing anyone
+    // notices.
+    let orientation = match raw.orientation {
+        Orientation::Normal | Orientation::Unknown => Orientation::from_u16(meta.orientation),
+        o => o,
+    };
+    Decoded { img: orient(&cam, orientation), meta }
 }
+
+/// The camera's XYZ matrix for the light this frame was taken in.
+pub fn scene_matrix(matrices: &[(f32, [[f32; 3]; 3])], wb: &[f32; 3]) -> [[f32; 3]; 3] {
+    match scene_temperature(matrices, wb) {
+        Some(kelvin) => matrix_at(matrices, kelvin),
+        None => matrices.first().map(|m| m.1).unwrap_or(SRGB_AS_CAMERA),
+    }
+}
+
+/// The blend of the calibration matrices for a light of this temperature.
+fn matrix_at(matrices: &[(f32, [[f32; 3]; 3])], kelvin: f32) -> [[f32; 3]; 3] {
+    let (lo, hi) = (&matrices[0], &matrices[matrices.len() - 1]);
+    let k = kelvin.clamp(lo.0, hi.0);
+    let t = if (hi.0 - lo.0).abs() < 1.0 { 0.0 }
+            else { (1.0 / k - 1.0 / lo.0) / (1.0 / hi.0 - 1.0 / lo.0) };
+    let mut m = [[0f32; 3]; 3];
+    for i in 0..3 {
+        for j in 0..3 {
+            m[i][j] = lo.1[i][j] * (1.0 - t) + hi.1[i][j] * t;
+        }
+    }
+    m
+}
+
+/// The colour temperature the camera's white balance was set for, as far as the
+/// calibration matrices can tell, or `None` when there are fewer than two of
+/// them to tell between.
+pub fn scene_temperature(matrices: &[(f32, [[f32; 3]; 3])], wb: &[f32; 3]) -> Option<f32> {
+    if matrices.len() < 2 {
+        return None;
+    }
+    let (lo, hi) = (matrices[0].0, matrices[matrices.len() - 1].0);
+    // What the camera recorded for a neutral surface: the reciprocal of the
+    // multipliers that made it neutral.
+    let neutral = [1.0 / wb[0].max(1e-6), 1.0 / wb[1].max(1e-6), 1.0 / wb[2].max(1e-6)];
+    let mut kelvin = 5000.0f32;
+    for _ in 0..8 {
+        let Some(inv) = invert3(&matrix_at(matrices, kelvin)) else { break };
+        let xyz: Vec<f32> = (0..3).map(|i| (0..3).map(|j| inv[i][j] * neutral[j]).sum()).collect();
+        let sum = xyz[0] + xyz[1] + xyz[2];
+        if !(sum > 1e-9) {
+            break;
+        }
+        let next = mccamy(xyz[0] / sum, xyz[1] / sum).clamp(lo, hi);
+        if !next.is_finite() {
+            break;
+        }
+        let settled = (next - kelvin).abs() < 1.0;
+        kelvin = next;
+        if settled {
+            break;
+        }
+    }
+    Some(kelvin)
+}
+
+/// Correlated colour temperature from a chromaticity.
+fn mccamy(x: f32, y: f32) -> f32 {
+    let n = (x - 0.3320) / (0.1858 - y);
+    449.0 * n * n * n + 3525.0 * n * n + 6823.3 * n + 5520.33
+}
+
+/// A camera that describes no matrix at all: treat its channels as sRGB's,
+/// which is wrong, but wrong in the same way as having no profile anywhere.
+const SRGB_AS_CAMERA: [[f32; 3]; 3] = [
+    [3.2404542, -1.5371385, -0.4985314],
+    [-0.9692660, 1.8760108, 0.0415560],
+    [0.0556434, -0.2040259, 1.0572252],
+];
 
 /// One cell of the hue field per this many pixels each way.
 const HUE_SCALE: usize = 4;
@@ -378,7 +442,7 @@ fn reconstruct_highlights(img: &mut Image, wb: &[f32; 3]) {
 
 /// dcraw's `cam_xyz_coeff`: compose with the sRGB primaries, normalise each
 /// row to unit sum (so neutral camera values stay neutral), then invert.
-fn cam_to_srgb(xyz_to_cam: &[[f32; 3]; 4]) -> [[f32; 3]; 3] {
+fn cam_to_srgb(xyz_to_cam: &[[f32; 3]; 3]) -> [[f32; 3]; 3] {
     let mut cam_rgb = [[0f32; 3]; 3];
     for i in 0..3 {
         for j in 0..3 {
@@ -434,11 +498,11 @@ fn invert3(m: &[[f32; 3]; 3]) -> Option<[[f32; 3]; 3]> {
 
 /// Interpolate a Bayer mosaic to full colour, choosing a direction for green
 /// and reconstructing red and blue as differences from it.
-pub fn demosaic_directional(cfa: &Plane, pattern: &rawloader::CFA, x0: usize, y0: usize,
+pub fn demosaic_directional(cfa: &Plane, pattern: &CFA, x0: usize, y0: usize,
                             w: usize, h: usize) -> Image {
     // Everything below assumes the four-site Bayer quad.
     if pattern.width != 2 || pattern.height != 2 {
-        return demosaic(cfa, pattern, x0, y0, w, h);
+        return demosaic_any(cfa, pattern, x0, y0, w, h);
     }
     let mut out = Image::new(w, h);
 
@@ -571,8 +635,104 @@ pub fn demosaic_directional(cfa: &Plane, pattern: &rawloader::CFA, x0: usize, y0
     out
 }
 
+/// The demosaic for whatever pattern the sensor has.
+pub fn demosaic_any(cfa: &Plane, pattern: &CFA, x0: usize, y0: usize, w: usize, h: usize) -> Image {
+    if pattern.width == 2 && pattern.height == 2 {
+        demosaic(cfa, pattern, x0, y0, w, h)
+    } else {
+        demosaic_pattern(cfa, pattern, x0, y0, w, h)
+    }
+}
+
+/// Demosaic any RGB pattern, by colour difference.
+pub fn demosaic_pattern(cfa: &Plane, pattern: &CFA, x0: usize, y0: usize, w: usize, h: usize) -> Image {
+    let colour = |x: i64, y: i64| -> usize {
+        pattern.color_at((y0 as i64 + y).max(0) as usize, (x0 as i64 + x).max(0) as usize).min(2)
+    };
+    let inside = |x: i64, y: i64| -> bool {
+        let (xx, yy) = (x0 as i64 + x, y0 as i64 + y);
+        xx >= 0 && yy >= 0 && (xx as usize) < cfa.w && (yy as usize) < cfa.h
+    };
+    let at = |x: i64, y: i64| -> f32 {
+        cfa.d[(y0 as i64 + y) as usize * cfa.w + (x0 as i64 + x) as usize]
+    };
+
+    // --- green everywhere ---------------------------------------------------
+    let mut green = Plane::new(w, h);
+    for y in 0..h as i64 {
+        for x in 0..w as i64 {
+            let i = y as usize * w + x as usize;
+            if colour(x, y) == 1 {
+                green.d[i] = at(x, y);
+                continue;
+            }
+            let pair = |dx: i64, dy: i64| -> Option<(f32, f32)> {
+                let (ax, ay, bx, by) = (x - dx, y - dy, x + dx, y + dy);
+                if inside(ax, ay) && inside(bx, by) && colour(ax, ay) == 1 && colour(bx, by) == 1 {
+                    Some((at(ax, ay), at(bx, by)))
+                } else {
+                    None
+                }
+            };
+            let lines = [pair(1, 0), pair(0, 1)];
+            let best = lines.iter().flatten().min_by(|a, b| (a.0 - a.1).abs().total_cmp(&(b.0 - b.1).abs()));
+            green.d[i] = match best {
+                Some((a, b)) => 0.5 * (a + b),
+                None => {
+                    let (mut sum, mut n) = (0.0f32, 0.0f32);
+                    for dy in -1..=1 {
+                        for dx in -1..=1 {
+                            if (dx, dy) != (0, 0) && inside(x + dx, y + dy) && colour(x + dx, y + dy) == 1 {
+                                let wt = if dx == 0 || dy == 0 { 1.0 } else { 0.5 };
+                                sum += wt * at(x + dx, y + dy);
+                                n += wt;
+                            }
+                        }
+                    }
+                    if n > 0.0 { sum / n } else { at(x, y) }
+                }
+            };
+        }
+    }
+
+    // --- red and blue as a difference from green ---------------------------
+    let mut out = Image::new(w, h);
+    for y in 0..h as i64 {
+        for x in 0..w as i64 {
+            let i = y as usize * w + x as usize;
+            let g = green.d[i];
+            let here = colour(x, y);
+            let mut px = [0f32; 3];
+            px[1] = g;
+            for c in [0usize, 2] {
+                if here == c {
+                    px[c] = at(x, y);
+                    continue;
+                }
+                let (mut sum, mut n) = (0.0f32, 0.0f32);
+                for dy in -2..=2i64 {
+                    for dx in -2..=2i64 {
+                        let (sx, sy) = (x + dx, y + dy);
+                        if sx < 0 || sy < 0 || sx >= w as i64 || sy >= h as i64 || colour(sx, sy) != c {
+                            continue;
+                        }
+                        let wt = 1.0 / (1.0 + (dx * dx + dy * dy) as f32);
+                        sum += wt * (at(sx, sy) - green.d[sy as usize * w + sx as usize]);
+                        n += wt;
+                    }
+                }
+                px[c] = if n > 0.0 { g + sum / n } else { g };
+            }
+            for c in 0..3 {
+                out.d[i * 3 + c] = px[c].max(0.0);
+            }
+        }
+    }
+    out
+}
+
 /// Gradient-corrected bilinear interpolation (Malvar, He & Cutler 2004).
-pub fn demosaic(cfa: &Plane, pattern: &rawloader::CFA, x0: usize, y0: usize, w: usize,
+pub fn demosaic(cfa: &Plane, pattern: &CFA, x0: usize, y0: usize, w: usize,
                 h: usize) -> Image {
     let mut out = Image::new(w, h);
     let at = |x: i64, y: i64| -> f32 {
@@ -651,8 +811,8 @@ pub fn demosaic(cfa: &Plane, pattern: &rawloader::CFA, x0: usize, y0: usize, w: 
 // orientation
 // -------------------------------------------------------------------------
 
-fn orient(img: &Image, o: rawloader::Orientation) -> Image {
-    use rawloader::Orientation::*;
+fn orient(img: &Image, o: Orientation) -> Image {
+    use Orientation::*;
     match o {
         Normal | Unknown => img.clone(),
         HorizontalFlip => map(img, img.w, img.h, |x, y, w, _| (w - 1 - x, y)),
@@ -894,8 +1054,8 @@ mod tests {
     }
 
     /// Mosaic a known image and demosaic it back.
-    fn round_trip(method: fn(&Plane, &rawloader::CFA, usize, usize, usize, usize) -> Image,
-                  truth: &Image, cfa: &rawloader::CFA) -> Image {
+    fn round_trip(method: fn(&Plane, &CFA, usize, usize, usize, usize) -> Image,
+                  truth: &Image, cfa: &CFA) -> Image {
         let mut plane = Plane::new(truth.w, truth.h);
         for y in 0..truth.h {
             for x in 0..truth.w {
@@ -909,14 +1069,14 @@ mod tests {
     /// A flat field has one right answer and every interpolator must find it.
     #[test]
     fn flat_field_survives_demosaic() {
-        let cfa = rawloader::CFA::new("RGGB");
+        let cfa = CFA::new("RGGB");
         let (w, h) = (32usize, 24usize);
         let colour = [0.4f32, 0.55, 0.3];
         let mut truth = Image::new(w, h);
         for px in truth.d.chunks_exact_mut(3) {
             px.copy_from_slice(&colour);
         }
-        for (name, method) in [("demosaic", demosaic as fn(&Plane, &rawloader::CFA, usize, usize, usize, usize) -> Image),
+        for (name, method) in [("demosaic", demosaic as fn(&Plane, &CFA, usize, usize, usize, usize) -> Image),
                                ("directional", demosaic_directional)] {
             let got = round_trip(method, &truth, &cfa);
             // The border reads clamped neighbours, so judge the interior.
@@ -937,7 +1097,7 @@ mod tests {
     /// average it.
     #[test]
     fn horizontal_ramp_survives_demosaic() {
-        let cfa = rawloader::CFA::new("RGGB");
+        let cfa = CFA::new("RGGB");
         let (w, h) = (48usize, 16usize);
         let mut truth = Image::new(w, h);
         for y in 0..h {
@@ -948,7 +1108,7 @@ mod tests {
                 }
             }
         }
-        for (name, method) in [("demosaic", demosaic as fn(&Plane, &rawloader::CFA, usize, usize, usize, usize) -> Image),
+        for (name, method) in [("demosaic", demosaic as fn(&Plane, &CFA, usize, usize, usize, usize) -> Image),
                                ("directional", demosaic_directional)] {
             let got = round_trip(method, &truth, &cfa);
             for y in 2..h - 2 {
@@ -968,23 +1128,70 @@ mod tests {
     /// hand anything else to the one that does not care.
     #[test]
     fn non_bayer_falls_back() {
-        let xtrans = rawloader::CFA::new("GGRGGBGGBGGRBRGRBGGGBGGRGGRGGBRBGBRG");
+        let xtrans = CFA::new(XTRANS);
         let (w, h) = (24usize, 24usize);
         let mut plane = Plane::new(w, h);
         for (i, v) in plane.d.iter_mut().enumerate() {
             *v = (i % 17) as f32 / 17.0;
         }
         let fallback = demosaic_directional(&plane, &xtrans, 0, 0, w, h);
-        let linear = demosaic(&plane, &xtrans, 0, 0, w, h);
-        assert_eq!(fallback.d, linear.d,
-                   "a non-Bayer pattern must go to the linear filter untouched");
+        let generic = demosaic_any(&plane, &xtrans, 0, 0, w, h);
+        assert_eq!(fallback.d, generic.d,
+                   "a non-Bayer pattern must go to the pattern demosaic untouched");
+    }
+
+    const XTRANS: &str = "GGRGGBGGBGGRBRGRBGGGBGGRGGRGGBRBGBRG";
+
+    /// An X-Trans sensor looking at a flat colour and at a grey ramp.
+    #[test]
+    fn xtrans_stays_grey_and_flat() {
+        let cfa = CFA::new(XTRANS);
+        let (w, h) = (48usize, 36usize);
+        let mut flat = Image::new(w, h);
+        let colour = [0.4f32, 0.55, 0.3];
+        for px in flat.d.chunks_exact_mut(3) {
+            px.copy_from_slice(&colour);
+        }
+        let got = round_trip(demosaic_any, &flat, &cfa);
+        for (i, px) in got.d.chunks_exact(3).enumerate() {
+            for c in 0..3 {
+                assert!((px[c] - colour[c]).abs() < 1e-4,
+                        "flat field shifted at {} channel {c}: {}", i, px[c]);
+            }
+        }
+        let bayer = round_trip(demosaic, &flat, &cfa);
+        let wrong = bayer.d.chunks_exact(3).map(|px| (0..3).map(|c| (px[c] - colour[c]).abs())
+            .fold(0.0f32, f32::max)).fold(0.0f32, f32::max);
+        assert!(wrong > 0.05, "the Bayer kernels were expected to fail on X-Trans: {wrong}");
+
+        let mut ramp = Image::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let v = 0.1 + 0.6 * ((x + y) as f32 / (w + h) as f32);
+                for c in 0..3 {
+                    ramp.d[(y * w + x) * 3 + c] = v;
+                }
+            }
+        }
+        let spread = |img: &Image| -> f32 {
+            let mut worst = 0f32;
+            for y in 3..h - 3 {
+                for x in 3..w - 3 {
+                    let px = &img.d[(y * w + x) * 3..(y * w + x) * 3 + 3];
+                    worst = worst.max(px[0].max(px[1]).max(px[2]) - px[0].min(px[1]).min(px[2]));
+                }
+            }
+            worst
+        };
+        let ours = spread(&round_trip(demosaic_any, &ramp, &cfa));
+        assert!(ours < 0.01, "false colour on a grey X-Trans ramp: {ours}");
     }
 
     /// The same thing through the real Bayer path.
     #[test]
     fn blown_bayer_region_develops_to_white() {
         let wb = [1.0f32, 0.37, 0.52];
-        let cfa = rawloader::CFA::new("RGGB");
+        let cfa = CFA::new("RGGB");
         let (w, h) = (96usize, 32usize);
         let grey = 0.2f32;
 
@@ -1030,12 +1237,60 @@ mod tests {
         // White in the camera's own space is only white in the picture because
         // the matrix carries neutrals through unchanged.
         let sony = [[0.6912, -0.1503, -0.0645], [-0.4472, 1.2370, 0.2313],
-                    [-0.0819, 0.1706, 0.5785], [0.0, 0.0, 0.0]];
+                    [-0.0819, 0.1706, 0.5785]];
         let m = cam_to_srgb(&sony);
         let out = [m[0][0] + m[0][1] + m[0][2],
                    m[1][0] + m[1][1] + m[1][2],
                    m[2][0] + m[2][1] + m[2][2]];
         assert!(cast(out) < 1.01, "camera neutral drifted through the matrix: {out:?}");
+    }
+
+    /// A linear DNG is demosaiced but not developed.
+    #[test]
+    fn a_linear_raw_is_balanced_and_matrixed() {
+        let d65 = [[0.6972f32, -0.2408, -0.06], [-0.433, 1.2101, 0.2515], [-0.0388, 0.1277, 0.5847]];
+        let wb = [2.0f32, 1.0, 1.6];
+        // A grey card as the sensor saw it: the reciprocal of the balance.
+        let grey = [0.2 / wb[0], 0.2 / wb[1], 0.2 / wb[2]];
+        let red = [0.3f32, 0.05, 0.02];
+        let (w, h) = (8usize, 4usize);
+        let mut data = Vec::new();
+        for i in 0..w * h {
+            let px = if i < w * h / 2 { grey } else { red };
+            data.extend(px.iter().map(|v| 64.0 + v * (4095.0 - 64.0)));
+        }
+        let raw = raw::Raw::synthetic(w, h, data, raw::Layout::Linear, wb, vec![(6504.0, d65)],
+                                      64.0, 4095.0);
+        let out = develop_raw(&raw, Meta::default()).img;
+        let g = &out.d[0..3];
+        let cast = g.iter().cloned().fold(0.0f32, f32::max) / g.iter().cloned().fold(f32::MAX, f32::min).max(1e-6);
+        assert!(cast < 1.02, "a grey card came out tinted: {g:?}");
+        let r = &out.d[(w * h - 1) * 3..w * h * 3];
+        let passthrough = [red[0] * wb[0], red[1] * wb[1], red[2] * wb[2]];
+        let moved = (0..3).map(|c| (r[c] / r[1].max(1e-6) - passthrough[c] / passthrough[1]).abs())
+            .fold(0.0f32, f32::max);
+        assert!(moved > 0.1, "the matrix was skipped: {r:?} against {passthrough:?}");
+    }
+
+    /// Under daylight the daylight matrix, under a lamp the tungsten one.
+    #[test]
+    fn the_matrix_follows_the_light() {
+        let d65 = [[0.6972f32, -0.2408, -0.06], [-0.433, 1.2101, 0.2515], [-0.0388, 0.1277, 0.5847]];
+        let a = [[0.793f32, -0.406, 0.0417], [-0.374, 1.1119, 0.3015], [-0.0202, 0.0741, 0.6896]];
+        let matrices = vec![(2856.0f32, a), (6504.0, d65)];
+        let balance_under = |m: &[[f32; 3]; 3], white: [f32; 3]| -> [f32; 3] {
+            let n: Vec<f32> = (0..3).map(|i| (0..3).map(|j| m[i][j] * white[j]).sum()).collect();
+            [n[1] / n[0], 1.0, n[1] / n[2]]
+        };
+        let worst = |got: [[f32; 3]; 3], want: [[f32; 3]; 3]| -> f32 {
+            (0..9).map(|k| (got[k / 3][k % 3] - want[k / 3][k % 3]).abs()).fold(0.0, f32::max)
+        };
+        let noon = scene_matrix(&matrices, &balance_under(&d65, [0.9505, 1.0, 1.0888]));
+        assert!(worst(noon, d65) < 0.01, "daylight did not get the daylight matrix: {noon:?}");
+        let lamp = scene_matrix(&matrices, &balance_under(&a, [1.0985, 1.0, 0.3558]));
+        assert!(worst(lamp, a) < 0.01, "tungsten did not get the tungsten matrix: {lamp:?}");
+        let one = scene_matrix(&matrices[1..], &[2.0, 1.0, 1.5]);
+        assert_eq!(one, d65, "a single matrix must be used as it is");
     }
 }
 

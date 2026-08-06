@@ -2,6 +2,7 @@
   import Stepper from '$lib/components/Stepper.svelte';
   import Progress from '$lib/components/Progress.svelte';
   import Dropzone from '$lib/components/Dropzone.svelte';
+  import GradeCarry from '$lib/components/GradeCarry.svelte';
   import Privacy from '$lib/components/Privacy.svelte';
   import Framing from '$lib/steps/Framing.svelte';
   import Refocus from '$lib/steps/Refocus.svelte';
@@ -18,6 +19,7 @@
   import { t, n } from '$lib/i18n.svelte.js';
   import { errorText } from '$lib/format.js';
   import { NAME } from '$lib/brand.js';
+  import { history, observe, resetHistory, undo, redo, onKey } from '$lib/history.svelte.js';
   import {
     app, resetForNewPhoto, settingsKey, stepVisible,
     STEPS, UPLOAD, FRAME, REFOCUS, EXPOSURE, WB, VIBRANCE, COMPARE, LOOKS, DOWNLOAD,
@@ -31,6 +33,18 @@
        `ISO ${app.info.profile.iso}`,
        `f/${app.info.profile.aperture}`].join(' · ')
     : '');
+
+  // Undo history is per photograph.
+  let historyFor = null;
+  $effect(() => {
+    const key = settingsKey();
+    if (app.id !== historyFor) {
+      historyFor = app.id;
+      resetHistory();
+    } else if (key) {
+      observe();
+    }
+  });
 
   // The pipeline reports every stage it enters; feed that straight to the bar.
   api.setProgressListener((fraction, code) => {
@@ -181,6 +195,8 @@
   }
 </script>
 
+<svelte:window onkeydown={onKey} />
+
 <div class="shell">
   <header>
     <div class="brand">
@@ -199,6 +215,7 @@
     {#if app.step === UPLOAD}
       <div class="intro">
         <Privacy />
+        <GradeCarry />
         <Dropzone onpick={pick} />
         <a class="merge-link" href="{base}/merge">
           <strong>{t('merge.link')}</strong>
@@ -225,9 +242,17 @@
   </main>
 
   <footer>
-    <button class="ghost" disabled={app.step === UPLOAD} onclick={() => go(app.step - 1)}>
-      {t('nav.back')}
-    </button>
+    <span class="nav-start">
+      <button class="ghost" disabled={app.step === UPLOAD} onclick={() => go(app.step - 1)}>
+        {t('nav.back')}
+      </button>
+      {#if app.id && app.step !== UPLOAD}
+        <button class="ghost icon" disabled={!history.canUndo} onclick={undo}
+                title={t('nav.undo.key')} aria-label={t('nav.undo')}>↶</button>
+        <button class="ghost icon" disabled={!history.canRedo} onclick={redo}
+                title={t('nav.redo.key')} aria-label={t('nav.redo')}>↷</button>
+      {/if}
+    </span>
     <span class="file-label">{fileLabel}</span>
     <button disabled={!app.id || app.step === STEPS.length - 1} onclick={() => go(app.step + 1)}>
       {app.step === STEPS.length - 2 ? t('step.download') : t('nav.continue')}
@@ -258,6 +283,11 @@
   }
 
   /* The way out to the other tool, under the drop zone rather than beside it. */
+  .nav-start {
+    display: flex; gap: 6px;
+    .icon { min-width: 36px; padding-inline: 8px; font-size: 16px; line-height: 1; }
+  }
+
   .merge-link {
     @include surface;
     display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;

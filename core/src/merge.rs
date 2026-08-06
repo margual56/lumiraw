@@ -13,7 +13,7 @@ pub struct Frame {
 }
 
 impl Frame {
-    pub fn open(name: &str, bytes: &[u8]) -> Result<Frame, String> {
+    pub fn open(name: &str, bytes: &[u8]) -> Result<Frame, decode::DecodeError> {
         let decoded = decode::decode(bytes)?;
         Ok(Frame { name: name.to_string(), linear: decoded.img, meta: decoded.meta,
                    exif: decode::collect_exif(bytes) })

@@ -18,6 +18,8 @@ export const defaultSettings = () => ({
   midtones: 0,
   highlights: 0,
   refocus: 0,
+  clarity: 0,        // local contrast, -1..1, on top of what the tone map kept
+  denoise: 0,        // noise reduction, -1..1, on top of what was measured
   wb_rect: null,
   temperature: 0,
   tint: 0,
@@ -38,6 +40,16 @@ export const defaultSettings = () => ({
   enabled: {},
 });
 
+/** The part of the settings that is a grade rather than a correction. */
+export const GRADE_KEYS = ['preset', 'curves', 'mixer', 'lut', 'lut_id',
+                           'monochrome', 'vignette', 'grain'];
+
+/** Whether these settings carry any grade at all. */
+export function hasGrade(settings) {
+  const blank = defaultSettings();
+  return GRADE_KEYS.some((k) => JSON.stringify(settings[k]) !== JSON.stringify(blank[k]));
+}
+
 export const app = $state({
   id: null,
   version: __APP_VERSION__,   // stamped in at build time, from core/Cargo.toml
@@ -45,6 +57,7 @@ export const app = $state({
   step: UPLOAD,
   settings: defaultSettings(),
   ratio: '',                 // locked crop aspect, '' = free
+  keepGrade: true,           // carry the grade to the next photograph
   coverCrop: null,           // largest empty-corner-free crop for the current tilt
   framingHint: null,         // what the framing step measured and could offer
   focus: null,               // { verdict, edge_px, blur_px } from the pipeline
@@ -78,8 +91,13 @@ export function settingsKey() {
  *  carrying either onto the next file silently develops it wrongly. */
 export function resetForNewPhoto() {
   // A loaded 3D table outlives the photograph it was first tried on.
-  const table = app.lut ? { lut: app.settings.lut, lut_id: app.settings.lut_id } : {};
-  app.settings = { ...defaultSettings(), ...table };
+  const table = app.lut && app.keepGrade
+    ? { lut: app.settings.lut, lut_id: app.settings.lut_id } : {};
+  const grade = app.keepGrade
+    ? Object.fromEntries(GRADE_KEYS.filter((k) => !k.startsWith('lut'))
+        .map((k) => [k, $state.snapshot(app.settings[k])]))
+    : {};
+  app.settings = { ...defaultSettings(), ...grade, ...table };
   app.ratio = '';
   app.coverCrop = null;
   app.focus = null;

@@ -180,7 +180,13 @@ pub extern "C" fn ar_open(name_ptr: *const u8, name_len: usize, ptr: *const u8, 
             progress(1.0, "done");
             0
         }
-        Err(e) => set_error(&e, "unreadable"),
+        // What kind of failure it was travels with it, so the interface can
+        // tell a camera the decoder has not met from a damaged file.
+        Err(e) => {
+            set_json(json!({"error": e.message, "code": e.code,
+                            "params": {"file": name, "make": e.make, "model": e.model}}));
+            -1
+        }
     }
 }
 
@@ -380,7 +386,13 @@ pub extern "C" fn ar_merge_add(name_ptr: *const u8, name_len: usize, ptr: *const
             progress(1.0, "done");
             0
         }
-        Err(e) => set_error(&e, "unreadable"),
+        // What kind of failure it was travels with it, so the interface can
+        // tell a camera the decoder has not met from a damaged file.
+        Err(e) => {
+            set_json(json!({"error": e.message, "code": e.code,
+                            "params": {"file": name, "make": e.make, "model": e.model}}));
+            -1
+        }
     }
 }
 

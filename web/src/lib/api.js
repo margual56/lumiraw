@@ -82,12 +82,16 @@ export function preload() {
   ready().catch(() => {});
 }
 
+/** Every photograph opened gets an id of its own. */
+let opened = 0;
+const photoId = () => `photo-${++opened}`;
+
 export async function upload(file, onProgress) {
   onProgress?.(0);
   const buffer = await file.arrayBuffer();
   onProgress?.(1);
   const info = await call('open', { name: file.name, buffer }, {}, [buffer]);
-  return { ...info, id: 'local', original_name: info.file || file.name };
+  return { ...info, id: photoId(), original_name: info.file || file.name };
 }
 
 export async function render(body) {
@@ -127,7 +131,7 @@ export async function mergeAdd(file) {
 
 export async function mergeFinish(options) {
   const info = await call('mergeFinish', options);
-  return { ...info, id: 'local', original_name: info.file };
+  return { ...info, id: photoId(), original_name: info.file };
 }
 
 /** Exports keep the job shape the download step already knows how to watch. */

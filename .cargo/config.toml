@@ -1,0 +1,4 @@
+[target.wasm32-unknown-unknown]
+# simd128 is baseline in every current browser. The getrandom backend is for
+# rawler's `uuid`, which is never called: see Cargo.toml.
+rustflags = ["-C", "target-feature=+simd128", "--cfg", 'getrandom_backend="unsupported"']

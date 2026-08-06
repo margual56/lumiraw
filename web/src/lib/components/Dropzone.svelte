@@ -1,6 +1,7 @@
 <script>
   import { app } from '$lib/state.svelte.js';
   import { t } from '$lib/i18n.svelte.js';
+  import { RAW_ACCEPT } from '$lib/format.js';
 
   let { onpick } = $props();
   let over = $state(false);
@@ -24,7 +25,7 @@
   <input
     bind:this={input}
     type="file"
-    accept=".arw,.sr2,.srf,.cr2,.cr3,.nef,.raf,.orf,.rw2,.pef,.dng"
+    accept={RAW_ACCEPT}
     onchange={(e) => take(e.currentTarget.files[0])}
   />
   <strong>{t('upload.drop')}</strong>

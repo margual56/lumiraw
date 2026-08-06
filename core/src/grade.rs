@@ -115,6 +115,12 @@ pub struct Settings {
     /// How hard to pull a soft frame back, 0..1. Left at zero unless the
     /// frame was measured soft and the photographer asked for it.
     pub refocus: f32,
+    /// Local contrast, -1..1: how much more or less of the fine structure the
+    /// tone map keeps than it would by itself. Zero is what it decided.
+    pub clarity: f32,
+    /// Noise reduction, -1..1, on top of the amount measured for this frame.
+    /// Zero is the measured amount; -1 turns it off, 1 is as much as it goes.
+    pub denoise: f32,
     pub preset: String,
     /// The grade: a curve on all three channels and one each on red, green and
     /// blue.
@@ -148,6 +154,8 @@ impl Default for Settings {
             midtones: 0.0,
             highlights: 0.0,
             refocus: 0.0,
+            clarity: 0.0,
+            denoise: 0.0,
             preset: "natural".into(),
             curves: curve::Stack::identity(),
             mixer: crate::mixer::Mixer::default(),
@@ -195,6 +203,8 @@ impl Settings {
         s.midtones = f("midtones").unwrap_or(0.0).clamp(-1.0, 1.0);
         s.highlights = f("highlights").unwrap_or(0.0).clamp(-1.0, 1.0);
         s.refocus = f("refocus").unwrap_or(0.0).clamp(0.0, 1.0);
+        s.clarity = f("clarity").unwrap_or(0.0).clamp(-1.0, 1.0);
+        s.denoise = f("denoise").unwrap_or(0.0).clamp(-1.0, 1.0);
         if let Some(p) = obj.get("preset").and_then(|x| x.as_str()) {
             s.preset = p.to_string();
         }
@@ -316,7 +326,8 @@ pub fn sample_rect(img: &Image, rect: Rect) -> Option<Vec<[f32; 3]>> {
 // scene-linear stages
 // -------------------------------------------------------------------------
 
-pub fn apply_white_balance(img: &mut Image, thumb: &Image, s: &Settings, report: &mut Report) {
+pub fn apply_white_balance(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
+                           report: &mut Report) {
     if !s.on("white_balance") {
         report.add("white balance", json!({"applied": false, "reason": "switched_off"}));
         apply_temp_tint(img, s, report);
@@ -345,20 +356,23 @@ pub fn apply_white_balance(img: &mut Image, thumb: &Image, s: &Settings, report:
                 report.add("white balance", json!({"applied": true, "source": "selection",
                     "gains": [round_to(gains[0],4), round_to(gains[1],4), round_to(gains[2],4)],
                     "patch_px": patch.len()}));
-                img.scale_channels(gains);
+                adapt(img, gains);
                 apply_temp_tint(img, s, report);
                 return;
             }
         }
     }
-    let (gains, mut info) = analyze::auto_white_balance(thumb, s.preset_obj().wb_strength, WB_LIMIT_EV);
+    // The tuned preset, not the named one: the capture decides how far the
+    // automatic balance may be trusted (see `profile::tune`).
+    let (gains, mut info) = analyze::auto_white_balance(thumb, p.wb_strength, WB_LIMIT_EV);
     if let Some(o) = info.as_object_mut() {
         o.insert("source".into(), json!("automatic"));
+        o.insert("strength".into(), json!(round_to(p.wb_strength, 2)));
     }
     let applied = info.get("applied").and_then(|v| v.as_bool()).unwrap_or(false);
     report.add("white balance", info);
     if applied {
-        img.scale_channels(gains);
+        adapt(img, gains);
     }
     apply_temp_tint(img, s, report);
 }
@@ -382,7 +396,60 @@ fn apply_temp_tint(img: &mut Image, s: &Settings, report: &mut Report) {
     report.add("temp/tint", json!({"applied": true, "temperature": round_to(s.temperature,3),
         "tint": round_to(s.tint,3),
         "gains": [round_to(gains[0],4), round_to(gains[1],4), round_to(gains[2],4)]}));
-    img.scale_channels(gains);
+    adapt(img, gains);
+}
+
+/// linear sRGB -> Bradford cone response.
+const RGB_TO_LMS: [[f32; 3]; 3] = [
+    [0.422722, 0.491351, 0.027356],
+    [0.055699, 0.961545, 0.023182],
+    [0.021383, 0.087643, 0.980429],
+];
+
+fn mul3(a: &[[f32; 3]; 3], b: &[[f32; 3]; 3]) -> [[f32; 3]; 3] {
+    let mut m = [[0f32; 3]; 3];
+    for i in 0..3 {
+        for j in 0..3 {
+            m[i][j] = (0..3).map(|k| a[i][k] * b[k][j]).sum();
+        }
+    }
+    m
+}
+
+fn inverse3(m: &[[f32; 3]; 3]) -> [[f32; 3]; 3] {
+    let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    let d = 1.0 / det;
+    [[(m[1][1] * m[2][2] - m[1][2] * m[2][1]) * d, (m[0][2] * m[2][1] - m[0][1] * m[2][2]) * d,
+      (m[0][1] * m[1][2] - m[0][2] * m[1][1]) * d],
+     [(m[1][2] * m[2][0] - m[1][0] * m[2][2]) * d, (m[0][0] * m[2][2] - m[0][2] * m[2][0]) * d,
+      (m[0][2] * m[1][0] - m[0][0] * m[1][2]) * d],
+     [(m[1][0] * m[2][1] - m[1][1] * m[2][0]) * d, (m[0][1] * m[2][0] - m[0][0] * m[2][1]) * d,
+      (m[0][0] * m[1][1] - m[0][1] * m[1][0]) * d]]
+}
+
+/// The white balance correction that per-channel `gains` describe, applied as a
+/// change of light rather than as three volume knobs.
+pub fn adapt(img: &mut Image, gains: [f32; 3]) {
+    if gains.iter().all(|g| (g - 1.0).abs() < 1e-6) {
+        return;
+    }
+    let white = [1.0 / gains[0].max(1e-6), 1.0 / gains[1].max(1e-6), 1.0 / gains[2].max(1e-6)];
+    let lms_white: Vec<f32> = (0..3).map(|i| (0..3).map(|j| RGB_TO_LMS[i][j] * white[j]).sum())
+        .collect();
+    let lms_grey: Vec<f32> = (0..3).map(|i| RGB_TO_LMS[i].iter().sum()).collect();
+    let mut scale = [[0f32; 3]; 3];
+    for i in 0..3 {
+        scale[i][i] = lms_grey[i] / lms_white[i].max(1e-6);
+    }
+    let m = mul3(&inverse3(&RGB_TO_LMS), &mul3(&scale, &RGB_TO_LMS));
+    for px in img.d.chunks_exact_mut(3) {
+        let (r, g, b) = (px[0], px[1], px[2]);
+        px[0] = m[0][0] * r + m[0][1] * g + m[0][2] * b;
+        px[1] = m[1][0] * r + m[1][1] * g + m[1][2] * b;
+        px[2] = m[2][0] * r + m[2][1] * g + m[2][2] * b;
+    }
 }
 
 pub fn apply_exposure(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
@@ -429,8 +496,13 @@ pub fn apply_exposure(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
 pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
                             report: &mut Report) -> f32 {
     let (factor, mut info) = analyze::auto_tone_compression(thumb, p.comfortable_stops, 0.45);
+    // Clarity is this same split between the broad light of the scene and its
+    // fine structure, with the photographer setting how much of the structure
+    // is kept.
+    let detail_boost = p.detail_boost * (1.0 + 0.6 * s.clarity);
     if let Some(o) = info.as_object_mut() {
-        o.insert("detail_boost".into(), json!(round_to(p.detail_boost, 3)));
+        o.insert("detail_boost".into(), json!(round_to(detail_boost, 3)));
+        o.insert("clarity".into(), json!(round_to(s.clarity, 2)));
     }
     if !s.on("tone_map") {
         let mut off = info.clone();
@@ -442,7 +514,7 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
         return 1.0;
     }
     report.add("tone mapping", info);
-    if factor >= 0.995 && p.detail_boost <= 1.0 {
+    if factor >= 0.995 && (detail_boost - 1.0).abs() < 1e-3 {
         return factor;
     }
 
@@ -465,7 +537,7 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
 
     for i in 0..y.d.len() {
         let detail = log_y.d[i] - base.d[i];
-        let new_log = anchor + (base.d[i] - anchor) * factor + detail * p.detail_boost;
+        let new_log = anchor + (base.d[i] - anchor) * factor + detail * detail_boost;
         let scale = (new_log - log_y.d[i]).exp2();
         for c in 0..3 {
             img.d[i * 3 + c] *= scale;
@@ -485,10 +557,28 @@ pub fn filmic(img: &mut Image) {
         let y = ops::luminance_px(px).max(EPS);
         let ty = curve(y);
         let w = ops::smoothstep(0.55, 1.0, ty);
+        let hue_preserving = [px[0] * (ty / y), px[1] * (ty / y), px[2] * (ty / y)];
+        let mut out = hue_preserving;
+        if w > 0.0 {
+            for c in 0..3 {
+                out[c] = hue_preserving[c] * (1.0 - w) + curve(px[c]) * w;
+            }
+            // The per-channel curve is what bleaches a bright colour toward
+            // white, and it is worth having.
+            let (_, a0, b0) = ops::rgb_to_oklab_px(hue_preserving[0], hue_preserving[1],
+                                                   hue_preserving[2]);
+            let c0 = a0.hypot(b0);
+            if c0 > 1e-4 {
+                let (l, a, b) = ops::rgb_to_oklab_px(out[0], out[1], out[2]);
+                let chroma = a.hypot(b);
+                let (r, g, bl) = ops::oklab_to_rgb_px(l, a0 / c0 * chroma, b0 / c0 * chroma);
+                out = [r, g, bl];
+            }
+        }
         for c in 0..3 {
-            let hue_preserving = px[c] * (ty / y);
-            let per_channel = curve(px[c]);
-            px[c] = (hue_preserving * (1.0 - w) + per_channel * w).clamp(0.0, 1.0);
+            // Bounded only far outside anything a real colour reaches, so a
+            // stray value cannot run away through the stages that follow.
+            px[c] = out[c].clamp(-1.0, 2.0);
         }
     }
 }
@@ -560,9 +650,13 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     let mut b = Plane::new(img.w, img.h);
     for i in 0..n {
         let (l, aa, bb) = ops::rgb_to_oklab_px(img.d[i * 3], img.d[i * 3 + 1], img.d[i * 3 + 2]);
-        lightness.d[i] = l;
-        a.d[i] = aa;
-        b.d[i] = bb;
+        // A colour far enough outside sRGB can have positive luminance and
+        // still land below zero lightness here.
+        if l > 0.0 {
+            lightness.d[i] = l;
+            a.d[i] = aa;
+            b.d[i] = bb;
+        }
     }
 
     // --- black/white point ------------------------------------------------
@@ -629,16 +723,21 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     // Lifting shadows leaves their colour behind; track the lightness change so
     // saturation stays proportional instead of going grey.
     for i in 0..n {
-        let comp = (((light_new.d[i] + 1e-3) / (lightness.d[i] + 1e-3)).powf(0.35)).clamp(0.6, 1.8);
+        let comp = (((light_new.d[i].max(0.0) + 1e-3) / (lightness.d[i].max(0.0) + 1e-3)).powf(0.35))
+            .clamp(0.6, 1.8);
         a.d[i] *= comp;
         b.d[i] *= comp;
     }
     drop(lightness);
 
     // --- colour noise -----------------------------------------------------
-    if s.on("denoise_chroma") && p.denoise && noise > 0.18 {
+    // The photographer's amount works from the measured one rather than
+    // replacing it, so "a little more" means a little more for this frame.
+    let auto_chroma = if p.denoise { ((noise - 0.18) / 0.5).clamp(0.0, 1.0) * 0.85 } else { 0.0 };
+    let chroma_blend = with_user(auto_chroma, s.denoise, 0.95);
+    if s.on("denoise_chroma") && chroma_blend > 0.01 {
         let radius = ((img.w.max(img.h) as f32 / 350.0).round() as usize).max(3);
-        let blend = ((noise - 0.18) / 0.5).clamp(0.0, 1.0) * 0.85;
+        let blend = chroma_blend;
         let fa = ops::guided_filter(&light_new, &a, radius, 4e-4, 2);
         let fb = ops::guided_filter(&light_new, &b, radius, 4e-4, 2);
         for i in 0..n {
@@ -646,26 +745,37 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
             b.d[i] = b.d[i] * (1.0 - blend) + fb.d[i] * blend;
         }
         report.add("colour noise",
-            json!({"applied": true, "radius": radius, "blend": round_to(blend, 3)}));
+            json!({"applied": true, "radius": radius, "blend": round_to(blend, 3),
+                   "measured": round_to(auto_chroma, 3), "user": round_to(s.denoise, 2)}));
     } else {
         report.add("colour noise", json!({"applied": false,
-            "reason": if !s.on("denoise_chroma") { "switched_off" } else { "clean_enough" },
+            "reason": if !s.on("denoise_chroma") { "switched_off" }
+                      else if auto_chroma > 0.01 { "turned_down" }
+                      else { "clean_enough" },
             "noise": round_to(noise, 3)}));
     }
 
     // --- luminance noise --------------------------------------------------
-    if s.on("denoise_luma") && p.denoise && noise > 0.30 {
+    // Allowed further than the automation goes on its own (0.85 against 0.55),
+    // because the photographer can see what it costs in texture and the
+    // automation cannot.
+    let auto_luma = if p.denoise { ((noise - 0.30) / 0.6).clamp(0.0, 1.0) * 0.55 } else { 0.0 };
+    let luma_blend = with_user(auto_luma, s.denoise, 0.85);
+    if s.on("denoise_luma") && luma_blend > 0.01 {
         let radius = ((img.w.max(img.h) as f32 / 900.0).round() as usize).max(2);
-        let blend = ((noise - 0.30) / 0.6).clamp(0.0, 1.0) * 0.55;
+        let blend = luma_blend;
         let fl = ops::guided_filter(&light_new, &light_new, radius, 2.5e-4, 2);
         for i in 0..n {
             light_new.d[i] = light_new.d[i] * (1.0 - blend) + fl.d[i] * blend;
         }
         report.add("luminance noise",
-            json!({"applied": true, "radius": radius, "blend": round_to(blend, 3)}));
+            json!({"applied": true, "radius": radius, "blend": round_to(blend, 3),
+                   "measured": round_to(auto_luma, 3), "user": round_to(s.denoise, 2)}));
     } else {
         report.add("luminance noise", json!({"applied": false,
-            "reason": if !s.on("denoise_luma") { "switched_off" } else { "clean_enough" },
+            "reason": if !s.on("denoise_luma") { "switched_off" }
+                      else if auto_luma > 0.01 { "turned_down" }
+                      else { "clean_enough" },
             "noise": round_to(noise, 3)}));
     }
 
@@ -755,6 +865,15 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     to_gamut(&light_new, &a, &b)
 }
 
+/// A measured amount, moved by the photographer's -1..1.
+fn with_user(measured: f32, user: f32, ceiling: f32) -> f32 {
+    if user < 0.0 {
+        measured * (1.0 + user)
+    } else {
+        measured + (ceiling - measured).max(0.0) * 0.6 * user
+    }
+}
+
 /// Undo a measured blur, as far as a blur can be undone.
 pub fn recover_focus(l: &mut Plane, sigma: f32, amount: f32, noise: f32) -> usize {
     // A wide blur needs more rounds than a narrow one, and a noisy frame can
@@ -782,27 +901,71 @@ pub fn recover_focus(l: &mut Plane, sigma: f32, amount: f32, noise: f32) -> usiz
     rounds
 }
 
-/// Oklab -> linear sRGB, pulling chroma back until each pixel fits.
+/// The gamut knee, in the shape of ACES's reference gamut compression.
+const GAMUT_KNEE: f32 = 0.9;
+const GAMUT_LIMIT: f32 = 1.4;
+const GAMUT_POWER: f32 = 1.2;
+
+/// Where a chroma at `ratio` of the boundary lands, `GAMUT_LIMIT` landing on
+/// it exactly.
+fn gamut_fold(ratio: f32) -> f32 {
+    if ratio <= GAMUT_KNEE {
+        return ratio;
+    }
+    let (t, l, p) = (GAMUT_KNEE, GAMUT_LIMIT, GAMUT_POWER);
+    let scale = (l - t) / (((1.0 - t) / (l - t)).powf(-p) - 1.0).powf(1.0 / p);
+    let x = (ratio - t) / scale;
+    t + scale * x / (1.0 + x.powf(p)).powf(1.0 / p)
+}
+
+/// Oklab -> linear sRGB, at constant lightness and hue, with the chroma brought
+/// inside what sRGB can show.
 pub fn to_gamut(lightness: &Plane, a: &Plane, b: &Plane) -> Image {
     let mut out = Image::new(lightness.w, lightness.h);
+    let fits = |r: f32, g: f32, bl: f32| r.min(g).min(bl) >= -0.001 && r.max(g).max(bl) <= 1.001;
     for i in 0..lightness.d.len() {
         let l = lightness.d[i].clamp(0.0, 1.0);
-        let (mut r, mut g, mut bl) = ops::oklab_to_rgb_px(l, a.d[i], b.d[i]);
-        if r.min(g).min(bl) < -0.001 || r.max(g).max(bl) > 1.001 {
-            let (mut lo, mut hi) = (0.0f32, 1.0f32);
-            for _ in 0..10 {
-                let mid = 0.5 * (lo + hi);
-                let (tr, tg, tb) = ops::oklab_to_rgb_px(l, a.d[i] * mid, b.d[i] * mid);
-                if tr.min(tg).min(tb) >= -0.001 && tr.max(tg).max(tb) <= 1.001 {
-                    lo = mid;
-                } else {
-                    hi = mid;
+        let (aa, bb) = (a.d[i], b.d[i]);
+        let (mut r, mut g, mut bl) = ops::oklab_to_rgb_px(l, aa, bb);
+        // Chroma this low is inside sRGB at any lightness a picture has, so the
+        // search is spent only where it can matter.
+        let chroma = aa.hypot(bb);
+        let inside = fits(r, g, bl);
+        if chroma > 0.03 || !inside {
+            // How far the chroma may be scaled along this hue before leaving
+            // the gamut, found by bisection: 1 is where the pixel is now.
+            let mut hi = if inside { 1.0f32 / GAMUT_KNEE } else { 1.0 };
+            if inside {
+                let (tr, tg, tb) = ops::oklab_to_rgb_px(l, aa * hi, bb * hi);
+                if fits(tr, tg, tb) {
+                    // Nowhere near the edge.
+                    hi = f32::INFINITY;
                 }
             }
-            let (fr, fg, fb) = ops::oklab_to_rgb_px(l, a.d[i] * lo, b.d[i] * lo);
-            r = fr;
-            g = fg;
-            bl = fb;
+            if hi.is_finite() {
+                let mut lo = if inside { 1.0f32 } else { 0.0 };
+                for _ in 0..12 {
+                    let mid = 0.5 * (lo + hi);
+                    let (tr, tg, tb) = ops::oklab_to_rgb_px(l, aa * mid, bb * mid);
+                    if fits(tr, tg, tb) {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                // Where this pixel sits against the boundary, 1 being on it.
+                let ratio = 1.0 / lo.max(1e-6);
+                if ratio > GAMUT_KNEE {
+                    let target = gamut_fold(ratio);
+                    // `lo` is the last scale known to fit, so the knee can
+                    // never land a pixel outside it.
+                    let scale = (target * lo).min(lo);
+                    let (fr, fg, fb) = ops::oklab_to_rgb_px(l, aa * scale, bb * scale);
+                    r = fr;
+                    g = fg;
+                    bl = fb;
+                }
+            }
         }
         out.d[i * 3] = r.clamp(0.0, 1.0);
         out.d[i * 3 + 1] = g.clamp(0.0, 1.0);
@@ -859,7 +1022,7 @@ pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut
 
     step(&mut progress, &mut mark);
     let thumb = measure(&img, args.stats_rect);
-    apply_white_balance(&mut img, &thumb, settings, report);
+    apply_white_balance(&mut img, &thumb, settings, &p, report);
     step(&mut progress, &mut mark);
     let thumb = measure(&img, args.stats_rect);
     let exposure_gain = apply_exposure(&mut img, &thumb, settings, &p, report);
@@ -939,6 +1102,98 @@ mod tests {
         assert!(img.d.iter().all(|v| *v >= 0.0 && *v <= 1.0));
     }
 
+    /// Grey mapping right is true of any invertible matrix, so it cannot
+    /// catch a wrong one. This can.
+    #[test]
+    fn the_cone_matrix_is_bradford_over_srgb() {
+        let bradford = [[0.8951f32, 0.2664, -0.1614], [-0.7502, 1.7135, 0.0367],
+                        [0.0389, -0.0685, 1.0296]];
+        let srgb_to_xyz = [[0.412453f32, 0.357580, 0.180423], [0.212671, 0.715160, 0.072169],
+                           [0.019334, 0.119193, 0.950227]];
+        let product = mul3(&bradford, &srgb_to_xyz);
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!((product[i][j] - RGB_TO_LMS[i][j]).abs() < 1e-5, "[{i}][{j}]");
+            }
+        }
+    }
+
+    /// Grey goes exactly where the gains send it, because the gains are what
+    /// the eyedropper and the automatic balance decided.
+    #[test]
+    fn adaptation_agrees_with_the_gains_on_grey() {
+        let gains = [0.62f32, 1.0, 1.55];
+        let mut img = Image::new(2, 1);
+        img.d.copy_from_slice(&[0.3 / 0.62 * 0.5, 0.3 * 0.5, 0.3 / 1.55 * 0.5, 0.6, 0.1, 0.05]);
+        let mut by_gains = img.clone();
+        by_gains.scale_channels(gains);
+        adapt(&mut img, gains);
+        for c in 0..3 {
+            assert!((img.d[c] - by_gains.d[c]).abs() < 1e-4, "grey went elsewhere: {:?}", &img.d[..3]);
+        }
+        let apart = (0..3).map(|c| (img.d[3 + c] - by_gains.d[3 + c]).abs()).fold(0.0f32, f32::max);
+        assert!(apart > 0.005, "a saturated colour was treated like three volume knobs");
+        let mut same = by_gains.clone();
+        adapt(&mut same, [1.0, 1.0, 1.0]);
+        assert_eq!(same.d, by_gains.d, "no correction must mean no change");
+    }
+
+    /// The shoulder bleaches bright colours toward white without turning them.
+    #[test]
+    fn the_shoulder_keeps_hue() {
+        let hue_and_chroma = |px: &[f32]| {
+            let (_, a, b) = ops::rgb_to_oklab_px(px[0], px[1], px[2]);
+            (b.atan2(a).to_degrees(), a.hypot(b))
+        };
+        for c in [[1.0f32, 0.45, 0.08], [0.25, 0.5, 1.0], [1.0, 0.62, 0.45], [0.35, 0.8, 0.15]] {
+            let mut img = Image::new(1, 1);
+            img.d.copy_from_slice(&[c[0] * 4.0, c[1] * 4.0, c[2] * 4.0]);
+            let (h0, c0) = hue_and_chroma(&img.d);
+            filmic(&mut img);
+            let (h1, c1) = hue_and_chroma(&img.d);
+            let mut shift = (h1 - h0).abs();
+            if shift > 180.0 { shift = 360.0 - shift; }
+            assert!(shift < 1.0, "{c:?} turned by {shift} degrees");
+            assert!(c1 < c0, "{c:?} was not bleached toward white: {c0} -> {c1}");
+        }
+    }
+
+    /// The knee has to keep what the hard stop threw away.
+    #[test]
+    fn to_gamut_keeps_gradation_beyond_the_edge() {
+        let chroma_out = |c: f32| -> f32 {
+            let l = Plane::filled(1, 1, 0.6);
+            let a = Plane::filled(1, 1, c);
+            let b = Plane::filled(1, 1, 0.3 * c);
+            let img = to_gamut(&l, &a, &b);
+            let (_, ga, gb) = ops::rgb_to_oklab_px(img.d[0], img.d[1], img.d[2]);
+            ga.hypot(gb)
+        };
+        let (near, far, farther) = (chroma_out(0.25), chroma_out(0.27), chroma_out(0.29));
+        assert!(near < far && far < farther,
+                "out-of-gamut chroma was flattened: {near} {far} {farther}");
+        let quiet = chroma_out(0.05);
+        assert!((quiet - 0.05f32.hypot(0.015)).abs() < 1e-3, "an ordinary colour moved: {quiet}");
+    }
+
+    /// The fold is continuous at the knee, never decreasing, lands the limit
+    /// on the boundary, and never pushes anything past it.
+    #[test]
+    fn the_gamut_fold_is_well_behaved() {
+        assert!((gamut_fold(GAMUT_KNEE + 1e-4) - GAMUT_KNEE).abs() < 1e-3);
+        assert!((gamut_fold(GAMUT_LIMIT) - 1.0).abs() < 1e-4, "{}", gamut_fold(GAMUT_LIMIT));
+        let mut previous = 0.0;
+        for i in 0..=200 {
+            let r = i as f32 / 100.0;
+            let f = gamut_fold(r);
+            assert!(f >= previous - 1e-6 && f <= r + 1e-6, "fold misbehaved at {r}: {f}");
+            if r <= GAMUT_LIMIT {
+                assert!(f <= 1.0 + 1e-5, "fold overshot at {r}: {f}");
+            }
+            previous = f;
+        }
+    }
+
     /// The whole point of capping ZONE_RANGE.
     #[test]
     fn tone_zones_stay_monotonic() {
@@ -1006,16 +1261,92 @@ mod tests {
                 "midtones slider reached the ends of the range");
     }
 
+    /// A textured frame, a few stops of light across it and fine structure
+    /// on top: what clarity has to find and scale.
+    fn textured() -> Image {
+        let (w, h) = (256usize, 128usize);
+        let mut img = Image::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let broad = 0.02 * 2f32.powf(7.0 * x as f32 / w as f32);
+                let fine = if (x / 3 + y / 3) % 2 == 0 { 1.15 } else { 0.87 };
+                for c in 0..3 {
+                    img.d[(y * w + x) * 3 + c] = broad * fine;
+                }
+            }
+        }
+        img
+    }
+
+    /// How much fine structure a frame carries: the spread of each pixel
+    /// against the average of its row neighbours, in stops.
+    fn fine_structure(img: &Image) -> f32 {
+        let y = ops::luminance(img);
+        let mut sum = 0.0f32;
+        let mut n = 0.0f32;
+        for row in 0..y.h {
+            for x in 3..y.w - 3 {
+                let i = row * y.w + x;
+                let around = (y.d[i - 3] + y.d[i + 3]) * 0.5;
+                sum += (y.d[i].max(1e-6) / around.max(1e-6)).log2().abs();
+                n += 1.0;
+            }
+        }
+        sum / n
+    }
+
+    #[test]
+    fn clarity_scales_the_fine_structure() {
+        let src = textured();
+        let run = |clarity: f32| {
+            let mut s = Settings::default();
+            s.clarity = clarity;
+            let mut img = src.clone();
+            let mut report = Report::new();
+            apply_local_tone_map(&mut img, &src.clone(), &s, &Preset::default(), &mut report);
+            fine_structure(&img)
+        };
+        let (soft, plain, crisp) = (run(-1.0), run(0.0), run(1.0));
+        assert!(soft < plain * 0.8 && crisp > plain * 1.2,
+                "clarity did not move the fine structure: {soft} {plain} {crisp}");
+    }
+
+    /// Minus one is off, even on a frame the automation would have cleaned
+    /// hard; plus one reaches a frame it would have left alone.
+    #[test]
+    fn noise_reduction_follows_the_photographer() {
+        let src = textured();
+        let run = |denoise: f32, noise: f32| -> Value {
+            let mut s = Settings::default();
+            s.denoise = denoise;
+            let mut report = Report::new();
+            apply_perceptual(&src, &s, &Preset::default(), noise, 1.0, 1.0, 0.0, &mut report, None);
+            report.to_json()
+        };
+        let applied = |r: &Value, stage: &str| r[stage]["applied"].as_bool().unwrap_or(false);
+        let noisy_off = run(-1.0, 0.9);
+        assert!(!applied(&noisy_off, "colour noise") && !applied(&noisy_off, "luminance noise"),
+                "-1 did not turn noise reduction off: {noisy_off}");
+        let clean_on = run(1.0, 0.05);
+        assert!(applied(&clean_on, "colour noise") && applied(&clean_on, "luminance noise"),
+                "+1 did not reach a clean frame: {clean_on}");
+        let untouched = run(0.0, 0.05);
+        assert!(!applied(&untouched, "colour noise"), "a clean frame was denoised at zero");
+    }
+
     #[test]
     fn settings_parse_from_the_wire() {
         let v = serde_json::json!({
             "framing": {"angle": 2.5, "auto_fit": false, "crop": [0.1, 0.1, 0.5, 0.5]},
             "vibrance": 0.4, "shadows": 0.6, "midtones": -0.2, "highlights": 4.0,
+            "clarity": 0.5, "denoise": -3.0,
             "preset": "punchy", "enabled": {"sharpen": false}});
         let s = Settings::from_json(&v);
         assert_eq!(s.shadows, 0.6);
         assert_eq!(s.midtones, -0.2);
         assert_eq!(s.highlights, 1.0, "out-of-range slider was not clamped");
+        assert_eq!(s.clarity, 0.5);
+        assert_eq!(s.denoise, -1.0, "out-of-range noise reduction was not clamped");
         assert_eq!(s.framing.angle, 2.5);
         assert_eq!(s.framing.auto_fit, false);
         assert_eq!(s.framing.crop, Some((0.1, 0.1, 0.5, 0.5)));

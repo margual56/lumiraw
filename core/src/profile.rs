@@ -29,6 +29,9 @@ pub struct CaptureProfile {
     pub usable_stops: f32,
     pub shake_risk: f32,
     pub tele_bias: f32,
+    /// How bright the scene was, as EV at ISO 100, when the file says enough
+    /// to tell: daylight is 13 to 16, a lit room 5 to 7, a city at night 0 to 3.
+    pub scene_ev: Option<f32>,
     /// `{code, params}`, not prose: the wording is the interface's business.
     pub notes: Vec<Value>,
 }
@@ -64,6 +67,7 @@ impl CaptureProfile {
             "noise_prior": r(self.noise_prior, 3),
             "usable_stops": r(self.usable_stops, 1),
             "exposure_comp": r(self.exposure_comp, 1),
+            "scene_ev": self.scene_ev.map(|v| r(v, 1)),
         })
     }
 }
@@ -90,8 +94,13 @@ pub fn derive(meta: &Meta, w: usize, h: usize, crop_factor: Option<f32>) -> Capt
         usable_stops: 12.0,
         shake_risk: 0.0,
         tele_bias: 0.0,
+        scene_ev: None,
         notes: Vec::new(),
     };
+    if meta.shutter_s > 0.0 && meta.aperture > 0.0 && meta.iso > 0.0 {
+        p.scene_ev = Some((meta.aperture * meta.aperture / meta.shutter_s).log2()
+                          - (meta.iso / 100.0).log2());
+    }
 
     // Crop factor: the lens database's body entry first, then the ratio EXIF
     // gives between real and 35mm-equivalent focal length.
@@ -177,6 +186,12 @@ pub fn tune(preset: &Preset, p: &CaptureProfile) -> Preset {
     sharpen *= 1.0 - 0.55 * p.shake_risk; // blur we cannot fix
     sharpen *= 1.0 - 0.45 * p.noise_prior;
     out.sharpen = sharpen.clamp(0.0, 1.2);
+
+    // The automatic white balance assumes the scene averages out to grey, which
+    // daylight mostly does and a city at night does not.
+    if let (Some(ev), false) = (p.scene_ev, p.flash) {
+        out.wb_strength = preset.wb_strength * (0.3 + 0.7 * smooth(2.0, 7.0, ev));
+    }
     out
 }
 
@@ -209,5 +224,23 @@ mod tests {
         let long = derive(&shot(3.0, 50.0), 6000, 4000, Some(1.5)).shake_risk;
         assert!(quick > middling && middling > long, "{quick} {middling} {long}");
         assert_eq!(long, 0.0);
+    }
+
+    /// Daylight keeps the whole automatic balance.
+    #[test]
+    fn the_automatic_balance_fades_with_the_light() {
+        let preset = Preset::default();
+        let at = |iso: f32, aperture: f32, shutter_s: f32, flash: bool| {
+            let meta = Meta { iso, aperture, shutter_s, flash, focal_mm: 35.0, ..Default::default() };
+            tune(&preset, &derive(&meta, 6000, 4000, Some(1.5))).wb_strength
+        };
+        let noon = at(100.0, 4.0, 1.0 / 800.0, false);
+        let night = at(6400.0, 2.8, 0.1, false);
+        let flash = at(6400.0, 2.8, 0.1, true);
+        assert_eq!(noon, preset.wb_strength);
+        assert!(night < 0.35 * preset.wb_strength, "night kept {night}");
+        assert_eq!(flash, preset.wb_strength);
+        let unknown = tune(&preset, &derive(&Meta::default(), 6000, 4000, None)).wb_strength;
+        assert_eq!(unknown, preset.wb_strength, "a file that does not say was held back");
     }
 }

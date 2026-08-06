@@ -13,24 +13,40 @@ pub const VIGNETTE_MAX: f32 = 0.35;
 /// corner. Every look in `styles.rs` used this same figure.
 const VIGNETTE_START: f32 = 0.45;
 
-/// Deterministic noise: the same photograph grains the same way twice.
-struct Rng(u64);
+/// How many grains fit across the long edge of the frame.
+pub const GRAIN_ACROSS: f32 = 1300.0;
 
-impl Rng {
-    fn next_u32(&mut self) -> u32 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        let xorshifted = (((self.0 >> 18) ^ self.0) >> 27) as u32;
-        let rot = (self.0 >> 59) as u32;
-        xorshifted.rotate_right(rot)
+/// A standard normal value for a lattice point, the same every time it is asked
+/// for.
+fn lattice_normal(x: i64, y: i64) -> f32 {
+    let mut h = (x as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (y as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+    let mut next = || {
+        // splitmix64
+        h = h.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = h;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        ((z ^ (z >> 31)) >> 40) as f32 / 16_777_216.0
+    };
+    let u1 = next().max(1e-7);
+    let u2 = next();
+    (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos()
+}
+
+/// The grain field at a pixel, with unit variance at whatever scale it is
+/// sampled, as the picture would look reduced to this size.
+fn grain_at(x: usize, y: usize, per_pixel: f32) -> f32 {
+    if per_pixel >= 1.0 {
+        return lattice_normal(x as i64, y as i64) / per_pixel;
     }
-    fn unit(&mut self) -> f32 {
-        (self.next_u32() >> 8) as f32 / 16_777_216.0
-    }
-    fn normal(&mut self) -> f32 {
-        let u1 = self.unit().max(1e-7);
-        let u2 = self.unit();
-        (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos()
-    }
+    let (u, v) = ((x as f32 + 0.5) * per_pixel, (y as f32 + 0.5) * per_pixel);
+    let (x0, y0) = (u.floor(), v.floor());
+    let (fx, fy) = (u - x0, v - y0);
+    let (x0, y0) = (x0 as i64, y0 as i64);
+    let w = [(1.0 - fx) * (1.0 - fy), fx * (1.0 - fy), (1.0 - fx) * fy, fx * fy];
+    let n = w[0] * lattice_normal(x0, y0) + w[1] * lattice_normal(x0 + 1, y0)
+        + w[2] * lattice_normal(x0, y0 + 1) + w[3] * lattice_normal(x0 + 1, y0 + 1);
+    n / (w.iter().map(|k| k * k).sum::<f32>()).sqrt()
 }
 
 /// Toward grey, by a panchromatic-with-a-yellow-filter mix.
@@ -81,15 +97,17 @@ pub fn grain(img: &mut Image, amount: f32) {
     if a <= 0.0 {
         return;
     }
-    // A fixed seed, because the same settings on the same photograph have to
-    // give the same file.
-    let mut rng = Rng(7);
-    for i in 0..img.w * img.h {
-        let px = &img.d[i * 3..i * 3 + 3];
-        let y = ops::luminance_px(px);
-        let n = rng.normal() * a * 4.0 * y * (1.0 - y);
-        for c in 0..3 {
-            img.d[i * 3 + c] = (img.d[i * 3 + c] + n).clamp(0.0, 1.0);
+    // Grains per pixel at this size.
+    let per_pixel = GRAIN_ACROSS / img.w.max(img.h).max(1) as f32;
+    for y in 0..img.h {
+        for x in 0..img.w {
+            let i = y * img.w + x;
+            let px = &img.d[i * 3..i * 3 + 3];
+            let luma = ops::luminance_px(px);
+            let n = grain_at(x, y, per_pixel) * a * 4.0 * luma * (1.0 - luma);
+            for c in 0..3 {
+                img.d[i * 3 + c] = (img.d[i * 3 + c] + n).clamp(0.0, 1.0);
+            }
         }
     }
 }
@@ -156,6 +174,21 @@ mod tests {
 
     /// Grain has to be the same grain twice, or an export does not match the
     /// preview it was approved from.
+    #[test]
+    fn grain_survives_being_reduced() {
+        let spread = |img: &Image| -> f32 {
+            let v: Vec<f32> = img.d.chunks_exact(3).map(|p| p[1]).collect();
+            ops::std_dev(&v)
+        };
+        let mut small = flat(650, 400, [0.5, 0.5, 0.5]);
+        let mut large = flat(2600, 1600, [0.5, 0.5, 0.5]);
+        grain(&mut small, 1.0);
+        grain(&mut large, 1.0);
+        let reduced = ops::resize_rgb(&large, 650, 400);
+        let (s, r) = (spread(&small), spread(&reduced));
+        assert!((r / s - 1.0).abs() < 0.2, "grain changed with size: {s} at the small size, {r} reduced");
+    }
+
     #[test]
     fn grain_repeats_exactly() {
         let src = flat(32, 32, [0.5, 0.5, 0.5]);

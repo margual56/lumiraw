@@ -6,6 +6,14 @@ let ready = null;         // the init promise
 let current = null;       // id of the call in flight, for progress messages
 let queue = Promise.resolve();   // one request at a time: one wasm session
 
+/** What the module is holding, kept on this side so it can be put back. */
+const session = {
+  photo: null,     // { name, buffer } of the file being developed
+  frames: [],      // [{ name, buffer }] gathered for a merge
+  merged: null,    // { align, deghost } when the photograph is a finished merge
+  lut: null,       // the loaded .cube's bytes
+};
+
 import { stamp } from './stamp.js';
 import { withExif } from './webp.js';
 
@@ -82,6 +90,7 @@ function readJson() {
 function fail(info) {
   const error = new Error(info.error || 'the pipeline failed');
   error.reason = info.code;
+  error.params = info.params;
   throw error;
 }
 
@@ -128,8 +137,55 @@ async function open({ name, buffer }) {
   const rc = withString(name, (np, nl) => wasm.ar_open(np, nl, ptr, bytes.length));
   wasm.ar_free(ptr, bytes.length);
   const info = readJson();
-  if (rc !== 0) fail(info);
+  if (rc !== 0) {
+    // The previous photograph was closed to make room. Put it back before
+    // saying no, or the page goes on showing a picture the module has lost.
+    await restorePhoto();
+    fail(info);
+  }
+  session.photo = { name, buffer };
+  session.merged = null;
   return info;
+}
+
+/** Reopen whatever was being developed, quietly. */
+async function restorePhoto() {
+  if (session.merged) {
+    await replayMerge();
+  } else if (session.photo) {
+    const bytes = new Uint8Array(session.photo.buffer);
+    withBytes(bytes, (p, n) =>
+      withString(session.photo.name, (np, nl) => wasm.ar_open(np, nl, p, n)));
+  }
+}
+
+async function replayMerge() {
+  wasm.ar_merge_reset();
+  for (const frame of session.frames) {
+    withBytes(new Uint8Array(frame.buffer), (p, n) =>
+      withString(frame.name, (np, nl) => wasm.ar_merge_add(np, nl, p, n)));
+  }
+  if (session.merged) {
+    wasm.ar_merge_finish(session.merged.align ? 1 : 0, session.merged.deghost ?? -1);
+  }
+}
+
+/** A fresh module with the session put back into it. */
+async function recover() {
+  const saved = { ...session, frames: [...session.frames] };
+  ready = init();
+  await ready;
+  try {
+    if (saved.lut) withBytes(new Uint8Array(saved.lut), (p, n) => wasm.ar_lut_load(p, n));
+    if (saved.frames.length || saved.merged) await replayMerge();
+    if (!saved.merged) await restorePhoto();
+  } catch {
+    // What had been open is itself what traps. Nothing can be put back, so
+    // start from nothing rather than trap on every request from here on.
+    ready = init();
+    await ready;
+    Object.assign(session, { photo: null, frames: [], merged: null, lut: null });
+  }
 }
 
 function settingsPointer(settings, fn) {
@@ -186,10 +242,12 @@ async function lutLoad({ buffer }) {
   const rc = withBytes(new Uint8Array(buffer), (p, n) => wasm.ar_lut_load(p, n));
   const info = readJson();
   if (rc !== 0) fail(info);
+  session.lut = buffer;
   return info;
 }
 
 function lutClear() {
+  session.lut = null;
   wasm.ar_lut_clear();
   return readJson();
 }
@@ -228,6 +286,7 @@ async function mergeAdd({ name, buffer }) {
   wasm.ar_free(ptr, bytes.length);
   const info = readJson();
   if (rc !== 0) fail(info);
+  session.frames.push({ name, buffer });
   return info;
 }
 
@@ -238,11 +297,13 @@ function mergeCheck() {
 }
 
 function mergeRemove({ index }) {
+  session.frames.splice(index, 1);
   wasm.ar_merge_remove(index);
   return {};
 }
 
 function mergeReset() {
+  session.frames = [];
   wasm.ar_merge_reset();
   return {};
 }
@@ -253,6 +314,8 @@ async function mergeFinish({ align, deghost }) {
   const rc = wasm.ar_merge_finish(align ? 1 : 0, deghost ?? -1);
   const info = readJson();
   if (rc !== 0) fail(info);
+  session.merged = { align, deghost };
+  session.photo = null;
   return info;
 }
 
@@ -274,6 +337,13 @@ async function handle({ type, id, ...rest }) {
     const data = await handler(rest);
     postMessage({ type: 'result', id, ok: true, data });
   } catch (error) {
+    if (error instanceof WebAssembly.RuntimeError) {
+      // The module panicked and is unusable from here on; see `session`.
+      await recover().catch(() => { ready = null; });
+      const file = rest.name ?? session.photo?.name ?? '';
+      error.reason = type === 'open' || type === 'mergeAdd' ? 'undecodable' : 'crashed';
+      error.params = { file };
+    }
     postMessage({
       type: 'result', id, ok: false,
       error: { message: error.message, reason: error.reason, params: error.params },

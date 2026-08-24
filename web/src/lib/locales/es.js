@@ -135,6 +135,11 @@ export default {
 
   'grade.title': 'El color',
   'grade.lede': 'Elige un estilo y ajusta su intensidad. Cada estilo son cuatro curvas que puedes abrir y editar; así se consiguen <em>sombras frías con luces cálidas</em>.',
+  'grade.without': 'Sin el color',
+  'grade.with': 'Con el color',
+  'grade.view': 'Cómo mostrar la foto',
+  'grade.view.wipe': 'Con / sin',
+  'grade.view.single': 'Solo la foto',
   'grade.strength': 'Intensidad',
   'grade.off': 'sin efecto',
   'grade.nocurve': 'Sin curva: la imagen son tus correcciones y nada más.',

@@ -3,7 +3,8 @@
    *  clipped "after" layer line up with it exactly. */
   import { t } from '$lib/i18n.svelte.js';
 
-  let { before = '', after = '', busy = false } = $props();
+  let { before = '', after = '', busy = false,
+        beforeLabel = null, afterLabel = null } = $props();
 
   let at = $state(0.5);
   let dragging = false;
@@ -27,8 +28,8 @@
 >
   <img class="before" src={before} alt="before" draggable="false" />
   <img class="after" src={after} alt="after" draggable="false" />
-  <span class="tag left">{t('compare.before')}</span>
-  <span class="tag right">{t('compare.after')}</span>
+  <span class="tag left">{beforeLabel ?? t('compare.before')}</span>
+  <span class="tag right">{afterLabel ?? t('compare.after')}</span>
   <div class="divider"><i></i></div>
 </div>
 

@@ -135,6 +135,11 @@ export default {
 
   'grade.title': 'The grade',
   'grade.lede': 'Pick a look, then set its strength. Each look is four curves you can open and edit, which is how <em>cool shadows with warm highlights</em> is made.',
+  'grade.without': 'Without the grade',
+  'grade.with': 'With the grade',
+  'grade.view': 'How to show the picture',
+  'grade.view.wipe': 'With / without',
+  'grade.view.single': 'Picture only',
   'grade.strength': 'Strength',
   'grade.off': 'off',
   'grade.nocurve': 'No curve: the picture is your corrections and nothing else.',

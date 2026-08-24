@@ -1,6 +1,7 @@
 <script>
   /** The grade: one picture, one curve plot, and a short list of looks. */
   import Viewer from '$lib/components/Viewer.svelte';
+  import Compare from '$lib/components/Compare.svelte';
   import Slider from '$lib/components/Slider.svelte';
   import CurvePlot from '$lib/components/CurvePlot.svelte';
   import CurveEditor from '$lib/components/CurveEditor.svelte';
@@ -11,6 +12,10 @@
   import { lookLabel, lookDescription } from '$lib/format.js';
 
   const curves = $derived(app.settings.curves);
+
+  /** The picture with and without the grade, or the picture alone, which
+   *  is where the 100 % view and the histogram are. */
+  let wipe = $state(true);
 
   /** Load a look's points into the settings, which is what applies it. */
   function choose(look) {
@@ -29,7 +34,20 @@
 </script>
 
 <div class="stage">
-  <Viewer src={app.preview.image} busy={app.busy} />
+  <div class="view">
+    {#if wipe}
+      <Compare before={app.ungraded.image} after={app.preview.image} busy={app.busy}
+               beforeLabel={t('grade.without')} afterLabel={t('grade.with')} />
+    {:else}
+      <Viewer src={app.preview.image} busy={app.busy} />
+    {/if}
+    <div class="mode" role="radiogroup" aria-label={t('grade.view')}>
+      <button type="button" role="radio" aria-checked={wipe} onclick={() => (wipe = true)}>
+        {t('grade.view.wipe')}</button>
+      <button type="button" role="radio" aria-checked={!wipe} onclick={() => (wipe = false)}>
+        {t('grade.view.single')}</button>
+    </div>
+  </div>
   <aside>
     <h2>{t('grade.title')}</h2>
     <p class="lede">{@html t('grade.lede')}</p>
@@ -76,6 +94,15 @@
 </div>
 
 <style lang="scss">
+  .view { position: relative; min-width: 0; }
+  .mode {
+    display: flex; gap: 4px; margin-top: 8px; justify-content: center;
+    button {
+      padding: 4px 12px; font-size: 12px; font-weight: 500; min-width: 0;
+      background: var(--color-panel-2); color: var(--color-muted); border: 1px solid var(--color-line);
+      &[aria-checked='true'] { color: var(--color-ink); border-color: var(--color-accent); }
+    }
+  }
   h3 {
     margin: 18px 0 4px; font-size: 10.5px; text-transform: uppercase;
     letter-spacing: .09em; color: var(--color-muted); font-weight: 600;

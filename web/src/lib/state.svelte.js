@@ -103,6 +103,7 @@ export const app = $state({
   frame: { key: null, image: '', angle: 0 },   // framing step: whole canvas, uncropped
   preview: { key: null, image: '' },    // the cropped picture
   wipe: { key: null, before: '', after: '' },
+  ungraded: { key: null, image: '' },   // grade step's "before": everything but the grade
   output: { key: null, image: '' },     // download step, fully graded
   // The full-resolution frame for the 100 % view, developed only while that
   // view is open: { key, bitmap, width, height }.
@@ -120,6 +121,13 @@ export function settingsFor(index) {
   if (own) return own;
   const grade = Object.fromEntries(GRADE_KEYS.map((k) => [k, $state.snapshot(app.settings[k])]));
   return { ...defaultSettings(), ...grade };
+}
+
+/** These settings with the grade step's own work taken off. */
+export function ungraded(settings) {
+  const blank = defaultSettings();
+  return { ...$state.snapshot(settings), curves: blank.curves, mixer: blank.mixer,
+           lut: 0, monochrome: 0, vignette: 0, grain: 0 };
 }
 
 /** Everything a render depends on. */
@@ -149,6 +157,7 @@ export function resetForNewPhoto() {
   app.frame = { key: null, image: '', angle: 0 };
   app.preview = { key: null, image: '' };
   app.wipe = { key: null, before: '', after: '' };
+  app.ungraded = { key: null, image: '' };
   app.output = { key: null, image: '' };
   app.full.bitmap?.close();
   app.full = { key: null, bitmap: null, width: 0, height: 0 };

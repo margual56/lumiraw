@@ -24,7 +24,7 @@
   import { NAME } from '$lib/brand.js';
   import { history, observe, resetHistory, undo, redo, onKey } from '$lib/history.svelte.js';
   import {
-    app, settingsKey, stepVisible, setStraight,
+    app, settingsKey, stepVisible, setStraight, ungraded,
     STEPS, UPLOAD, FRAME, REFOCUS, EXPOSURE, WB, VIBRANCE, LOCAL, COMPARE, LOOKS, DOWNLOAD,
   } from '$lib/state.svelte.js';
 
@@ -127,7 +127,16 @@
           app.focus = out.report?.focus ?? app.focus;
           app.toggles = out.toggles;
         });
-      } else if (step === COMPARE && app.wipe.key !== key) {
+      }
+      // The grade step's "before", keyed on the settings without the grade,
+      // so moving a grade control never develops it again.
+      const bare = ungraded(app.settings);
+      const bareKey = `${app.id}|${JSON.stringify(bare)}`;
+      if (step === LOOKS && app.ungraded.key !== bareKey) {
+        const out = await api.render({ id: app.id, settings: bare, size: 1300 });
+        done(() => { app.ungraded = { key: bareKey, image: out.image }; });
+      }
+      if (step === COMPARE && app.wipe.key !== key) {
         const out = await api.compare({ id: app.id, settings: app.settings, size: 1300 });
         done(() => {
           app.wipe = { key, before: out.before, after: out.after };

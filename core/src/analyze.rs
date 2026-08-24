@@ -37,6 +37,8 @@ fn round_to(v: f32, places: i32) -> f64 {
 // -------------------------------------------------------------------------
 
 /// Refine the camera's white balance with a shades-of-grey estimate.
+pub const TINT_TRUST: f32 = 0.2;
+
 pub fn auto_white_balance(thumb: &Image, strength: f32, limit_ev: f32) -> ([f32; 3], Value) {
     let y = ops::luminance(thumb);
     let pct = ops::percentiles(&y.d, &[3.0, 97.0]);
@@ -68,6 +70,15 @@ pub fn auto_white_balance(thumb: &Image, strength: f32, limit_ev: f32) -> ([f32;
         log_gain[c] = (mean / est[c]).log2();
     }
     let lw = [0.2126f32, 0.7152, 0.0722];
+    let weighted: f32 = (0..3).map(|c| log_gain[c] * lw[c]).sum::<f32>() / lw.iter().sum::<f32>();
+    for g in log_gain.iter_mut() {
+        *g -= weighted;
+    }
+    // Warm-cool and green-magenta are not equally to be trusted.
+    let temp = (log_gain[0] - log_gain[2]) / 2.0;                           // along (1, 0, -1)
+    let tint = (2.0 * log_gain[1] - log_gain[0] - log_gain[2]) / 3.0;       // along (-1/2, 1, -1/2)
+    let tint = tint * TINT_TRUST;
+    log_gain = [temp - 0.5 * tint, tint, -temp - 0.5 * tint];
     let weighted: f32 = (0..3).map(|c| log_gain[c] * lw[c]).sum::<f32>() / lw.iter().sum::<f32>();
     let mut gains = [0f32; 3];
     for c in 0..3 {
@@ -302,6 +313,24 @@ impl Report {
 
 #[cfg(test)]
 mod tests {
+    /// A frame whose bright parts lean both cool and magenta.
+    #[test]
+    fn automatic_balance_trusts_temperature_more_than_tint() {
+        let (w, h) = (64usize, 64usize);
+        let mut thumb = Image::new(w, h);
+        for (i, px) in thumb.d.chunks_exact_mut(3).enumerate() {
+            let v = 0.05 + 0.6 * (i % 97) as f32 / 97.0;
+            // Cool (more blue than red) and magenta (less green than both).
+            px.copy_from_slice(&[v, v * 0.85, v * 1.3]);
+        }
+        let (gains, _) = auto_white_balance(&thumb, 1.0, 2.0);
+        let log: Vec<f32> = gains.iter().map(|g| g.log2()).collect();
+        let temp = (log[0] - log[2]) / 2.0;
+        let tint = (2.0 * log[1] - log[0] - log[2]) / 3.0;
+        assert!(temp > 0.15, "the blue was not taken out: {log:?}");
+        assert!(tint > 0.0 && tint < 0.35 * temp, "tint corrected too hard: {log:?}");
+    }
+
     use super::*;
 
     fn frame(luminance: f32, spread: f32, w: usize, h: usize) -> Image {

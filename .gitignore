@@ -9,6 +9,8 @@
 *.RAF
 *.raf
 
+Fotografía raw-*/
+
 web/build/
 web/.svelte-kit/
 core/target/

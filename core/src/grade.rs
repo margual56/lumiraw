@@ -334,11 +334,12 @@ pub fn sample_rect(img: &Image, rect: Rect) -> Option<Vec<[f32; 3]>> {
 // scene-linear stages
 // -------------------------------------------------------------------------
 
-pub fn apply_white_balance(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
+/// White balance, on the frame and on its measuring thumbnail alike.
+pub fn apply_white_balance(img: &mut Image, thumb: &mut Image, s: &Settings, p: &Preset,
                            report: &mut Report) {
     if !s.on("white_balance") {
         report.add("white balance", json!({"applied": false, "reason": "switched_off"}));
-        apply_temp_tint(img, s, report);
+        apply_temp_tint(img, thumb, s, report);
         return;
     }
     if let Some(rect) = s.wb_rect {
@@ -365,7 +366,8 @@ pub fn apply_white_balance(img: &mut Image, thumb: &Image, s: &Settings, p: &Pre
                     "gains": [round_to(gains[0],4), round_to(gains[1],4), round_to(gains[2],4)],
                     "patch_px": patch.len()}));
                 adapt(img, gains);
-                apply_temp_tint(img, s, report);
+                adapt(thumb, gains);
+                apply_temp_tint(img, thumb, s, report);
                 return;
             }
         }
@@ -381,11 +383,12 @@ pub fn apply_white_balance(img: &mut Image, thumb: &Image, s: &Settings, p: &Pre
     report.add("white balance", info);
     if applied {
         adapt(img, gains);
+        adapt(thumb, gains);
     }
-    apply_temp_tint(img, s, report);
+    apply_temp_tint(img, thumb, s, report);
 }
 
-fn apply_temp_tint(img: &mut Image, s: &Settings, report: &mut Report) {
+fn apply_temp_tint(img: &mut Image, thumb: &mut Image, s: &Settings, report: &mut Report) {
     if s.temperature.abs() < 1e-3 && s.tint.abs() < 1e-3 {
         return;
     }
@@ -405,6 +408,7 @@ fn apply_temp_tint(img: &mut Image, s: &Settings, report: &mut Report) {
         "tint": round_to(s.tint,3),
         "gains": [round_to(gains[0],4), round_to(gains[1],4), round_to(gains[2],4)]}));
     adapt(img, gains);
+    adapt(thumb, gains);
 }
 
 /// linear sRGB -> Bradford cone response.
@@ -529,7 +533,7 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
     let y = ops::luminance(img);
     let mut log_y = Plane::new(y.w, y.h);
     for i in 0..y.d.len() {
-        log_y.d[i] = y.d[i].max(1e-5).log2();
+        log_y.d[i] = ops::fast_log2(y.d[i].max(1e-5));
     }
     let radius = ((img.w.max(img.h) as f32 / 45.0).round() as usize).max(8);
     let base = ops::guided_filter(&log_y, &log_y, radius, 0.15, 4);
@@ -546,7 +550,7 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
     for i in 0..y.d.len() {
         let detail = log_y.d[i] - base.d[i];
         let new_log = anchor + (base.d[i] - anchor) * factor + detail * detail_boost;
-        let scale = (new_log - log_y.d[i]).exp2();
+        let scale = ops::fast_exp2(new_log - log_y.d[i]);
         for c in 0..3 {
             img.d[i * 3 + c] *= scale;
         }
@@ -594,6 +598,9 @@ pub fn filmic(img: &mut Image) {
 // -------------------------------------------------------------------------
 // perceptual stages (Oklab)
 // -------------------------------------------------------------------------
+
+/// Steps in the contrast curve's per-render table.
+const CURVE_STEPS: usize = 4096;
 
 /// Smooth contrast curve anchored at the image's own midtone.
 pub fn s_curve(x: f32, amount: f32, pivot: f32) -> f32 {
@@ -701,8 +708,15 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
         analyze::auto_contrast(&small, 0.20, p.contrast_amount, compression);
     if s.on("contrast") {
         report.add("contrast", info);
-        for i in 0..n {
-            light_new.d[i] = s_curve(light_new.d[i], amount, pivot);
+        // One curve for the whole frame, so it is tabulated once rather than
+        // evaluated with two `powf` per pixel.
+        let table: Vec<f32> = (0..=CURVE_STEPS + 1)
+            .map(|i| s_curve((i as f32 / CURVE_STEPS as f32).min(1.0), amount, pivot))
+            .collect();
+        for v in light_new.d.iter_mut() {
+            let f = v.clamp(0.0, 1.0) * CURVE_STEPS as f32;
+            let j = f as usize;
+            *v = table[j] + (table[j + 1] - table[j]) * (f - j as f32);
         }
     } else {
         let mut off = info.clone();
@@ -731,8 +745,8 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     // Lifting shadows leaves their colour behind; track the lightness change so
     // saturation stays proportional instead of going grey.
     for i in 0..n {
-        let comp = (((light_new.d[i].max(0.0) + 1e-3) / (lightness.d[i].max(0.0) + 1e-3)).powf(0.35))
-            .clamp(0.6, 1.8);
+        let ratio = (light_new.d[i].max(0.0) + 1e-3) / (lightness.d[i].max(0.0) + 1e-3);
+        let comp = ops::fast_exp2(0.35 * ops::fast_log2(ratio)).clamp(0.6, 1.8);
         a.d[i] *= comp;
         b.d[i] *= comp;
     }
@@ -827,7 +841,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
         let skin = skin_hue();
         for i in 0..n {
             let c = chroma.d[i];
-            let hue = b.d[i].atan2(a.d[i]);
+            let hue = ops::fast_atan2(b.d[i], a.d[i]);
             let mut weight = 1.0 - ops::smoothstep(0.10, 0.30, c);
             weight *= 1.0 - 0.55 * skin_protection(hue, c, skin);
             let gain = 1.0 + (boost - 1.0) * weight;
@@ -1032,14 +1046,15 @@ pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut
     let measure = |img: &Image, rect: Option<Rect>| ops::thumbnail(&stats_view_img(img, rect), 1024);
 
     step(&mut progress, &mut mark);
-    let thumb = measure(&img, args.stats_rect);
-    apply_white_balance(&mut img, &thumb, settings, &p, report);
+    // One thumbnail for every scene-linear measurement, carried through the
+    // same white balance and exposure as the frame (see apply_white_balance).
+    let mut thumb = measure(&img, args.stats_rect);
+    apply_white_balance(&mut img, &mut thumb, settings, &p, report);
     step(&mut progress, &mut mark);
-    let thumb = measure(&img, args.stats_rect);
     let exposure_gain = apply_exposure(&mut img, &thumb, settings, &p, report);
+    thumb.scale(exposure_gain);
     step(&mut progress, &mut mark);
 
-    let thumb = measure(&img, args.stats_rect);
     // Noise must be measured at native resolution.
     let (noise, info) = match args.native_noise_floor {
         Some(floor) => analyze::noise_from_floor(floor * exposure_gain.max(1e-6).sqrt(),

@@ -147,18 +147,21 @@ pub fn resize_plane(p: &Plane, w: usize, h: usize) -> Plane {
             tmp.d[y * w + x] = acc;
         }
     }
-    // vertical pass
+    // vertical pass: a whole source row at a time, weighted into the output
+    // row, so the inner loop is contiguous (and vectorised) instead of striding
+    // down a column per output pixel.
     let (ks2, bounds2, kk2) = coeffs(p.h, h);
     let mut out = Plane::new(w, h);
     for y in 0..h {
         let ymin = bounds2[y * 2] as usize;
         let n = bounds2[y * 2 + 1] as usize;
-        for x in 0..w {
-            let mut acc = 0.0f32;
-            for i in 0..n {
-                acc += tmp.d[(ymin + i) * w + x] * kk2[y * ks2 + i];
+        let dst = &mut out.d[y * w..(y + 1) * w];
+        for i in 0..n {
+            let k = kk2[y * ks2 + i];
+            let src = &tmp.d[(ymin + i) * w..(ymin + i + 1) * w];
+            for (o, s) in dst.iter_mut().zip(src) {
+                *o += *s * k;
             }
-            out.d[y * w + x] = acc;
         }
     }
     out
@@ -190,36 +193,56 @@ pub fn thumbnail(img: &Image, long_edge: usize) -> Image {
 // blurs
 // -------------------------------------------------------------------------
 
-/// Separable box blur, normalised at the borders (O(n) via a running sum).
+/// Separable box blur, normalised at the borders.
 pub fn box_blur(p: &Plane, r: usize) -> Plane {
     if r < 1 {
         return p.clone();
     }
-    let mut tmp = Plane::new(p.w, p.h);
-    // rows
-    for y in 0..p.h {
-        let row = &p.d[y * p.w..(y + 1) * p.w];
-        let mut cs = vec![0f32; p.w + 1];
-        for x in 0..p.w {
-            cs[x + 1] = cs[x] + row[x];
+    let (w, h) = (p.w, p.h);
+    let mut tmp = Plane::new(w, h);
+    // rows: a sliding window along each row
+    let inv: Vec<f32> = (0..=2 * r + 1).map(|n| if n > 0 { 1.0 / n as f32 } else { 0.0 }).collect();
+    for y in 0..h {
+        let row = &p.d[y * w..(y + 1) * w];
+        let out = &mut tmp.d[y * w..(y + 1) * w];
+        let mut sum = 0.0f32;
+        for v in row.iter().take(r.min(w)) {
+            sum += *v;
         }
-        for x in 0..p.w {
+        for x in 0..w {
+            if x + r < w {
+                sum += row[x + r];
+            }
+            if x > r {
+                sum -= row[x - r - 1];
+            }
             let lo = x.saturating_sub(r);
-            let hi = (x + r + 1).min(p.w);
-            tmp.d[y * p.w + x] = (cs[hi] - cs[lo]) / (hi - lo) as f32;
+            let hi = (x + r + 1).min(w);
+            out[x] = sum * inv[hi - lo];
         }
     }
-    // columns
-    let mut out = Plane::new(p.w, p.h);
-    let mut cs = vec![0f32; p.h + 1];
-    for x in 0..p.w {
-        for y in 0..p.h {
-            cs[y + 1] = cs[y] + tmp.d[y * p.w + x];
+    // columns: one running sum per column, slid down the frame row by row
+    let mut out = Plane::new(w, h);
+    let mut sum = vec![0f32; w];
+    for y in 0..r.min(h) {
+        for (s, v) in sum.iter_mut().zip(&tmp.d[y * w..(y + 1) * w]) {
+            *s += *v;
         }
-        for y in 0..p.h {
-            let lo = y.saturating_sub(r);
-            let hi = (y + r + 1).min(p.h);
-            out.d[y * p.w + x] = (cs[hi] - cs[lo]) / (hi - lo) as f32;
+    }
+    for y in 0..h {
+        if y + r < h {
+            for (s, v) in sum.iter_mut().zip(&tmp.d[(y + r) * w..(y + r + 1) * w]) {
+                *s += *v;
+            }
+        }
+        if y > r {
+            for (s, v) in sum.iter_mut().zip(&tmp.d[(y - r - 1) * w..(y - r) * w]) {
+                *s -= *v;
+            }
+        }
+        let k = inv[(y + r + 1).min(h) - y.saturating_sub(r)];
+        for (o, s) in out.d[y * w..(y + 1) * w].iter_mut().zip(&sum) {
+            *o = *s * k;
         }
     }
     out
@@ -280,13 +303,60 @@ pub fn guided_filter(guide: &Plane, src: &Plane, radius: usize, eps: f32, subsam
 // transfer functions
 // -------------------------------------------------------------------------
 
+/// The sRGB curves, exactly, for building the tables below and for checking
+/// them against.
+pub fn srgb_encode_exact(x: f32) -> f32 {
+    let x = x.clamp(0.0, 1.0);
+    if x <= 0.0031308 {
+        x * 12.92
+    } else {
+        1.055 * x.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+pub fn srgb_decode_exact(x: f32) -> f32 {
+    let x = x.clamp(0.0, 1.0);
+    if x <= 0.04045 {
+        x / 12.92
+    } else {
+        ((x + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Entries in each transfer table.
+const TRANSFER_STEPS: usize = 4096;
+
+/// The encode curve sampled at the square root of its input.
+fn encode_table() -> &'static [f32] {
+    static TABLE: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| (0..=TRANSFER_STEPS + 1).map(|i| {
+        let s = (i as f32 / TRANSFER_STEPS as f32).min(1.0);
+        srgb_encode_exact(s * s)
+    }).collect())
+}
+
+fn decode_table() -> &'static [f32] {
+    static TABLE: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| (0..=TRANSFER_STEPS + 1).map(|i| {
+        srgb_decode_exact((i as f32 / TRANSFER_STEPS as f32).min(1.0))
+    }).collect())
+}
+
+#[inline]
+fn lerp_table(table: &[f32], t: f32) -> f32 {
+    let f = t * TRANSFER_STEPS as f32;
+    let i = f as usize;
+    let k = f - i as f32;
+    table[i] + (table[i + 1] - table[i]) * k
+}
+
 #[inline]
 pub fn srgb_encode_scalar(x: f32) -> f32 {
     let x = x.clamp(0.0, 1.0);
     if x <= 0.0031308 {
         x * 12.92
     } else {
-        1.055 * x.powf(1.0 / 2.4) - 0.055
+        lerp_table(encode_table(), x.sqrt())
     }
 }
 
@@ -296,8 +366,56 @@ pub fn srgb_decode_scalar(x: f32) -> f32 {
     if x <= 0.04045 {
         x / 12.92
     } else {
-        ((x + 0.055) / 1.055).powf(2.4)
+        lerp_table(decode_table(), x)
     }
+}
+
+/// `log2` of a positive number to about a millionth, without the software
+/// routine.
+#[inline]
+pub fn fast_log2(x: f32) -> f32 {
+    let bits = x.max(f32::MIN_POSITIVE).to_bits();
+    let exponent = ((bits >> 23) & 0xff) as i32 - 127;
+    let m = f32::from_bits((bits & 0x007f_ffff) | 0x3f80_0000);
+    let t = (m - 1.0) / (m + 1.0);
+    let t2 = t * t;
+    let ln = 2.0 * t * (1.0 + t2 * (1.0 / 3.0 + t2 * (1.0 / 5.0 + t2 * (1.0 / 7.0 + t2 * (1.0 / 9.0)))));
+    exponent as f32 + ln * std::f32::consts::LOG2_E
+}
+
+/// `exp2` to about a millionth, the same way round: the integer part goes
+/// straight into the exponent bits, the fraction through a short series.
+#[inline]
+pub fn fast_exp2(x: f32) -> f32 {
+    let x = x.clamp(-126.0, 127.0);
+    let i = x.floor();
+    let f = (x - i) * std::f32::consts::LN_2;
+    let p = 1.0 + f * (1.0 + f * (0.5 + f * (1.0 / 6.0 + f * (1.0 / 24.0 + f * (1.0 / 120.0
+        + f * (1.0 / 720.0 + f * (1.0 / 5040.0)))))));
+    p * f32::from_bits(((i as i32 + 127) as u32) << 23)
+}
+
+/// `atan2` to within a ten-thousandth of a radian, without the software
+/// routine.
+#[inline]
+pub fn fast_atan2(y: f32, x: f32) -> f32 {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    let (ax, ay) = (x.abs(), y.abs());
+    if ax == 0.0 && ay == 0.0 {
+        return 0.0;
+    }
+    let swap = ay > ax;
+    let z = if swap { ax / ay } else { ay / ax };
+    let z2 = z * z;
+    // Minimax on [0, 1].
+    let mut a = z * (0.999_866 + z2 * (-0.330_299_5 + z2 * (0.180_141 + z2 * (-0.085_133 + z2 * 0.020_835_1))));
+    if swap {
+        a = FRAC_PI_2 - a;
+    }
+    if x < 0.0 {
+        a = PI - a;
+    }
+    if y < 0.0 { -a } else { a }
 }
 
 /// Rec.709 luminance of linear RGB.
@@ -348,10 +466,19 @@ pub fn oklab_to_rgb_px(lightness: f32, a: f32, b: f32) -> (f32, f32, f32) {
     )
 }
 
+/// Cube root, keeping the sign, to float precision.
 #[inline]
-fn cbrt(x: f32) -> f32 {
-    // numpy's cbrt keeps the sign; f32::cbrt does too.
-    x.cbrt()
+pub fn cbrt(x: f32) -> f32 {
+    if x == 0.0 || !x.is_finite() {
+        return x;
+    }
+    let a = x.abs();
+    let mut y = f32::from_bits(a.to_bits() / 3 + 709_921_077);
+    let y3 = y * y * y;
+    y *= (y3 + 2.0 * a) / (2.0 * y3 + a);
+    let y3 = y * y * y;
+    y *= (y3 + 2.0 * a) / (2.0 * y3 + a);
+    y.copysign(x)
 }
 
 // -------------------------------------------------------------------------
@@ -481,5 +608,92 @@ mod tests {
         p.d[40] = 10.0;
         let out = box_blur(&p, 1);
         assert!(out.at(4, 4) > 1.0);
+    }
+}
+
+#[cfg(test)]
+mod fast_tests {
+    use super::*;
+
+    /// The fast versions stand in for the exact ones everywhere, so they are
+    /// held to them here, over the whole range each one is used on.
+    #[test]
+    fn fast_cbrt_is_float_precise() {
+        let mut worst = 0f32;
+        for i in -20000..=20000 {
+            let x = i as f32 / 997.0 * 3.3;
+            if x == 0.0 { continue; }
+            worst = worst.max(((cbrt(x) - x.cbrt()) / x.cbrt()).abs());
+        }
+        for x in [1e-12f32, 1e-6, 0.0031, 7.0, 1e6] {
+            worst = worst.max(((cbrt(x) - x.cbrt()) / x.cbrt()).abs());
+        }
+        assert!(worst < 1e-6, "cbrt relative error {worst}");
+        assert_eq!(cbrt(0.0), 0.0);
+    }
+
+    #[test]
+    fn fast_log2_and_exp2_are_within_a_millionth() {
+        let (mut lg, mut ex) = (0f32, 0f32);
+        for i in 1..=400_000 {
+            let x = i as f32 / 40_000.0;   // 2.5e-5 .. 10
+            lg = lg.max((fast_log2(x) - x.log2()).abs());
+            let e = (i as f32 - 200_000.0) / 10_000.0;   // -20 .. 20
+            ex = ex.max(((fast_exp2(e) - e.exp2()) / e.exp2()).abs());
+        }
+        assert!(lg < 2e-6, "log2 error {lg}");
+        assert!(ex < 2e-6, "exp2 relative error {ex}");
+    }
+
+    #[test]
+    fn fast_atan2_is_within_a_ten_thousandth() {
+        let mut worst = 0f32;
+        for i in 0..3600 {
+            let angle = (i as f32 / 10.0).to_radians() - std::f32::consts::PI;
+            for r in [1e-4f32, 0.05, 1.0, 30.0] {
+                let (y, x) = (angle.sin() * r, angle.cos() * r);
+                let mut d = (fast_atan2(y, x) - y.atan2(x)).abs();
+                if d > std::f32::consts::PI { d = std::f32::consts::TAU - d; }
+                worst = worst.max(d);
+            }
+        }
+        assert!(worst < 1e-4, "atan2 error {worst} rad");
+    }
+
+    /// Below what a 16-bit export can hold, 1/65535, with room to spare.
+    #[test]
+    fn transfer_tables_match_the_curves() {
+        let (mut enc, mut dec) = (0f32, 0f32);
+        for i in 0..=200_000 {
+            let x = i as f32 / 200_000.0;
+            enc = enc.max((srgb_encode_scalar(x) - srgb_encode_exact(x)).abs());
+            dec = dec.max((srgb_decode_scalar(x) - srgb_decode_exact(x)).abs());
+        }
+        assert!(enc < 2e-6, "encode error {enc}");
+        assert!(dec < 2e-6, "decode error {dec}");
+    }
+
+    /// The rewritten blur against the definition: the mean of every pixel
+    /// within r, cut short at the edges, at every position including them.
+    #[test]
+    fn box_blur_is_the_windowed_mean() {
+        let (w, h) = (37usize, 23usize);
+        let mut p = Plane::new(w, h);
+        for (i, v) in p.d.iter_mut().enumerate() {
+            *v = ((i * 7919) % 101) as f32 / 101.0;
+        }
+        for r in [1usize, 2, 5, 30] {
+            let got = box_blur(&p, r);
+            for y in 0..h {
+                for x in 0..w {
+                    let (x0, x1) = (x.saturating_sub(r), (x + r + 1).min(w));
+                    let (y0, y1) = (y.saturating_sub(r), (y + r + 1).min(h));
+                    let mut s = 0.0f64;
+                    for yy in y0..y1 { for xx in x0..x1 { s += p.d[yy * w + xx] as f64; } }
+                    let want = (s / ((x1 - x0) * (y1 - y0)) as f64) as f32;
+                    assert!((got.d[y * w + x] - want).abs() < 1e-5, "r={r} at {x},{y}");
+                }
+            }
+        }
     }
 }

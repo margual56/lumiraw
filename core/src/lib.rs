@@ -21,7 +21,6 @@ pub mod looks;
 pub mod lut;
 pub mod merge;
 pub mod mixer;
-pub mod ops;
 pub mod output;
 pub mod profile;
 pub mod raw;

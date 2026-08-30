@@ -1,5 +1,5 @@
 //! Decode-only statistics, for comparing against the Python (LibRaw) decoder.
-use autoraw_core::{decode, ops, raw};
+use autoraw_core::{decode, raw};
 
 fn main() {
     for path in std::env::args().skip(1) {
@@ -35,8 +35,8 @@ fn main() {
                 ch[c] += px[c] as f64;
             }
         }
-        let y = ops::luminance(&d.img);
-        let p = ops::percentiles(&y.d, &[1.0, 50.0, 99.0, 99.9]);
+        let y = kit::luminance(&d.img);
+        let p = kit::percentiles(&y.d, &[1.0, 50.0, 99.0, 99.9]);
         println!("{}  {}x{}  means {:.5} {:.5} {:.5}  luma {:?}",
                  path.rsplit('/').next().unwrap(), d.img.w, d.img.h,
                  ch[0] / n, ch[1] / n, ch[2] / n,

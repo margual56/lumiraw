@@ -7,6 +7,7 @@ use rawler::rawsource::RawSource;
 use rawler::RawlerError;
 
 pub use rawler::CFA;
+use kit::{Mat3, Matrix3};
 
 /// Why a file could not be read, in a form the interface can say something
 /// useful about.
@@ -66,7 +67,7 @@ pub struct Raw {
     pub wb_from_file: bool,
     /// XYZ -> camera, per calibration illuminant, as correlated colour
     /// temperature in kelvin.
-    pub matrices: Vec<(f32, [[f32; 3]; 3])>,
+    pub matrices: Vec<(f32, Mat3)>,
     /// The part of `data` worth keeping: x, y, width, height.
     pub area: (usize, usize, usize, usize),
     pub orientation: Orientation,
@@ -87,7 +88,7 @@ impl Raw {
     /// photosite, no crop, no rotation.
     #[cfg(test)]
     pub(crate) fn synthetic(width: usize, height: usize, data: Vec<f32>, layout: Layout,
-                            wb: [f32; 3], matrices: Vec<(f32, [[f32; 3]; 3])>,
+                            wb: [f32; 3], matrices: Vec<(f32, Mat3)>,
                             black: f32, white: f32) -> Raw {
         let cpp = match layout { Layout::Mosaic(_) => 1, Layout::Linear => 3 };
         Raw {
@@ -228,7 +229,7 @@ pub fn load(bytes: &[u8]) -> Result<Raw, DecodeError> {
         if let Some(k) = kelvin(illuminant) {
             let m = [[flat[0], flat[1], flat[2]], [flat[3], flat[4], flat[5]], [flat[6], flat[7], flat[8]]];
             if m.iter().flatten().any(|v| *v != 0.0) {
-                matrices.push((k, m));
+                matrices.push((k, Matrix3(m)));
             }
         }
     }

@@ -1,11 +1,11 @@
 //! One raw file, developed many ways.
 
-use crate::analyze::Report;
+use kit::Report;
 use crate::decode::{self, Meta};
 use crate::geometry::{self, Rect};
 use crate::grade::{self, ProcessArgs, Settings, TOGGLES};
 use crate::lensdb::{self, Database, LensMatch};
-use crate::ops::{self, Image};
+use kit::Image;
 use crate::profile::{self, CaptureProfile};
 use crate::effects;
 use crate::straighten;
@@ -69,7 +69,7 @@ impl Development {
             let h = 640.min(self.linear.h);
             self.linear.crop((self.linear.w - w) / 2, (self.linear.h - h) / 2, w, h)
         };
-        let mut sqrt_luma = ops::luminance(&crop);
+        let mut sqrt_luma = kit::luminance(&crop);
         for v in sqrt_luma.d.iter_mut() {
             *v = v.max(0.0).sqrt();
         }
@@ -145,7 +145,7 @@ impl Development {
 
         let mut src = match long_edge {
             None => self.linear.clone(),
-            Some(e) => ops::thumbnail(&self.linear, e),
+            Some(e) => kit::thumbnail(&self.linear, e),
         };
         if let Some(m) = self.lens_match.clone() {
             if s.on("lens_vignetting") {
@@ -243,8 +243,8 @@ impl Development {
                 "verdict": if w >= crate::analyze::FOCUS_SOFT { "soft" }
                            else if w <= crate::analyze::FOCUS_SHARP { "sharp" }
                            else { "slightly_soft" },
-                "edge_px": grade::round_to(w, 2),
-                "blur_px": grade::round_to(crate::analyze::focus_sigma(w), 2)}),
+                "edge_px": kit::round_to(w, 2),
+                "blur_px": kit::round_to(crate::analyze::focus_sigma(w), 2)}),
         });
 
         // Framing is the one step that had nothing of its own to propose, so
@@ -278,14 +278,14 @@ impl Development {
         // place it can sit.
         let lut_applied = crate::lut::apply_current(&mut rgb, settings.lut);
         report.add("lut", json!({"applied": lut_applied,
-                                 "strength": grade::round_to(settings.lut, 3)}));
+                                 "strength": kit::round_to(settings.lut, 3)}));
 
         effects::vignette(&mut rgb, settings.vignette);
         effects::grain(&mut rgb, settings.grain);
         report.add("effects", json!({
-            "monochrome": grade::round_to(settings.monochrome, 3),
-            "vignette": grade::round_to(settings.vignette, 3),
-            "grain": grade::round_to(settings.grain, 3)}));
+            "monochrome": kit::round_to(settings.monochrome, 3),
+            "vignette": kit::round_to(settings.vignette, 3),
+            "grain": kit::round_to(settings.grain, 3)}));
         (rgb, report)
     }
 
@@ -342,8 +342,7 @@ impl Development {
                     "lens_not_in_database"
                 };
                 for stage in stages.iter() {
-                    report.add(stage, json!({"applied": false, "reason": reason,
-                                             "lens": self.meta.lens_model}));
+                    report.skipped(stage, reason, json!({"lens": self.meta.lens_model}));
                 }
                 return;
             }
@@ -416,18 +415,11 @@ impl Development {
             "profile": self.profile.values(),
             "notes": self.profile.notes,
             "lens_calibration": self.lens_match.as_ref().map(|m| json!({
-                "lens": m.lens, "focal": round1(m.focal), "aperture": round2(m.aperture)})),
+                "lens": m.lens, "focal": kit::round_to(m.focal, 1), "aperture": kit::round_to(m.aperture, 2)})),
         })
     }
 }
 
-fn round1(v: f32) -> f64 {
-    ((v as f64) * 10.0).round() / 10.0
-}
-
-fn round2(v: f32) -> f64 {
-    ((v as f64) * 100.0).round() / 100.0
-}
 
 /// "103mm", not "103.0mm", and "10", not "1": only a fractional part may be
 /// trimmed.

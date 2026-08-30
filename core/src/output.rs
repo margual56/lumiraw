@@ -1,7 +1,7 @@
 //! Quantisation and delivery formats.
 
 use crate::exif::{self, Entry, Ifd};
-use crate::ops::{self, Image};
+use kit::Image;
 
 /// Display-linear -> sRGB integers.
 pub fn encode8(img: &Image, dither: bool) -> Vec<u8> {
@@ -14,7 +14,7 @@ pub fn encode8(img: &Image, dither: bool) -> Vec<u8> {
         (state >> 8) as f32 / 16_777_216.0
     };
     for i in 0..out.len() {
-        let mut v = ops::srgb_encode_scalar(img.d[i]) * 255.0;
+        let mut v = kit::srgb_encode_scalar(img.d[i]) * 255.0;
         if dither {
             v += (rand() - rand()) * 0.5;
         }
@@ -26,7 +26,7 @@ pub fn encode8(img: &Image, dither: bool) -> Vec<u8> {
 pub fn encode16(img: &Image) -> Vec<u16> {
     let mut out = vec![0u16; img.w * img.h * 3];
     for i in 0..out.len() {
-        out[i] = (ops::srgb_encode_scalar(img.d[i]) * 65535.0).round().clamp(0.0, 65535.0) as u16;
+        out[i] = (kit::srgb_encode_scalar(img.d[i]) * 65535.0).round().clamp(0.0, 65535.0) as u16;
     }
     out
 }
@@ -34,10 +34,9 @@ pub fn encode16(img: &Image) -> Vec<u16> {
 /// RGBA8 for direct display in a canvas, what previews travel as.
 pub fn rgba8(img: &Image) -> Vec<u8> {
     let mut out = vec![255u8; img.w * img.h * 4];
-    for i in 0..img.w * img.h {
+    for (dst, px) in out.chunks_exact_mut(4).zip(img.px()) {
         for c in 0..3 {
-            out[i * 4 + c] =
-                (ops::srgb_encode_scalar(img.d[i * 3 + c]) * 255.0).round().clamp(0.0, 255.0) as u8;
+            dst[c] = (kit::srgb_encode_scalar(px[c]) * 255.0).round().clamp(0.0, 255.0) as u8;
         }
     }
     out

@@ -1,7 +1,7 @@
 //! Adjustments to part of the picture.
 
 use crate::geometry::Rect;
-use crate::ops::{self, Image};
+use kit::Image;
 use serde_json::Value;
 
 /// Where a filter reaches.
@@ -101,12 +101,12 @@ fn weight(shape: &Shape, u: f32, v: f32, aspect: f32) -> f32 {
                 return 0.0;
             }
             let t = (((u - a.0) * aspect) * dx + (v - a.1) * dy) / len2;
-            1.0 - ops::smoothstep(0.0, 1.0, t)
+            1.0 - kit::smoothstep(0.0, 1.0, t)
         }
         Shape::Radial { centre, radius, feather, invert } => {
             let (x, y) = ((u - centre.0) / radius.0, (v - centre.1) / radius.1);
             let d = (x * x + y * y).sqrt();
-            let inside = 1.0 - ops::smoothstep(1.0, 1.0 + feather.max(0.02), d);
+            let inside = 1.0 - kit::smoothstep(1.0, 1.0 + feather.max(0.02), d);
             if *invert { 1.0 - inside } else { inside }
         }
     }
@@ -147,7 +147,7 @@ pub fn apply_filters(img: &mut Image, filters: &[Filter], frame: Option<Rect>) {
                     }
                 }
                 if f.saturation != 0.0 {
-                    let luma = ops::luminance_px(px);
+                    let luma = kit::luminance_px(px);
                     let s = 1.0 + f.saturation * k;
                     for c in px.iter_mut() {
                         *c = luma + (*c - luma) * s;
@@ -188,7 +188,7 @@ fn ring_mean(img: &Image, cx: f32, cy: f32, r0: f32, r1: f32) -> Option<[f32; 3]
 /// Where to take a patch from, when the photographer did not say.
 pub fn choose_source(img: &Image, spot: &Spot, frame: Option<Rect>) -> (f32, f32) {
     const JUDGE_EDGE: usize = 800;
-    let small = ops::thumbnail(img, JUDGE_EDGE);
+    let small = kit::thumbnail(img, JUDGE_EDGE);
     let (fx, fy, fw, fh) = frame_px(&small, frame);
     let long = fw.max(fh);
     let r = (spot.r * long).max(1.5);
@@ -254,7 +254,7 @@ pub fn heal(img: &mut Image, spots: &[Spot], frame: Option<Rect>) {
                 let src = patch[k];
                 k += 1;
                 let d = ((dx * dx + dy * dy) as f32).sqrt();
-                let w = 1.0 - ops::smoothstep(r * 0.66, r, d);
+                let w = 1.0 - kit::smoothstep(r * 0.66, r, d);
                 let (x, y) = ((tx + dx as f32).round() as i64, (ty + dy as f32).round() as i64);
                 let (Some(s), true) = (src, w > 0.0 && x >= 0 && y >= 0
                                         && (x as usize) < img.w && (y as usize) < img.h) else { continue };

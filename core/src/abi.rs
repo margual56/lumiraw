@@ -66,6 +66,25 @@ unsafe fn slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
     }
 }
 
+/// The settings JSON the page passed, parsed; anything unreadable is the
+/// defaults, which is what an empty object means too.
+fn settings_at(ptr: *const u8, len: usize) -> Settings {
+    let v: serde_json::Value =
+        serde_json::from_slice(unsafe { slice(ptr, len) }).unwrap_or(json!({}));
+    Settings::from_json(&v)
+}
+
+/// A string the page passed, as UTF-8 (lossily: a file name is not worth
+/// failing over).
+fn text_at(ptr: *const u8, len: usize) -> String {
+    String::from_utf8_lossy(unsafe { slice(ptr, len) }).to_string()
+}
+
+/// The long edge a render was asked for; zero or less means full size.
+fn long_edge_of(long_edge: i32) -> Option<usize> {
+    if long_edge > 0 { Some(long_edge as usize) } else { None }
+}
+
 fn set_json(v: serde_json::Value) {
     JSON.with(|j| *j.borrow_mut() = serde_json::to_vec(&v).unwrap_or_default());
 }
@@ -159,7 +178,7 @@ pub extern "C" fn ar_set_database(ptr: *const u8, len: usize) -> i32 {
 /// notes, lens calibration) is left in the JSON buffer.
 #[no_mangle]
 pub extern "C" fn ar_open(name_ptr: *const u8, name_len: usize, ptr: *const u8, len: usize) -> i32 {
-    let name = String::from_utf8_lossy(unsafe { slice(name_ptr, name_len) }).to_string();
+    let name = text_at(name_ptr, name_len);
     let bytes = unsafe { slice(ptr, len) };
     if bytes.is_empty() {
         return set_error("empty file", "unreadable");
@@ -197,12 +216,12 @@ where
     DEV.with(|d| d.borrow_mut().as_mut().map(f))
 }
 
-fn store(img: &crate::ops::Image) {
+fn store(img: &kit::Image) {
     PIXELS.with(|p| *p.borrow_mut() = output::rgba8(img));
     SIZE.with(|s| *s.borrow_mut() = (img.w as u32, img.h as u32));
 }
 
-fn store_b(img: &crate::ops::Image) {
+fn store_b(img: &kit::Image) {
     PIXELS_B.with(|p| *p.borrow_mut() = output::rgba8(img));
     SIZE_B.with(|s| *s.borrow_mut() = (img.w as u32, img.h as u32));
 }
@@ -212,10 +231,8 @@ fn store_b(img: &crate::ops::Image) {
 #[no_mangle]
 pub extern "C" fn ar_render(settings_ptr: *const u8, settings_len: usize, long_edge: i32,
                             crop: i32) -> i32 {
-    let settings_json: serde_json::Value =
-        serde_json::from_slice(unsafe { slice(settings_ptr, settings_len) }).unwrap_or(json!({}));
-    let settings = Settings::from_json(&settings_json);
-    let edge = if long_edge > 0 { Some(long_edge as usize) } else { None };
+    let settings = settings_at(settings_ptr, settings_len);
+    let edge = long_edge_of(long_edge);
 
     let out = with_dev(|dev| {
         let mut cb = |f: f32, code: &str| progress(f, code);
@@ -255,10 +272,8 @@ pub extern "C" fn ar_thumbnail(ptr: *const u8, len: usize, long_edge: i32) -> i3
 /// with every automatic correction switched off in the secondary one.
 #[no_mangle]
 pub extern "C" fn ar_compare(settings_ptr: *const u8, settings_len: usize, long_edge: i32) -> i32 {
-    let settings_json: serde_json::Value =
-        serde_json::from_slice(unsafe { slice(settings_ptr, settings_len) }).unwrap_or(json!({}));
-    let settings = Settings::from_json(&settings_json);
-    let edge = if long_edge > 0 { Some(long_edge as usize) } else { None };
+    let settings = settings_at(settings_ptr, settings_len);
+    let edge = long_edge_of(long_edge);
 
     let out = with_dev(|dev| {
         let mut cb = |f: f32, code: &str| progress(f * 0.5, code);
@@ -287,13 +302,11 @@ pub extern "C" fn ar_compare(settings_ptr: *const u8, settings_len: usize, long_
 pub extern "C" fn ar_export(settings_ptr: *const u8, settings_len: usize,
                             fmt_ptr: *const u8, fmt_len: usize, quality: i32,
                             long_edge: i32, now_ptr: *const u8, now_len: usize) -> i32 {
-    let settings_json: serde_json::Value =
-        serde_json::from_slice(unsafe { slice(settings_ptr, settings_len) }).unwrap_or(json!({}));
-    let settings = Settings::from_json(&settings_json);
-    let fmt = String::from_utf8_lossy(unsafe { slice(fmt_ptr, fmt_len) }).to_string();
-    let edge = if long_edge > 0 { Some(long_edge as usize) } else { None };
+    let settings = settings_at(settings_ptr, settings_len);
+    let fmt = text_at(fmt_ptr, fmt_len);
+    let edge = long_edge_of(long_edge);
     // There is no clock in this target, so the host passes the time in.
-    let now = String::from_utf8_lossy(unsafe { slice(now_ptr, now_len) }).to_string();
+    let now = text_at(now_ptr, now_len);
     let modified = if now.is_empty() { None } else { Some(now.as_str()) };
 
     let developed = with_dev(|dev| {
@@ -380,7 +393,7 @@ pub extern "C" fn ar_merge_remove(index: i32) -> i32 {
 #[no_mangle]
 pub extern "C" fn ar_merge_add(name_ptr: *const u8, name_len: usize, ptr: *const u8,
                                len: usize) -> i32 {
-    let name = String::from_utf8_lossy(unsafe { slice(name_ptr, name_len) }).to_string();
+    let name = text_at(name_ptr, name_len);
     let bytes = unsafe { slice(ptr, len) };
     progress(0.1, "decoding");
     match crate::merge::Frame::open(&name, bytes) {
@@ -515,8 +528,8 @@ pub extern "C" fn ar_lut_clear() -> i32 {
 #[no_mangle]
 pub extern "C" fn ar_looks() -> i32 {
     let points = |p: &[(f32, f32)]| {
-        p.iter().map(|(x, y)| json!([crate::grade::round_to(*x, 4),
-                                     crate::grade::round_to(*y, 4)])).collect::<Vec<_>>()
+        p.iter().map(|(x, y)| json!([kit::round_to(*x, 4),
+                                     kit::round_to(*y, 4)])).collect::<Vec<_>>()
     };
     set_json(json!({"looks": crate::looks::LOOKS.iter().map(|l| json!({
         "id": l.id, "label": l.label, "description": l.description,
@@ -529,12 +542,14 @@ pub extern "C" fn ar_looks() -> i32 {
 /// The curves a settings object comes to, as the pipeline will evaluate them.
 #[no_mangle]
 pub extern "C" fn ar_curves(settings_ptr: *const u8, settings_len: usize) -> i32 {
+    // The raw JSON as well as the parsed settings: the curve points the
+    // editor placed are read from it as they were sent.
     let settings_json: serde_json::Value =
         serde_json::from_slice(unsafe { slice(settings_ptr, settings_len) }).unwrap_or(json!({}));
     let settings = Settings::from_json(&settings_json);
     let stack = &settings.curves;
     let table = |c: &crate::curve::Curve| {
-        c.table().iter().map(|v| crate::grade::round_to(*v, 4)).collect::<Vec<_>>()
+        c.table().iter().map(|v| kit::round_to(*v, 4)).collect::<Vec<_>>()
     };
     let counts = stack.counts();
     // Two sets, and the difference matters.

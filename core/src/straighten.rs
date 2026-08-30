@@ -1,7 +1,7 @@
 //! What would make this picture level, and its verticals upright.
 
 use crate::geometry::Rect;
-use crate::ops::{self, Image};
+use kit::Image;
 use serde_json::{json, Value};
 
 /// Long edge the measurement runs at.
@@ -167,7 +167,7 @@ struct Vote {
 pub fn propose(img: &Image, rect: Option<Rect>) -> Option<Proposal> {
     let bounds = crate::geometry::view_bounds(img.w, img.h, rect);
     let view = crate::geometry::stats_view_img(img, rect);
-    let work = ops::thumbnail(&view, WORK_EDGE);
+    let work = kit::thumbnail(&view, WORK_EDGE);
     if work.w < 64 || work.h < 64 {
         return None;
     }
@@ -214,7 +214,7 @@ pub fn propose(img: &Image, rect: Option<Rect>) -> Option<Proposal> {
 
 /// The frame in blocks, each with the one orientation that runs through it.
 fn cells(work: &Image) -> Vec<Vote> {
-    let luma = ops::gaussian_blur(&ops::luminance(work), EDGE_SIGMA);
+    let luma = kit::gaussian_blur(&kit::luminance(work), EDGE_SIGMA);
     let (w, h) = (luma.w, luma.h);
     let at = |x: usize, y: usize| luma.d[y * w + x];
     let (cx, cy) = ((w as f32 - 1.0) / 2.0, (h as f32 - 1.0) / 2.0);
@@ -282,7 +282,7 @@ fn cells(work: &Image) -> Vec<Vote> {
 /// Every pixel with a strong enough gradient, as a vote.
 fn gather(work: &Image) -> Vec<Vote> {
     // Blurred first, and not only against noise.
-    let luma = ops::gaussian_blur(&ops::luminance(work), EDGE_SIGMA);
+    let luma = kit::gaussian_blur(&kit::luminance(work), EDGE_SIGMA);
     let (w, h) = (luma.w, luma.h);
     let at = |x: usize, y: usize| luma.d[y * w + x];
 
@@ -299,7 +299,7 @@ fn gather(work: &Image) -> Vec<Vote> {
         }
     }
     let mut mags: Vec<f32> = grads.iter().map(|(_, _, gx, gy)| gx.hypot(*gy)).collect();
-    let cut = ops::percentile(&mags, EDGE_QUANTILE);
+    let cut = kit::percentile(&mags, EDGE_QUANTILE);
     // A frame of flat sky has a ninetieth percentile too, and it is noise.
     let cut = cut.max(0.10);
     mags.clear();

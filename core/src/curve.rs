@@ -1,6 +1,6 @@
 //! Tone curves: control points in, a lookup table out.
 
-use crate::ops::{self, Image};
+use kit::Image;
 use serde_json::Value;
 
 /// How many entries a baked curve holds.
@@ -223,7 +223,7 @@ impl Stack {
         for c in &channel {
             for i in 0..TABLE {
                 let x = i as f32 / (TABLE - 1) as f32;
-                baked.push(ops::srgb_decode_scalar(c.at(composite.at(x))));
+                baked.push(kit::srgb_decode_scalar(c.at(composite.at(x))));
             }
         }
         Stack { composite, channel, baked, identity }
@@ -250,7 +250,7 @@ impl Stack {
     fn map(&self, c: usize, v: f32) -> f32 {
         // Anything above white is already gone by the time a file is written,
         // because `output.rs` encodes with the same clamp.
-        let t = ops::srgb_encode_scalar(v) * (TABLE - 1) as f32;
+        let t = kit::srgb_encode_scalar(v) * (TABLE - 1) as f32;
         let i = t as usize;
         let base = c * TABLE;
         if i >= TABLE - 1 {
@@ -267,9 +267,9 @@ impl Stack {
             return img.clone();
         }
         let mut out = img.clone();
-        for i in 0..img.w * img.h {
-            for c in 0..3 {
-                out.d[i * 3 + c] = self.map(c, out.d[i * 3 + c]);
+        for px in out.px_mut() {
+            for (c, v) in px.iter_mut().enumerate() {
+                *v = self.map(c, *v);
             }
         }
         out
@@ -469,8 +469,8 @@ mod tests {
     fn a_curve_is_read_on_encoded_values() {
         let lifted = Curve::new(&[(0.0, 0.0), (0.5, 0.6), (1.0, 1.0)]);
         let stack = Stack::new(lifted, Curve::identity(), Curve::identity(), Curve::identity(), 1.0);
-        let out = stack.apply(&grey(ops::srgb_decode_scalar(0.5)));
-        let want = ops::srgb_decode_scalar(0.6);
+        let out = stack.apply(&grey(kit::srgb_decode_scalar(0.5)));
+        let want = kit::srgb_decode_scalar(0.6);
         assert!((out.d[0] - want).abs() < 1e-3,
                 "a pixel at 0.5 encoded came out {} rather than {want}", out.d[0]);
         assert!((out.d[0] - 0.6).abs() > 0.1,
@@ -483,13 +483,13 @@ mod tests {
     fn a_channel_curve_shifts_hue_with_brightness() {
         let toe = Curve::new(&[(0.0, 0.0), (0.25, 0.36), (0.6, 0.6), (1.0, 1.0)]);
         let stack = Stack::new(Curve::identity(), Curve::identity(), Curve::identity(), toe, 1.0);
-        let dark = stack.apply(&grey(ops::srgb_decode_scalar(0.25)));
+        let dark = stack.apply(&grey(kit::srgb_decode_scalar(0.25)));
         assert!(dark.d[2] > dark.d[0] * 1.5, "the shadows did not go blue: {:?}", dark.d);
         assert!((dark.d[0] - dark.d[1]).abs() < 1e-6, "red and green must not have moved");
-        let light = stack.apply(&grey(ops::srgb_decode_scalar(0.9)));
+        let light = stack.apply(&grey(kit::srgb_decode_scalar(0.9)));
         // Measured where the file lives: a cast below one 8-bit step cannot be
         // written down, let alone seen.
-        let cast = (ops::srgb_encode_scalar(light.d[2]) - ops::srgb_encode_scalar(light.d[0])).abs();
+        let cast = (kit::srgb_encode_scalar(light.d[2]) - kit::srgb_encode_scalar(light.d[0])).abs();
         assert!(cast < 1.0 / 255.0,
                 "the highlights picked up {:.4} of a cast, over one code value", cast);
     }

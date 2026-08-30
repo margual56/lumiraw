@@ -1,7 +1,7 @@
 //! Combining a bracket of exposures into one frame that holds all of them.
 
 use crate::decode::{self, Meta};
-use crate::ops::{self, Image};
+use kit::Image;
 
 /// One exposure of the bracket, decoded but otherwise untouched.
 pub struct Frame {
@@ -293,14 +293,14 @@ const CEILING: f32 = 0.97;
 /// How many stops apart two frames are according to their pixels, and how
 /// tightly the frame agrees with itself about that number.
 pub fn measured_stops(a: &Image, b: &Image) -> Option<(f32, f32)> {
-    let (ta, tb) = (ops::thumbnail(a, MEASURE_EDGE), ops::thumbnail(b, MEASURE_EDGE));
+    let (ta, tb) = (kit::thumbnail(a, MEASURE_EDGE), kit::thumbnail(b, MEASURE_EDGE));
     if ta.w != tb.w || ta.h != tb.h {
         return None;
     }
     let mut ratios = Vec::new();
-    for i in 0..ta.w * ta.h {
-        let la = ta.d[i * 3].max(ta.d[i * 3 + 1]).max(ta.d[i * 3 + 2]);
-        let lb = tb.d[i * 3].max(tb.d[i * 3 + 1]).max(tb.d[i * 3 + 2]);
+    for (pa, pb) in ta.px().iter().zip(tb.px()) {
+        let la = pa[0].max(pa[1]).max(pa[2]);
+        let lb = pb[0].max(pb[1]).max(pb[2]);
         // Both readings have to be off the noise floor and clear of the
         // ceiling, or the ratio measures a limit rather than the light.
         if la > TRUSTED_LOW && la < TRUSTED_HIGH && lb > TRUSTED_LOW && lb < TRUSTED_HIGH {
@@ -326,7 +326,7 @@ const FLOOR_TO_SIGMA: f32 = 5.3;
 pub fn shot_noise_constant(img: &Image) -> f32 {
     let (w, h) = (PROBE_CROP.min(img.w), PROBE_CROP.min(img.h));
     let crop = img.crop((img.w - w) / 2, (img.h - h) / 2, w, h);
-    let mut root = ops::luminance(&crop);
+    let mut root = kit::luminance(&crop);
     for v in root.d.iter_mut() {
         *v = v.max(0.0).sqrt();
     }
@@ -341,13 +341,13 @@ fn ghost_tolerance(level: f32, k: f32, sigmas: f32) -> f32 {
 
 /// Whether there is any signal here worth reading, from the brightest channel.
 fn signal(level: f32) -> f32 {
-    ops::smoothstep(NOISE_FLOOR, TRUSTED_LOW, level)
+    kit::smoothstep(NOISE_FLOOR, TRUSTED_LOW, level)
 }
 
 /// Whether this one channel still has room, so it is reporting the light rather
 /// than its own ceiling.
 fn headroom(value: f32) -> f32 {
-    1.0 - ops::smoothstep(TRUSTED_HIGH, CEILING, value)
+    1.0 - kit::smoothstep(TRUSTED_HIGH, CEILING, value)
 }
 
 /// Whether the reference frame is entitled to an opinion about this pixel.
@@ -624,7 +624,7 @@ pub struct Bitmaps {
 
 /// Threshold a frame at its own median.
 pub fn median_bitmaps(img: &Image) -> Bitmaps {
-    let mut grey = ops::luminance(img);
+    let mut grey = kit::luminance(img);
     // Work in a perceptual-ish scale so the median sits somewhere useful.
     for v in grey.d.iter_mut() {
         *v = v.max(0.0).sqrt();
@@ -640,7 +640,7 @@ pub fn median_bitmaps(img: &Image) -> Bitmaps {
         let usable: Vec<bool> =
             plane.d.iter().map(|v| (*v - median).abs() > tolerance).collect();
         levels.push((above, usable, plane.w, plane.h));
-        plane = ops::resize_plane(&plane, plane.w / 2, plane.h / 2);
+        plane = kit::resize_plane(&plane, plane.w / 2, plane.h / 2);
     }
     Bitmaps { levels }
 }

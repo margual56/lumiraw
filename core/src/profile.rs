@@ -2,6 +2,7 @@
 
 use crate::decode::Meta;
 use crate::grade::Preset;
+use kit::round_to;
 use serde_json::{json, Value};
 
 pub const LAMBDA_UM: f32 = 0.55;
@@ -42,10 +43,6 @@ fn smooth(edge0: f32, edge1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-fn r(v: f32, places: i32) -> f64 {
-    let f = 10f64.powi(places);
-    ((v as f64) * f).round() / f
-}
 
 impl CaptureProfile {
     /// Raw numbers for a client to format in whatever locale it is in.
@@ -54,20 +51,20 @@ impl CaptureProfile {
             "camera": self.camera,
             "lens": self.lens,
             "iso": self.iso as i64,
-            "aperture": r(self.aperture, 2),
-            "focal_mm": r(self.focal_mm, 1),
-            "focal35_mm": r(self.focal35_mm, 1),
-            "shutter_s": r(self.shutter_s, 6),
-            "megapixels": r(self.megapixels, 1),
-            "pixel_pitch_um": r(self.pixel_pitch_um, 2),
-            "crop_factor": r(self.crop_factor, 2),
-            "airy_um": r(self.airy_um, 1),
-            "diffraction_ratio": r(self.diffraction_ratio, 1),
-            "sharpen_sigma": r(self.sharpen_sigma, 2),
-            "noise_prior": r(self.noise_prior, 3),
-            "usable_stops": r(self.usable_stops, 1),
-            "exposure_comp": r(self.exposure_comp, 1),
-            "scene_ev": self.scene_ev.map(|v| r(v, 1)),
+            "aperture": round_to(self.aperture, 2),
+            "focal_mm": round_to(self.focal_mm, 1),
+            "focal35_mm": round_to(self.focal35_mm, 1),
+            "shutter_s": round_to(self.shutter_s, 6),
+            "megapixels": round_to(self.megapixels, 1),
+            "pixel_pitch_um": round_to(self.pixel_pitch_um, 2),
+            "crop_factor": round_to(self.crop_factor, 2),
+            "airy_um": round_to(self.airy_um, 1),
+            "diffraction_ratio": round_to(self.diffraction_ratio, 1),
+            "sharpen_sigma": round_to(self.sharpen_sigma, 2),
+            "noise_prior": round_to(self.noise_prior, 3),
+            "usable_stops": round_to(self.usable_stops, 1),
+            "exposure_comp": round_to(self.exposure_comp, 1),
+            "scene_ev": self.scene_ev.map(|v| round_to(v, 1)),
         })
     }
 }
@@ -127,8 +124,8 @@ pub fn derive(meta: &Meta, w: usize, h: usize, crop_factor: Option<f32>) -> Capt
     p.sharpen_sigma = diffraction_sigma.hypot(0.70).clamp(0.7, 2.6);
     if p.diffraction_ratio > 2.0 {
         p.notes.push(json!({"code": "diffraction", "params": {
-            "aperture": p.aperture, "pitch": r(p.pixel_pitch_um, 2),
-            "ratio": r(p.diffraction_ratio, 1), "sigma": r(p.sharpen_sigma, 2)}}));
+            "aperture": p.aperture, "pitch": round_to(p.pixel_pitch_um, 2),
+            "ratio": round_to(p.diffraction_ratio, 1), "sigma": round_to(p.sharpen_sigma, 2)}}));
     }
 
     // --- noise ------------------------------------------------------------
@@ -138,7 +135,7 @@ pub fn derive(meta: &Meta, w: usize, h: usize, crop_factor: Option<f32>) -> Capt
     p.usable_stops = (12.6 - penalty.max(0.0) * 0.85).clamp(5.5, 13.5);
     if p.noise_prior > 0.25 {
         p.notes.push(json!({"code": "noise",
-            "params": {"iso": p.iso as i64, "stops": r(p.usable_stops, 1)}}));
+            "params": {"iso": p.iso as i64, "stops": round_to(p.usable_stops, 1)}}));
     }
 
     // --- camera shake -----------------------------------------------------
@@ -157,7 +154,7 @@ pub fn derive(meta: &Meta, w: usize, h: usize, crop_factor: Option<f32>) -> Capt
     p.tele_bias = ((p.focal35_mm.max(8.0) / 45.0).log2() / 2.0).clamp(-1.0, 1.0);
 
     if p.exposure_comp.abs() > 0.15 {
-        p.notes.push(json!({"code": "exposure_comp", "params": {"ev": r(p.exposure_comp, 1)}}));
+        p.notes.push(json!({"code": "exposure_comp", "params": {"ev": round_to(p.exposure_comp, 1)}}));
     }
     p
 }

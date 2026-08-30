@@ -1,6 +1,6 @@
 //! The three things a curve cannot do.
 
-use crate::ops::{self, Image};
+use kit::Image;
 
 /// The heaviest grain on offer, as a standard deviation in display-linear
 /// units.
@@ -55,11 +55,10 @@ pub fn monochrome(img: &mut Image, amount: f32) {
     if a <= 0.0 {
         return;
     }
-    for i in 0..img.w * img.h {
-        let px = &img.d[i * 3..i * 3 + 3];
+    for px in img.px_mut() {
         let grey = 0.30 * px[0] + 0.60 * px[1] + 0.10 * px[2];
-        for c in 0..3 {
-            img.d[i * 3 + c] = img.d[i * 3 + c] * (1.0 - a) + grey * a;
+        for v in px.iter_mut() {
+            *v = *v * (1.0 - a) + grey * a;
         }
     }
 }
@@ -82,7 +81,7 @@ pub fn vignette(img: &mut Image, amount: f32) {
     for y in 0..img.h {
         for x in 0..img.w {
             let falloff =
-                1.0 - a * ops::smoothstep(VIGNETTE_START, 1.0, radius_at(x, y, img.w, img.h));
+                1.0 - a * kit::smoothstep(VIGNETTE_START, 1.0, radius_at(x, y, img.w, img.h));
             let i = (y * img.w + x) * 3;
             for c in 0..3 {
                 img.d[i + c] *= falloff;
@@ -99,14 +98,13 @@ pub fn grain(img: &mut Image, amount: f32) {
     }
     // Grains per pixel at this size.
     let per_pixel = GRAIN_ACROSS / img.w.max(img.h).max(1) as f32;
-    for y in 0..img.h {
-        for x in 0..img.w {
-            let i = y * img.w + x;
-            let px = &img.d[i * 3..i * 3 + 3];
-            let luma = ops::luminance_px(px);
+    let w = img.w;
+    for (y, row) in img.px_mut().chunks_mut(w).enumerate() {
+        for (x, px) in row.iter_mut().enumerate() {
+            let luma = kit::luminance_px(px);
             let n = grain_at(x, y, per_pixel) * a * 4.0 * luma * (1.0 - luma);
-            for c in 0..3 {
-                img.d[i * 3 + c] = (img.d[i * 3 + c] + n).clamp(0.0, 1.0);
+            for v in px.iter_mut() {
+                *v = (*v + n).clamp(0.0, 1.0);
             }
         }
     }
@@ -117,13 +115,7 @@ mod tests {
     use super::*;
 
     fn flat(w: usize, h: usize, px: [f32; 3]) -> Image {
-        let mut img = Image::new(w, h);
-        for i in 0..w * h {
-            for c in 0..3 {
-                img.d[i * 3 + c] = px[c];
-            }
-        }
-        img
+        Image::filled(w, h, px)
     }
 
     /// Nothing asked for has to mean nothing done, to the last bit.
@@ -178,13 +170,13 @@ mod tests {
     fn grain_survives_being_reduced() {
         let spread = |img: &Image| -> f32 {
             let v: Vec<f32> = img.d.chunks_exact(3).map(|p| p[1]).collect();
-            ops::std_dev(&v)
+            kit::std_dev(&v)
         };
         let mut small = flat(650, 400, [0.5, 0.5, 0.5]);
         let mut large = flat(2600, 1600, [0.5, 0.5, 0.5]);
         grain(&mut small, 1.0);
         grain(&mut large, 1.0);
-        let reduced = ops::resize_rgb(&large, 650, 400);
+        let reduced = kit::resize_rgb(&large, 650, 400);
         let (s, r) = (spread(&small), spread(&reduced));
         assert!((r / s - 1.0).abs() < 0.2, "grain changed with size: {s} at the small size, {r} reduced");
     }

@@ -1,6 +1,6 @@
 //! Framing: straightening, perspective and crop.
 
-use crate::ops::{sample_bilinear, Image, Plane};
+use kit::{sample_bilinear, Image, Mat3d, Matrix3, Plane};
 use std::borrow::Cow;
 
 pub const MAX_CANVAS_GROWTH: f64 = 2.4;
@@ -46,57 +46,23 @@ impl Framing {
     }
 }
 
-type M3 = [[f64; 3]; 3];
 
 /// Source-centred pixels -> canvas-centred pixels.
-fn homography(w: usize, h: usize, f: &Framing) -> M3 {
+fn homography(w: usize, h: usize, f: &Framing) -> Mat3d {
     let half_diag = ((w * w + h * h) as f64).sqrt() / 2.0;
-    let mut persp: M3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-    persp[2][0] = f.perspective_h / half_diag;
-    persp[2][1] = f.perspective_v / half_diag;
+    let mut persp = Mat3d::IDENTITY;
+    persp.0[2][0] = f.perspective_h / half_diag;
+    persp.0[2][1] = f.perspective_v / half_diag;
 
     let theta = f.angle.to_radians();
-    let rot: M3 = [
+    let rot = Matrix3([
         [theta.cos(), -theta.sin(), 0.0],
         [theta.sin(), theta.cos(), 0.0],
         [0.0, 0.0, 1.0],
-    ];
-    matmul(&rot, &persp)
+    ]);
+    rot.mul(&persp)
 }
 
-fn matmul(a: &M3, b: &M3) -> M3 {
-    let mut o = [[0.0; 3]; 3];
-    for i in 0..3 {
-        for j in 0..3 {
-            o[i][j] = (0..3).map(|k| a[i][k] * b[k][j]).sum();
-        }
-    }
-    o
-}
-
-fn invert(m: &M3) -> M3 {
-    let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
-        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
-        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
-    let id = if det.abs() < 1e-15 { 0.0 } else { 1.0 / det };
-    [
-        [
-            (m[1][1] * m[2][2] - m[1][2] * m[2][1]) * id,
-            (m[0][2] * m[2][1] - m[0][1] * m[2][2]) * id,
-            (m[0][1] * m[1][2] - m[0][2] * m[1][1]) * id,
-        ],
-        [
-            (m[1][2] * m[2][0] - m[1][0] * m[2][2]) * id,
-            (m[0][0] * m[2][2] - m[0][2] * m[2][0]) * id,
-            (m[0][2] * m[1][0] - m[0][0] * m[1][2]) * id,
-        ],
-        [
-            (m[1][0] * m[2][1] - m[1][1] * m[2][0]) * id,
-            (m[0][1] * m[2][0] - m[0][0] * m[2][1]) * id,
-            (m[0][0] * m[1][1] - m[0][1] * m[1][0]) * id,
-        ],
-    ]
-}
 
 /// How big the transformed frame is, before cropping.  Returns (h, w).
 pub fn canvas_size(w: usize, h: usize, f: &Framing) -> (usize, usize) {
@@ -151,7 +117,7 @@ pub fn apply(img: &Image, f: &Framing, crop: bool) -> Image {
         return img.clone();
     }
     let (ch, cw) = canvas_size(w, h, f);
-    let inv = invert(&homography(w, h, f));
+    let inv = homography(w, h, f).inverse(1e-15).unwrap_or(Mat3d::ZERO);
 
     let (mut x0, mut y0) = (0.0f64, 0.0f64);
     let (mut out_w, mut out_h) = (cw, ch);
@@ -223,7 +189,7 @@ pub fn cover_crop(w: usize, h: usize, f: &Framing) -> Rect {
     let mut fh = (((rect_h - 2.0) / ch as f64) as f32).clamp(0.05, 1.0);
 
     if f.perspective_v.abs() > 1e-4 || f.perspective_h.abs() > 1e-4 {
-        let inv = invert(&homography(w, h, f));
+        let inv = homography(w, h, f).inverse(1e-15).unwrap_or(Mat3d::ZERO);
         for _ in 0..24 {
             if corners_inside(&inv, w, h, cw, ch, fw, fh) {
                 break;
@@ -235,7 +201,7 @@ pub fn cover_crop(w: usize, h: usize, f: &Framing) -> Rect {
     ((1.0 - fw) / 2.0, (1.0 - fh) / 2.0, fw, fh)
 }
 
-fn corners_inside(inv: &M3, w: usize, h: usize, cw: usize, ch: usize, fw: f32, fh: f32) -> bool {
+fn corners_inside(inv: &Mat3d, w: usize, h: usize, cw: usize, ch: usize, fw: f32, fh: f32) -> bool {
     let xs = [-fw as f64, fw as f64, fw as f64, -fw as f64];
     let ys = [-fh as f64, -fh as f64, fh as f64, fh as f64];
     for i in 0..4 {

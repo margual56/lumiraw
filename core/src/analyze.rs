@@ -1,7 +1,7 @@
 //! Scene analysis: every number the pipeline needs is measured here.
 
-use crate::ops::{self, Image, Plane};
-use serde_json::{json, Map, Value};
+use kit::{round_to, Image, Plane};
+use serde_json::{json, Value};
 
 pub const EPS: f32 = 1e-6;
 
@@ -27,10 +27,6 @@ pub fn soft_limit(x: f32, limit: f32) -> f32 {
     limit * (x / limit).tanh()
 }
 
-fn round_to(v: f32, places: i32) -> f64 {
-    let f = 10f64.powi(places);
-    ((v as f64) * f).round() / f
-}
 
 // -------------------------------------------------------------------------
 // white balance
@@ -40,15 +36,14 @@ fn round_to(v: f32, places: i32) -> f64 {
 pub const TINT_TRUST: f32 = 0.2;
 
 pub fn auto_white_balance(thumb: &Image, strength: f32, limit_ev: f32) -> ([f32; 3], Value) {
-    let y = ops::luminance(thumb);
-    let pct = ops::percentiles(&y.d, &[3.0, 97.0]);
+    let y = kit::luminance(thumb);
+    let pct = kit::percentiles(&y.d, &[3.0, 97.0]);
     let (lo, hi) = (pct[0], pct[1]);
 
     let mut sums = [0f64; 3];
     let mut count = 0usize;
     let p = 6.0f32;
-    for i in 0..thumb.w * thumb.h {
-        let px = &thumb.d[i * 3..i * 3 + 3];
+    for (i, px) in thumb.px().iter().enumerate() {
         let maxc = px[0].max(px[1]).max(px[2]);
         if y.d[i] > lo.max(EPS) && y.d[i] < hi && maxc < 0.98 {
             for c in 0..3 {
@@ -101,8 +96,8 @@ pub fn auto_white_balance(thumb: &Image, strength: f32, limit_ev: f32) -> ([f32;
 /// Match the log-average luminance to middle grey, partially, with a highlight
 /// guard that gives way when the raw was already clipped.
 pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f32) -> (f32, Value) {
-    let y = ops::luminance(thumb);
-    let floor = ops::percentile(&y.d, 1.0).max(1e-5);
+    let y = kit::luminance(thumb);
+    let floor = kit::percentile(&y.d, 1.0).max(1e-5);
     let sample: Vec<f32> = y.d.iter().cloned().filter(|v| *v > floor).collect();
     if sample.len() < 64 {
         return (1.0, json!({"applied": false}));
@@ -128,7 +123,7 @@ pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f3
     let mut guard: Option<f32> = None;
     let mut waived = false;
     if clipped < 0.005 {
-        let hi = ops::percentile(&y.d, 99.5);
+        let hi = kit::percentile(&y.d, 99.5);
         let cap = 1.20 / hi.max(EPS);
         if cap < gain {
             guard = Some(gain);
@@ -159,9 +154,9 @@ pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f3
 
 /// How hard to squeeze the scene's range into the display's.
 pub fn auto_tone_compression(thumb: &Image, comfortable_stops: f32, floor: f32) -> (f32, Value) {
-    let y = ops::luminance(thumb);
+    let y = kit::luminance(thumb);
     let logs: Vec<f32> = y.d.iter().map(|v| v.max(EPS).log2()).collect();
-    let p = ops::percentiles(&logs, &[2.0, 99.5]);
+    let p = kit::percentiles(&logs, &[2.0, 99.5]);
     let stops = p[1] - p[0];
     let factor = (comfortable_stops / stops.max(EPS)).clamp(floor, 1.0);
     (
@@ -176,12 +171,12 @@ pub fn auto_tone_compression(thumb: &Image, comfortable_stops: f32, floor: f32) 
 
 /// Robust black/white point from percentiles, moved only part of the way.
 pub fn auto_levels(lightness: &Plane, strength: f32, clip_pct: f64) -> (f32, f32, Value) {
-    let p = ops::percentiles(&lightness.d, &[clip_pct, 100.0 - clip_pct]);
+    let p = kit::percentiles(&lightness.d, &[clip_pct, 100.0 - clip_pct]);
     let wanted = p[0] * strength;
     let white = p[1] + (1.0 - p[1]) * strength;
 
     // A black point read off a percentile assumes the shadows are spread out.
-    let budget_level = ops::percentile(&lightness.d, (CRUSH_BUDGET * 100.0) as f64);
+    let budget_level = kit::percentile(&lightness.d, (CRUSH_BUDGET * 100.0) as f64);
     let ceiling = (budget_level - BLACK_LIGHTNESS * white) / (1.0 - BLACK_LIGHTNESS);
     let black = wanted.min(ceiling).max(0.0);
 
@@ -206,14 +201,14 @@ const SQUEEZE_TO_CURVE: f32 = 1.72;
 /// S-curve strength and its pivot.
 pub fn auto_contrast(lightness: &Plane, target_spread: f32, max_amount: f32, compression: f32)
     -> (f32, f32, Value) {
-    let spread = ops::std_dev(&lightness.d);
+    let spread = kit::std_dev(&lightness.d);
     // How flat the histogram is.
     let flat = ((target_spread - spread) / target_spread).clamp(0.0, 1.0);
     // How much slope the tone map took out on the way here.
     let squeezed = ((1.0 - compression) * SQUEEZE_TO_CURVE).clamp(0.0, 1.0);
     let want = CURVE_FLOOR + (1.0 - CURVE_FLOOR) * flat.max(squeezed);
     let amount = want * max_amount;
-    let pivot = ops::median(&lightness.d).clamp(0.2, 0.8);
+    let pivot = kit::median(&lightness.d).clamp(0.2, 0.8);
     (
         amount,
         pivot,
@@ -238,7 +233,7 @@ pub fn auto_vibrance(chroma: &Plane, lightness: &Plane, target_chroma: f32, max_
     if sel.len() < 64 {
         return (1.0, json!({"applied": false}));
     }
-    let reference = ops::percentile(&sel, 80.0);
+    let reference = kit::percentile(&sel, 80.0);
     let boost = (target_chroma / reference.max(1e-4)).clamp(1.0, max_boost);
     (
         boost,
@@ -254,15 +249,15 @@ pub fn estimate_noise(lightness: &Plane, iso: f32, prior: f32) -> (f32, Value) {
 /// The noise floor of a frame: the local variation left where the picture is
 /// flattest, which is the one place the signal cannot be mistaken for texture.
 pub fn noise_floor(lightness: &Plane) -> f32 {
-    let blurred = ops::gaussian_blur(lightness, 1.0);
+    let blurred = kit::gaussian_blur(lightness, 1.0);
     let mut sq = Plane::new(lightness.w, lightness.h);
     for i in 0..sq.d.len() {
         let r = lightness.d[i] - blurred.d[i];
         sq.d[i] = r * r;
     }
-    let local = ops::box_blur(&sq, 4);
+    let local = kit::box_blur(&sq, 4);
     let rms: Vec<f32> = local.d.iter().map(|v| v.max(0.0).sqrt()).collect();
-    ops::percentile(&rms, 8.0)
+    kit::percentile(&rms, 8.0)
 }
 
 /// Turn a measured floor into the level the rest of the pipeline reasons
@@ -281,35 +276,6 @@ pub fn noise_from_floor(floor: f32, iso: f32, prior: f32) -> (f32, Value) {
 // report
 // -------------------------------------------------------------------------
 
-/// Everything the pipeline decided, keyed by stage name (insertion ordered,
-/// like the Python dict the interface expects).
-#[derive(Default, Clone, Debug)]
-pub struct Report {
-    pub order: Vec<String>,
-    pub stages: Map<String, Value>,
-}
-
-impl Report {
-    pub fn new() -> Self {
-        Report::default()
-    }
-    pub fn add(&mut self, stage: &str, info: Value) {
-        if !self.stages.contains_key(stage) {
-            self.order.push(stage.to_string());
-        }
-        self.stages.insert(stage.to_string(), info);
-    }
-    pub fn get(&self, stage: &str) -> Value {
-        self.stages.get(stage).cloned().unwrap_or(Value::Object(Map::new()))
-    }
-    pub fn to_json(&self) -> Value {
-        let mut out = Map::new();
-        for k in &self.order {
-            out.insert(k.clone(), self.stages[k].clone());
-        }
-        Value::Object(out)
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -335,12 +301,9 @@ mod tests {
 
     fn frame(luminance: f32, spread: f32, w: usize, h: usize) -> Image {
         let mut img = Image::new(w, h);
-        for i in 0..w * h {
+        for (i, px) in img.px_mut().iter_mut().enumerate() {
             // A gentle ramp, so percentiles have something to bite on.
-            let v = luminance * (1.0 + spread * ((i % 97) as f32 / 97.0 - 0.5));
-            for c in 0..3 {
-                img.d[i * 3 + c] = v;
-            }
+            *px = [luminance * (1.0 + spread * ((i % 97) as f32 / 97.0 - 0.5)); 3];
         }
         img
     }
@@ -410,14 +373,7 @@ mod tests {
     fn blur_rgb(img: &Image, sigma: f32) -> Image {
         let mut out = Image::new(img.w, img.h);
         for c in 0..3 {
-            let mut p = Plane::new(img.w, img.h);
-            for i in 0..img.w * img.h {
-                p.d[i] = img.d[i * 3 + c];
-            }
-            let b = ops::gaussian_blur(&p, sigma);
-            for i in 0..img.w * img.h {
-                out.d[i * 3 + c] = b.d[i];
-            }
+            out.set_plane(c, &kit::gaussian_blur(&img.plane(c), sigma));
         }
         out
     }
@@ -535,14 +491,14 @@ const FOCUS_MIN_EDGES: usize = 10;
 /// to say.
 pub fn focus_width(img: &Image, noise_floor_of: impl Fn(&Plane) -> f32) -> Option<f32> {
     let scale = (FOCUS_LONG_EDGE as f32 / img.w.max(img.h) as f32).min(1.0);
-    let small = ops::resize_rgb(img, ((img.w as f32 * scale) as usize).max(1),
+    let small = kit::resize_rgb(img, ((img.w as f32 * scale) as usize).max(1),
                                 ((img.h as f32 * scale) as usize).max(1));
-    let mut luma = ops::luminance(&small);
+    let mut luma = kit::luminance(&small);
     // A perceptual scale, as the noise estimator uses.
     for v in luma.d.iter_mut() {
         *v = v.max(0.0).sqrt();
     }
-    let top = ops::percentile(&luma.d, 99.5).max(1e-6);
+    let top = kit::percentile(&luma.d, 99.5).max(1e-6);
     for v in luma.d.iter_mut() {
         *v /= top;
     }
@@ -552,7 +508,7 @@ pub fn focus_width(img: &Image, noise_floor_of: impl Fn(&Plane) -> f32) -> Optio
     for ty in (0..luma.h.saturating_sub(FOCUS_TILE)).step_by(FOCUS_TILE) {
         for tx in (0..luma.w.saturating_sub(FOCUS_TILE)).step_by(FOCUS_TILE) {
             let t = luma.crop(tx, ty, FOCUS_TILE, FOCUS_TILE);
-            if ops::std_dev(&t.d) < (FOCUS_STRUCTURE * floor).max(0.004) {
+            if kit::std_dev(&t.d) < (FOCUS_STRUCTURE * floor).max(0.004) {
                 continue;
             }
             if let Some(w) = tile_edge_width(&t, floor) {
@@ -628,7 +584,7 @@ fn tile_edge_width(p: &Plane, floor: f32) -> Option<f32> {
     }
     widths.sort_by(|a, b| a.partial_cmp(b).unwrap());
     // The tile's median edge, not its sharpest.
-    Some(ops::percentile_sorted(&widths, 50.0))
+    Some(kit::percentile_sorted(&widths, 50.0))
 }
 
 /// What a sharp frame measures, and the width past which one is soft enough to

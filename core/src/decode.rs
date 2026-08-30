@@ -1,6 +1,6 @@
 //! Raw decoding: file bytes -> linear sRGB, plus the EXIF the pipeline reasons about.
 
-use crate::ops::{smoothstep, Image, Plane};
+use kit::{smoothstep, Image, Mat3, Matrix3, Plane};
 use crate::raw::{self, CFA};
 pub use crate::raw::DecodeError;
 use rawler::decoders::Orientation;
@@ -26,13 +26,6 @@ pub struct Decoded {
     pub img: Image,
     pub meta: Meta,
 }
-
-/// sRGB(D65) primaries -> XYZ, the same constant dcraw uses.
-const XYZ_RGB: [[f32; 3]; 3] = [
-    [0.412453, 0.357580, 0.180423],
-    [0.212671, 0.715160, 0.072169],
-    [0.019334, 0.119193, 0.950227],
-];
 
 pub fn decode(bytes: &[u8]) -> Result<Decoded, DecodeError> {
     let raw = raw::load(bytes)?;
@@ -96,11 +89,8 @@ fn develop_raw(raw: &raw::Raw, meta: Meta) -> Decoded {
     let m = cam_to_srgb(&scene_matrix(&raw.matrices, &raw.wb));
     // What is not kept is a pixel with no light in it.
     for px in cam.d.chunks_exact_mut(3) {
-        let (r, g, b) = (px[0], px[1], px[2]);
-        let out = [m[0][0] * r + m[0][1] * g + m[0][2] * b,
-                   m[1][0] * r + m[1][1] * g + m[1][2] * b,
-                   m[2][0] * r + m[2][1] * g + m[2][2] * b];
-        if crate::ops::luminance_px(&out) > 0.0 {
+        let out = m.apply([px[0], px[1], px[2]]);
+        if kit::luminance_px(&out) > 0.0 {
             px.copy_from_slice(&out);
         } else {
             px.fill(0.0);
@@ -133,15 +123,15 @@ pub fn thumbnail(bytes: &[u8], long_edge: usize) -> Result<Image, DecodeError> {
     let (w, h) = (picture.width() as usize, picture.height() as usize);
     let mut img = Image::new(w, h);
     for (i, v) in picture.as_raw().iter().enumerate() {
-        img.d[i] = crate::ops::srgb_decode_scalar(*v as f32 / 255.0);
+        img.d[i] = kit::srgb_decode_scalar(*v as f32 / 255.0);
     }
-    let small = crate::ops::thumbnail(&img, long_edge);
+    let small = kit::thumbnail(&img, long_edge);
     let meta = read_exif(bytes);
     Ok(orient(&small, Orientation::from_u16(meta.orientation)))
 }
 
 /// The camera's XYZ matrix for the light this frame was taken in.
-pub fn scene_matrix(matrices: &[(f32, [[f32; 3]; 3])], wb: &[f32; 3]) -> [[f32; 3]; 3] {
+pub fn scene_matrix(matrices: &[(f32, Mat3)], wb: &[f32; 3]) -> Mat3 {
     match scene_temperature(matrices, wb) {
         Some(kelvin) => matrix_at(matrices, kelvin),
         None => matrices.first().map(|m| m.1).unwrap_or(SRGB_AS_CAMERA),
@@ -149,24 +139,18 @@ pub fn scene_matrix(matrices: &[(f32, [[f32; 3]; 3])], wb: &[f32; 3]) -> [[f32; 
 }
 
 /// The blend of the calibration matrices for a light of this temperature.
-fn matrix_at(matrices: &[(f32, [[f32; 3]; 3])], kelvin: f32) -> [[f32; 3]; 3] {
+fn matrix_at(matrices: &[(f32, Mat3)], kelvin: f32) -> Mat3 {
     let (lo, hi) = (&matrices[0], &matrices[matrices.len() - 1]);
     let k = kelvin.clamp(lo.0, hi.0);
     let t = if (hi.0 - lo.0).abs() < 1.0 { 0.0 }
             else { (1.0 / k - 1.0 / lo.0) / (1.0 / hi.0 - 1.0 / lo.0) };
-    let mut m = [[0f32; 3]; 3];
-    for i in 0..3 {
-        for j in 0..3 {
-            m[i][j] = lo.1[i][j] * (1.0 - t) + hi.1[i][j] * t;
-        }
-    }
-    m
+    lo.1.lerp(&hi.1, t)
 }
 
 /// The colour temperature the camera's white balance was set for, as far as the
 /// calibration matrices can tell, or `None` when there are fewer than two of
 /// them to tell between.
-pub fn scene_temperature(matrices: &[(f32, [[f32; 3]; 3])], wb: &[f32; 3]) -> Option<f32> {
+pub fn scene_temperature(matrices: &[(f32, Mat3)], wb: &[f32; 3]) -> Option<f32> {
     if matrices.len() < 2 {
         return None;
     }
@@ -176,8 +160,8 @@ pub fn scene_temperature(matrices: &[(f32, [[f32; 3]; 3])], wb: &[f32; 3]) -> Op
     let neutral = [1.0 / wb[0].max(1e-6), 1.0 / wb[1].max(1e-6), 1.0 / wb[2].max(1e-6)];
     let mut kelvin = 5000.0f32;
     for _ in 0..8 {
-        let Some(inv) = invert3(&matrix_at(matrices, kelvin)) else { break };
-        let xyz: Vec<f32> = (0..3).map(|i| (0..3).map(|j| inv[i][j] * neutral[j]).sum()).collect();
+        let Some(inv) = matrix_at(matrices, kelvin).inverse(1e-12) else { break };
+        let xyz = inv.apply(neutral);
         let sum = xyz[0] + xyz[1] + xyz[2];
         if !(sum > 1e-9) {
             break;
@@ -203,11 +187,11 @@ fn mccamy(x: f32, y: f32) -> f32 {
 
 /// A camera that describes no matrix at all: treat its channels as sRGB's,
 /// which is wrong, but wrong in the same way as having no profile anywhere.
-const SRGB_AS_CAMERA: [[f32; 3]; 3] = [
+const SRGB_AS_CAMERA: Mat3 = Matrix3([
     [3.2404542, -1.5371385, -0.4985314],
     [-0.9692660, 1.8760108, 0.0415560],
     [0.0556434, -0.2040259, 1.0572252],
-];
+]);
 
 /// One cell of the hue field per this many pixels each way.
 const HUE_SCALE: usize = 4;
@@ -465,53 +449,17 @@ fn reconstruct_highlights(img: &mut Image, wb: &[f32; 3]) {
 
 /// dcraw's `cam_xyz_coeff`: compose with the sRGB primaries, normalise each
 /// row to unit sum (so neutral camera values stay neutral), then invert.
-fn cam_to_srgb(xyz_to_cam: &[[f32; 3]; 3]) -> [[f32; 3]; 3] {
-    let mut cam_rgb = [[0f32; 3]; 3];
-    for i in 0..3 {
-        for j in 0..3 {
-            let mut s = 0.0;
-            for k in 0..3 {
-                s += xyz_to_cam[i][k] * XYZ_RGB[k][j];
-            }
-            cam_rgb[i][j] = s;
-        }
-    }
-    for i in 0..3 {
-        let num: f32 = cam_rgb[i].iter().sum();
+fn cam_to_srgb(xyz_to_cam: &Mat3) -> Mat3 {
+    let mut cam_rgb = xyz_to_cam.mul(&kit::SRGB_TO_XYZ).0;
+    for row in cam_rgb.iter_mut() {
+        let num: f32 = row.iter().sum();
         if num.abs() > 1e-9 {
-            for j in 0..3 {
-                cam_rgb[i][j] /= num;
+            for v in row.iter_mut() {
+                *v /= num;
             }
         }
     }
-    invert3(&cam_rgb).unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
-}
-
-fn invert3(m: &[[f32; 3]; 3]) -> Option<[[f32; 3]; 3]> {
-    let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
-        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
-        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
-    if det.abs() < 1e-12 {
-        return None;
-    }
-    let id = 1.0 / det;
-    Some([
-        [
-            (m[1][1] * m[2][2] - m[1][2] * m[2][1]) * id,
-            (m[0][2] * m[2][1] - m[0][1] * m[2][2]) * id,
-            (m[0][1] * m[1][2] - m[0][2] * m[1][1]) * id,
-        ],
-        [
-            (m[1][2] * m[2][0] - m[1][0] * m[2][2]) * id,
-            (m[0][0] * m[2][2] - m[0][2] * m[2][0]) * id,
-            (m[0][2] * m[1][0] - m[0][0] * m[1][2]) * id,
-        ],
-        [
-            (m[1][0] * m[2][1] - m[1][1] * m[2][0]) * id,
-            (m[0][1] * m[2][0] - m[0][0] * m[2][1]) * id,
-            (m[0][0] * m[1][1] - m[0][1] * m[1][0]) * id,
-        ],
-    ])
+    Matrix3(cam_rgb).inverse(1e-12).unwrap_or(Mat3::IDENTITY)
 }
 
 // -------------------------------------------------------------------------
@@ -746,9 +694,7 @@ pub fn demosaic_pattern(cfa: &Plane, pattern: &CFA, x0: usize, y0: usize, w: usi
                 }
                 px[c] = if n > 0.0 { g + sum / n } else { g };
             }
-            for c in 0..3 {
-                out.d[i * 3 + c] = px[c].max(0.0);
-            }
+            out.px_mut()[i] = px.map(|v| v.max(0.0));
         }
     }
     out
@@ -1259,8 +1205,8 @@ mod tests {
 
         // White in the camera's own space is only white in the picture because
         // the matrix carries neutrals through unchanged.
-        let sony = [[0.6912, -0.1503, -0.0645], [-0.4472, 1.2370, 0.2313],
-                    [-0.0819, 0.1706, 0.5785]];
+        let sony = Matrix3([[0.6912, -0.1503, -0.0645], [-0.4472, 1.2370, 0.2313],
+                            [-0.0819, 0.1706, 0.5785]]);
         let m = cam_to_srgb(&sony);
         let out = [m[0][0] + m[0][1] + m[0][2],
                    m[1][0] + m[1][1] + m[1][2],
@@ -1271,7 +1217,7 @@ mod tests {
     /// A linear DNG is demosaiced but not developed.
     #[test]
     fn a_linear_raw_is_balanced_and_matrixed() {
-        let d65 = [[0.6972f32, -0.2408, -0.06], [-0.433, 1.2101, 0.2515], [-0.0388, 0.1277, 0.5847]];
+        let d65 = Matrix3([[0.6972f32, -0.2408, -0.06], [-0.433, 1.2101, 0.2515], [-0.0388, 0.1277, 0.5847]]);
         let wb = [2.0f32, 1.0, 1.6];
         // A grey card as the sensor saw it: the reciprocal of the balance.
         let grey = [0.2 / wb[0], 0.2 / wb[1], 0.2 / wb[2]];
@@ -1298,14 +1244,14 @@ mod tests {
     /// Under daylight the daylight matrix, under a lamp the tungsten one.
     #[test]
     fn the_matrix_follows_the_light() {
-        let d65 = [[0.6972f32, -0.2408, -0.06], [-0.433, 1.2101, 0.2515], [-0.0388, 0.1277, 0.5847]];
-        let a = [[0.793f32, -0.406, 0.0417], [-0.374, 1.1119, 0.3015], [-0.0202, 0.0741, 0.6896]];
+        let d65 = Matrix3([[0.6972f32, -0.2408, -0.06], [-0.433, 1.2101, 0.2515], [-0.0388, 0.1277, 0.5847]]);
+        let a = Matrix3([[0.793f32, -0.406, 0.0417], [-0.374, 1.1119, 0.3015], [-0.0202, 0.0741, 0.6896]]);
         let matrices = vec![(2856.0f32, a), (6504.0, d65)];
-        let balance_under = |m: &[[f32; 3]; 3], white: [f32; 3]| -> [f32; 3] {
-            let n: Vec<f32> = (0..3).map(|i| (0..3).map(|j| m[i][j] * white[j]).sum()).collect();
+        let balance_under = |m: &Mat3, white: [f32; 3]| -> [f32; 3] {
+            let n = m.apply(white);
             [n[1] / n[0], 1.0, n[1] / n[2]]
         };
-        let worst = |got: [[f32; 3]; 3], want: [[f32; 3]; 3]| -> f32 {
+        let worst = |got: Mat3, want: Mat3| -> f32 {
             (0..9).map(|k| (got[k / 3][k % 3] - want[k / 3][k % 3]).abs()).fold(0.0, f32::max)
         };
         let noon = scene_matrix(&matrices, &balance_under(&d65, [0.9505, 1.0, 1.0888]));

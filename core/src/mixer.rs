@@ -1,7 +1,7 @@
 //! Eight hue bands, each with a hue, a saturation and a lightness.
 
 use crate::grade::to_gamut;
-use crate::ops::{self, Plane};
+use kit::Plane;
 
 /// The eight bands, by the name each is known by.
 pub const BANDS: [&str; 8] =
@@ -81,8 +81,8 @@ impl Mixer {
 fn centres() -> [(f32, usize); 8] {
     let mut out = [(0.0f32, 0usize); 8];
     for (i, rgb) in ANCHORS.iter().enumerate() {
-        let lin = rgb.map(ops::srgb_decode_scalar);
-        let (_, a, b) = ops::rgb_to_oklab_px(lin[0], lin[1], lin[2]);
+        let lin = rgb.map(kit::srgb_decode_scalar);
+        let (_, a, b) = kit::rgb_to_oklab_px(lin[0], lin[1], lin[2]);
         out[i] = (b.atan2(a), i);
     }
     out.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
@@ -90,22 +90,20 @@ fn centres() -> [(f32, usize); 8] {
 }
 
 /// Apply the mixer to a display-linear image.
-pub fn apply(img: &ops::Image, m: &Mixer) -> ops::Image {
+pub fn apply(img: &kit::Image, m: &Mixer) -> kit::Image {
     if m.is_identity() {
         return img.clone();
     }
     let ring = centres();
     let tau = std::f32::consts::TAU;
-    let n = img.w * img.h;
     let mut l = Plane::new(img.w, img.h);
     let mut pa = Plane::new(img.w, img.h);
     let mut pb = Plane::new(img.w, img.h);
 
-    for i in 0..n {
-        let (ll, a, b) =
-            ops::rgb_to_oklab_px(img.d[i * 3], img.d[i * 3 + 1], img.d[i * 3 + 2]);
+    for (i, px) in img.px().iter().enumerate() {
+        let (ll, a, b) = kit::rgb_to_oklab_px(px[0], px[1], px[2]);
         let chroma = (a * a + b * b).sqrt();
-        let reach = ops::smoothstep(GREY, COLOURED, chroma);
+        let reach = kit::smoothstep(GREY, COLOURED, chroma);
         if reach <= 0.0 {
             l.d[i] = ll;
             pa.d[i] = a;
@@ -125,7 +123,7 @@ pub fn apply(img: &ops::Image, m: &Mixer) -> ops::Image {
         let hi = (lo + 1) % 8;
         let span = (ring[hi].0 - ring[lo].0).rem_euclid(tau);
         let along = (hue - ring[lo].0).rem_euclid(tau) / span.max(1e-6);
-        let w_hi = ops::smoothstep(0.0, 1.0, along.clamp(0.0, 1.0));
+        let w_hi = kit::smoothstep(0.0, 1.0, along.clamp(0.0, 1.0));
         let (band_lo, band_hi) = (ring[lo].1, ring[hi].1);
 
         let mix = |v: &[f32; 8]| (v[band_lo] * (1.0 - w_hi) + v[band_hi] * w_hi) * reach;
@@ -145,24 +143,18 @@ pub fn apply(img: &ops::Image, m: &Mixer) -> ops::Image {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ops::Image;
+    use kit::Image;
 
     fn flat(px: [f32; 3]) -> Image {
-        let mut img = Image::new(4, 4);
-        for i in 0..16 {
-            for c in 0..3 {
-                img.d[i * 3 + c] = px[c];
-            }
-        }
-        img
+        Image::filled(4, 4, px)
     }
 
     fn srgb(px: [f32; 3]) -> [f32; 3] {
-        px.map(ops::srgb_decode_scalar)
+        px.map(kit::srgb_decode_scalar)
     }
 
     fn chroma_of(img: &Image) -> f32 {
-        let (_, a, b) = ops::rgb_to_oklab_px(img.d[0], img.d[1], img.d[2]);
+        let (_, a, b) = kit::rgb_to_oklab_px(img.d[0], img.d[1], img.d[2]);
         (a * a + b * b).sqrt()
     }
 
@@ -253,11 +245,11 @@ mod tests {
     #[test]
     fn a_hue_turn_turns_the_hue() {
         let green = flat(srgb([0.45, 0.66, 0.5]));
-        let (_, a0, b0) = ops::rgb_to_oklab_px(green.d[0], green.d[1], green.d[2]);
+        let (_, a0, b0) = kit::rgb_to_oklab_px(green.d[0], green.d[1], green.d[2]);
         let mut m = Mixer::default();
         m.hue[BANDS.iter().position(|b| *b == "green").unwrap()] = 1.0;
         let out = apply(&green, &m);
-        let (_, a1, b1) = ops::rgb_to_oklab_px(out.d[0], out.d[1], out.d[2]);
+        let (_, a1, b1) = kit::rgb_to_oklab_px(out.d[0], out.d[1], out.d[2]);
         let turned = (b1.atan2(a1) - b0.atan2(a0)).abs();
         assert!(turned > 0.15, "the hue barely moved: {turned} radians");
         let (c0, c1) = ((a0 * a0 + b0 * b0).sqrt(), (a1 * a1 + b1 * b1).sqrt());

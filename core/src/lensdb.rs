@@ -1,6 +1,6 @@
 //! Lens corrections from the lensfun database, evaluated ourselves.
 
-use crate::ops::Image;
+use kit::Image;
 use serde::Deserialize;
 use serde_json::{json, Value};
 

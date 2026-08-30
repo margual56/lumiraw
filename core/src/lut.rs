@@ -1,6 +1,6 @@
 //! A 3D lookup table, read from a `.cube` file.
 
-use crate::ops::{self, Image};
+use kit::Image;
 use std::cell::RefCell;
 
 /// The largest cube this will read.
@@ -147,7 +147,7 @@ impl Lut {
         let n = self.size - 1;
         for p in 0..img.w * img.h {
             let src = [img.d[p * 3], img.d[p * 3 + 1], img.d[p * 3 + 2]];
-            let enc = src.map(ops::srgb_encode_scalar);
+            let enc = src.map(kit::srgb_encode_scalar);
             // Into the table's own domain, which is 0..1 unless the file says
             // otherwise.
             let mut base = [0usize; 3];
@@ -178,7 +178,7 @@ impl Lut {
                 let c11 = c011 + (c111 - c011) * fr;
                 let c0 = c00 + (c10 - c00) * fg;
                 let c1 = c01 + (c11 - c01) * fg;
-                let graded = ops::srgb_decode_scalar((c0 + (c1 - c0) * fb).clamp(0.0, 1.0));
+                let graded = kit::srgb_decode_scalar((c0 + (c1 - c0) * fb).clamp(0.0, 1.0));
                 img.d[p * 3 + c] = src[c] * (1.0 - strength) + graded * strength;
             }
         }
@@ -261,8 +261,8 @@ mod tests {
             }
         }
         let lut = Lut::parse(&text).expect("parse");
-        let out = lut.apply(&grey(ops::srgb_decode_scalar(0.5)), 1.0);
-        let want = ops::srgb_decode_scalar(0.2);
+        let out = lut.apply(&grey(kit::srgb_decode_scalar(0.5)), 1.0);
+        let want = kit::srgb_decode_scalar(0.2);
         assert!((out.d[0] - want).abs() < 1e-3,
                 "mid grey came back {} rather than {want}", out.d[0]);
     }

@@ -1,10 +1,10 @@
 [package]
 name = "autoraw-core"
-version = "0.9.4"
+version = "0.9.5"
 edition = "2021"
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [dependencies]
 kit = { path = "kit" }
@@ -20,7 +20,7 @@ tiff = "0.9"
 uuid = { version = "1", default-features = false, features = ["rng-getrandom"] }
 
 [workspace]
-members = ["kit"]
+members = ["kit", "darkroom"]
 exclude = ["vendor/rawler"]
 
 [profile.release]

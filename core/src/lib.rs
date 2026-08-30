@@ -6,7 +6,6 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// How this program names itself in a file's metadata.
 pub const SOFTWARE: &str = concat!("LumiRaw ", env!("CARGO_PKG_VERSION"));
 
-pub mod abi;
 pub mod analyze;
 pub mod curve;
 pub mod decode;

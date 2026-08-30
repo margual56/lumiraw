@@ -18,6 +18,7 @@ Needs Node. Rebuilding the wasm module also needs Rust with the
 
 - `core/` - the pipeline
 - `core/kit/` - image, colour and maths helpers
+- `core/darkroom/` - API over the pipeline, built to wasm
 - `core/vendor/rawler/` - vendored raw decoder (see VENDORED.md)
 - `web/` - the SvelteKit app
 - `tools/` - build and data scripts

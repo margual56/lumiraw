@@ -19,7 +19,7 @@ import { withExif } from './webp.js';
 
 // Imported rather than fetched from a fixed path so the bundler fingerprints
 // them.
-import wasmUrl from './autoraw_core.wasm?url';
+import wasmUrl from './darkroom.wasm?url';
 import databaseUrl from './lensfun.json?url';
 
 const decoder = new TextDecoder();

@@ -4,7 +4,7 @@ use crate::analyze;
 use crate::curve;
 use crate::geometry::{stats_view_img, stats_view_plane, Framing, Rect};
 use kit::{Image, Lab, Plane, Report, round_to, with};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 
 pub const EPS: f32 = 1e-6;
@@ -132,15 +132,12 @@ pub struct Settings {
     /// Eight hue bands, each with a hue, a saturation and a lightness. What
     /// curves cannot do: pick out one colour and leave the rest.
     pub mixer: crate::mixer::Mixer,
-    /// How much of the loaded 3D table to apply, 0..1, and an id for the one
-    /// that is loaded.
+    /// How much of the loaded 3D table to apply, 0..1.
     pub lut: f32,
-    pub lut_id: String,
     /// The three things a curve cannot do, each 0..1. See `effects.rs`.
     pub monochrome: f32,
     pub vignette: f32,
     pub grain: f32,
-    pub render_scale: f32,
     pub enabled: HashMap<String, bool>,
 }
 
@@ -166,11 +163,9 @@ impl Default for Settings {
             curves: curve::Stack::identity(),
             mixer: crate::mixer::Mixer::default(),
             lut: 0.0,
-            lut_id: String::new(),
             monochrome: 0.0,
             vignette: 0.0,
             grain: 0.0,
-            render_scale: 1.0,
             enabled: HashMap::new(),
         }
     }
@@ -191,16 +186,8 @@ impl Settings {
             None => return s,
         };
         let f = |k: &str| obj.get(k).and_then(|x| x.as_f64()).map(|x| x as f32);
-        let rect = |k: &str| -> Option<Rect> {
-            let a = obj.get(k)?.as_array()?;
-            if a.len() < 4 {
-                return None;
-            }
-            let g = |i: usize| a[i].as_f64().unwrap_or(0.0) as f32;
-            Some((g(0), g(1), g(2), g(3)))
-        };
-        s.exposure_rect = rect("exposure_rect");
-        s.wb_rect = rect("wb_rect");
+        s.exposure_rect = obj.get("exposure_rect").and_then(rect_of);
+        s.wb_rect = obj.get("wb_rect").and_then(rect_of);
         s.exposure_bias = f("exposure_bias").unwrap_or(0.0);
         s.temperature = f("temperature").unwrap_or(0.0);
         s.tint = f("tint").unwrap_or(0.0);
@@ -219,9 +206,6 @@ impl Settings {
         s.curves = curve::Stack::from_json(obj.get("curves"));
         s.mixer = crate::mixer::Mixer::from_json(obj.get("mixer"));
         s.lut = f("lut").unwrap_or(0.0).clamp(0.0, 1.0);
-        if let Some(id) = obj.get("lut_id").and_then(|x| x.as_str()) {
-            s.lut_id = id.to_string();
-        }
         s.monochrome = f("monochrome").unwrap_or(0.0).clamp(0.0, 1.0);
         s.vignette = f("vignette").unwrap_or(0.0).clamp(0.0, 1.0);
         s.grain = f("grain").unwrap_or(0.0).clamp(0.0, 1.0);
@@ -231,14 +215,7 @@ impl Settings {
             s.framing.perspective_v = g("perspective_v");
             s.framing.perspective_h = g("perspective_h");
             s.framing.auto_fit = fr.get("auto_fit").and_then(|x| x.as_bool()).unwrap_or(true);
-            s.framing.crop = fr.get("crop").and_then(|c| {
-                let a = c.as_array()?;
-                if a.len() < 4 {
-                    return None;
-                }
-                let g = |i: usize| a[i].as_f64().unwrap_or(0.0) as f32;
-                Some((g(0), g(1), g(2), g(3)))
-            });
+            s.framing.crop = fr.get("crop").and_then(rect_of);
         }
         if let Some(en) = obj.get("enabled").and_then(|x| x.as_object()) {
             for (k, v) in en {
@@ -249,38 +226,17 @@ impl Settings {
         }
         s
     }
-
-    /// Cache key for a settings-dependent render.
-    pub fn key(&self) -> String {
-        let mut flags: Vec<String> =
-            self.enabled.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
-        flags.sort();
-        format!(
-            "{}|{:?}|{:?}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{:.4}|{}|{:x}|{:x}|{:.4}|{}|{:.4}|{:.4}|{:.4}|{}",
-            self.framing.key(),
-            self.exposure_rect,
-            self.wb_rect,
-            self.exposure_bias,
-            self.temperature,
-            self.tint,
-            self.vibrance,
-            self.shadows,
-            self.midtones,
-            self.highlights,
-            self.refocus,
-            self.preset,
-            self.curves.fingerprint(),
-            self.mixer.fingerprint(),
-            self.lut,
-            self.lut_id,
-            self.monochrome,
-            self.vignette,
-            self.grain,
-            flags.join(",")
-        )
-    }
 }
 
+/// A rectangle sent as `[x0, y0, x1, y1]`; anything shorter is no rectangle.
+fn rect_of(v: &Value) -> Option<Rect> {
+    let a = v.as_array()?;
+    if a.len() < 4 {
+        return None;
+    }
+    let g = |i: usize| a[i].as_f64().unwrap_or(0.0) as f32;
+    Some((g(0), g(1), g(2), g(3)))
+}
 
 // Hue of average skin in Oklab, so the saturation stage can leave faces alone.
 fn skin_hue() -> f32 {
@@ -309,20 +265,11 @@ pub fn sample_rect(img: &Image, rect: Rect) -> Option<Vec<[f32; 3]>> {
         return None;
     }
     let mut all = Vec::with_capacity((x1 - x0) * (y1 - y0));
-    let mut keep = Vec::with_capacity((x1 - x0) * (y1 - y0));
     for yy in y0..y1 {
-        for xx in x0..x1 {
-            let i = (yy * img.w + xx) * 3;
-            let px = [img.d[i], img.d[i + 1], img.d[i + 2]];
-            all.push(px);
-            if px[0].max(px[1]).max(px[2]) < 0.99 {
-                keep.push(px);
-            }
-        }
+        all.extend_from_slice(&img.px()[yy * img.w + x0..yy * img.w + x1]);
     }
-    if all.is_empty() {
-        return None;
-    }
+    let keep: Vec<[f32; 3]> =
+        all.iter().copied().filter(|px| px[0].max(px[1]).max(px[2]) < 0.99).collect();
     Some(if keep.len() >= 16 { keep } else { all })
 }
 
@@ -338,35 +285,25 @@ pub fn apply_white_balance(img: &mut Image, thumb: &mut Image, s: &Settings, p: 
         apply_temp_tint(img, thumb, s, report);
         return;
     }
-    if let Some(rect) = s.wb_rect {
-        if let Some(patch) = sample_rect(img, rect) {
-            if patch.len() >= 4 {
-                let n = patch.len() as f32;
-                let mut mean = [0f32; 3];
-                for px in &patch {
-                    for c in 0..3 {
-                        mean[c] += px[c];
-                    }
-                }
-                for c in 0..3 {
-                    mean[c] = (mean[c] / n).max(EPS);
-                }
-                let avg = (mean[0] + mean[1] + mean[2]) / 3.0;
-                let mut gains = [avg / mean[0], avg / mean[1], avg / mean[2]];
-                let lw = [0.2126f32, 0.7152, 0.0722];
-                let norm: f32 = (0..3).map(|c| gains[c] * lw[c]).sum();
-                for c in 0..3 {
-                    gains[c] /= norm;
-                }
-                report.add("white balance", json!({"applied": true, "source": "selection",
-                    "gains": [round_to(gains[0],4), round_to(gains[1],4), round_to(gains[2],4)],
-                    "patch_px": patch.len()}));
-                adapt(img, gains);
-                adapt(thumb, gains);
-                apply_temp_tint(img, thumb, s, report);
-                return;
+    if let Some(patch) = s.wb_rect.and_then(|r| sample_rect(img, r)).filter(|p| p.len() >= 4) {
+        let n = patch.len() as f32;
+        let mut mean = [0f32; 3];
+        for px in &patch {
+            for c in 0..3 {
+                mean[c] += px[c];
             }
         }
+        let mean = mean.map(|m| (m / n).max(EPS));
+        let avg = (mean[0] + mean[1] + mean[2]) / 3.0;
+        let gains = [avg / mean[0], avg / mean[1], avg / mean[2]];
+        let norm = kit::luminance_px(&gains);
+        let gains = gains.map(|g| g / norm);
+        report.add("white balance", json!({"applied": true, "source": "selection",
+            "gains": gains.map(|g| round_to(g, 4)), "patch_px": patch.len()}));
+        adapt(img, gains);
+        adapt(thumb, gains);
+        apply_temp_tint(img, thumb, s, report);
+        return;
     }
     // The tuned preset, not the named one: the capture decides how far the
     // automatic balance may be trusted (see `profile::tune`).
@@ -385,23 +322,23 @@ fn apply_temp_tint(img: &mut Image, thumb: &mut Image, s: &Settings, report: &mu
     if s.temperature.abs() < 1e-3 && s.tint.abs() < 1e-3 {
         return;
     }
-    let mut log_gain = [
-        0.35 * s.temperature - 0.125 * s.tint,
-        0.25 * s.tint,
-        -0.35 * s.temperature - 0.125 * s.tint,
-    ];
-    let lw = [0.2126f32, 0.7152, 0.0722];
-    let weighted: f32 = (0..3).map(|c| log_gain[c] * lw[c]).sum();
-    let mut gains = [0f32; 3];
-    for c in 0..3 {
-        log_gain[c] -= weighted;
-        gains[c] = log_gain[c].exp2();
-    }
+    let gains = temp_tint_gains(s.temperature, s.tint);
     report.add("temp/tint", json!({"applied": true, "temperature": round_to(s.temperature,3),
-        "tint": round_to(s.tint,3),
-        "gains": [round_to(gains[0],4), round_to(gains[1],4), round_to(gains[2],4)]}));
+        "tint": round_to(s.tint,3), "gains": gains.map(|g| round_to(g, 4))}));
     adapt(img, gains);
     adapt(thumb, gains);
+}
+
+/// The channel gains a temperature and tint slider ask for, centred so the
+/// colour moves and the luminance holds. Local filters use the same ones.
+pub fn temp_tint_gains(temperature: f32, tint: f32) -> [f32; 3] {
+    let log_gain = [
+        0.35 * temperature - 0.125 * tint,
+        0.25 * tint,
+        -0.35 * temperature - 0.125 * tint,
+    ];
+    let weighted = kit::luminance_px(&log_gain);
+    log_gain.map(|g| (g - weighted).exp2())
 }
 
 /// The white balance correction that per-channel `gains` describe, applied as a
@@ -422,25 +359,21 @@ pub fn apply_exposure(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
         img.scale(gain);
         return gain;
     }
-    if let Some(rect) = s.exposure_rect {
-        if let Some(patch) = sample_rect(img, rect) {
-            if !patch.is_empty() {
-                // Geometric mean: a few bright specks in the selection should
-                // not drag the whole frame down.
-                let log_sum: f64 = patch
-                    .iter()
-                    .map(|px| kit::luminance_px(px).max(EPS).log2() as f64)
-                    .sum();
-                let level = ((log_sum / patch.len() as f64) as f32).exp2();
-                let mut gain = (p.target_key / level).clamp(2f32.powi(-6), 2f32.powi(8));
-                gain *= s.exposure_bias.exp2();
-                report.add("exposure", json!({"applied": true, "source": "selection",
-                    "patch_level": round_to(level, 5), "gain_ev": round_to(gain.log2(), 3),
-                    "bias_ev": round_to(s.exposure_bias, 2)}));
-                img.scale(gain);
-                return gain;
-            }
-        }
+    if let Some(patch) = s.exposure_rect.and_then(|r| sample_rect(img, r)) {
+        // Geometric mean: a few bright specks in the selection should not
+        // drag the whole frame down.
+        let log_sum: f64 = patch
+            .iter()
+            .map(|px| kit::luminance_px(px).max(EPS).log2() as f64)
+            .sum();
+        let level = ((log_sum / patch.len() as f64) as f32).exp2();
+        let mut gain = (p.target_key / level).clamp(2f32.powi(-6), 2f32.powi(8));
+        gain *= s.exposure_bias.exp2();
+        report.add("exposure", json!({"applied": true, "source": "selection",
+            "patch_level": round_to(level, 5), "gain_ev": round_to(gain.log2(), 3),
+            "bias_ev": round_to(s.exposure_bias, 2)}));
+        img.scale(gain);
+        return gain;
     }
     let (mut gain, info) =
         analyze::auto_exposure(thumb, p.target_key, p.exposure_strength, 3.2);
@@ -549,7 +482,7 @@ pub fn s_curve(x: f32, amount: f32, pivot: f32) -> f32 {
     }
     let g = (0.5f32).ln() / pivot.clamp(0.1, 0.9).ln();
     let t = x.clamp(0.0, 1.0).powf(g);
-    let shaped = t * t * (3.0 - 2.0 * t);
+    let shaped = kit::smoothstep(0.0, 1.0, t);
     ((1.0 - amount) * t + amount * shaped).powf(1.0 / g)
 }
 
@@ -582,23 +515,24 @@ fn skin_protection(hue: f32, chroma: f32, skin: f32) -> f32 {
     (1.0 - kit::smoothstep(0.25, 0.60, d)) * (1.0 - kit::smoothstep(0.10, 0.20, chroma))
 }
 
-fn thumb_size(w: usize, h: usize) -> (usize, usize) {
-    let scale = (1024.0 / w.max(h) as f32).min(1.0);
-    (((w as f32 * scale) as usize).max(1), ((h as f32 * scale) as usize).max(1))
+/// The part of a plane the estimators look at, at no more than 1024 pixels
+/// on its long edge.
+fn measured(p: &Plane, stats_rect: Option<Rect>) -> Plane {
+    let view = stats_view_plane(p, stats_rect);
+    let scale = (1024.0 / view.w.max(view.h) as f32).min(1.0);
+    kit::resize_plane(&view, ((view.w as f32 * scale) as usize).max(1),
+                      ((view.h as f32 * scale) as usize).max(1))
 }
 
-fn centre_crop(img: &Image, size: usize) -> Image {
-    let w = size.min(img.w);
-    let h = size.min(img.h);
-    let x = (img.w - w) / 2;
-    let y = (img.h - h) / 2;
-    img.crop(x, y, w, h)
+/// Why a noise reduction pass did not run.
+fn denoise_skipped(on: bool, measured: f32) -> &'static str {
+    if !on { "switched_off" } else if measured > 0.01 { "turned_down" } else { "clean_enough" }
 }
 
 /// Levels, contrast, vibrance, denoising and sharpening in Oklab.
 pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharpen_sigma: f32,
-                        compression: f32, focus_sigma: f32, report: &mut Report,
-                        stats_rect: Option<Rect>) -> Image {
+                        compression: f32, focus_sigma: f32, render_scale: f32,
+                        report: &mut Report, stats_rect: Option<Rect>) -> Image {
     let n = img.w * img.h;
     let Lab { l: mut lightness, mut a, mut b } = Lab::from_rgb(img);
     for i in 0..n {
@@ -612,10 +546,8 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     }
 
     // --- black/white point ------------------------------------------------
-    let measured = stats_view_plane(&lightness, stats_rect);
-    let (tw, th) = thumb_size(measured.w, measured.h);
-    let small = kit::resize_plane(&measured, tw, th);
-    let (black, white, info) = analyze::auto_levels(&small, p.levels_strength, 0.15);
+    let (black, white, info) =
+        analyze::auto_levels(&measured(&lightness, stats_rect), p.levels_strength, 0.15);
     let levels_applied = info.get("applied").and_then(|v| v.as_bool()).unwrap_or(false);
     let mut light_new = Plane::new(img.w, img.h);
     if s.on("levels") && levels_applied {
@@ -630,11 +562,8 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     }
 
     // --- contrast ---------------------------------------------------------
-    let measured = stats_view_plane(&light_new, stats_rect);
-    let (tw, th) = thumb_size(measured.w, measured.h);
-    let small = kit::resize_plane(&measured, tw, th);
-    let (amount, pivot, info) =
-        analyze::auto_contrast(&small, 0.20, p.contrast_amount, compression);
+    let (amount, pivot, info) = analyze::auto_contrast(&measured(&light_new, stats_rect), 0.20,
+                                                       p.contrast_amount, compression);
     if s.on("contrast") {
         report.add("contrast", info);
         // One curve for the whole frame, so it is tabulated once rather than
@@ -694,10 +623,8 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
             json!({"applied": true, "radius": radius, "blend": round_to(blend, 3),
                    "measured": round_to(auto_chroma, 3), "user": round_to(s.denoise, 2)}));
     } else {
-        let reason = if !s.on("denoise_chroma") { "switched_off" }
-                     else if auto_chroma > 0.01 { "turned_down" }
-                     else { "clean_enough" };
-        report.skipped("colour noise", reason, json!({"noise": round_to(noise, 3)}));
+        report.skipped("colour noise", denoise_skipped(s.on("denoise_chroma"), auto_chroma),
+                       json!({"noise": round_to(noise, 3)}));
     }
 
     // --- luminance noise --------------------------------------------------
@@ -717,10 +644,8 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
             json!({"applied": true, "radius": radius, "blend": round_to(blend, 3),
                    "measured": round_to(auto_luma, 3), "user": round_to(s.denoise, 2)}));
     } else {
-        let reason = if !s.on("denoise_luma") { "switched_off" }
-                     else if auto_luma > 0.01 { "turned_down" }
-                     else { "clean_enough" };
-        report.skipped("luminance noise", reason, json!({"noise": round_to(noise, 3)}));
+        report.skipped("luminance noise", denoise_skipped(s.on("denoise_luma"), auto_luma),
+                       json!({"noise": round_to(noise, 3)}));
     }
 
     // --- vibrance ---------------------------------------------------------
@@ -728,12 +653,9 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     for i in 0..n {
         chroma.d[i] = a.d[i].hypot(b.d[i]);
     }
-    let view_c = stats_view_plane(&chroma, stats_rect);
-    let view_l = stats_view_plane(&light_new, stats_rect);
-    let (tw, th) = thumb_size(view_c.w, view_c.h);
     let (mut boost, info) = analyze::auto_vibrance(
-        &kit::resize_plane(&view_c, tw, th),
-        &kit::resize_plane(&view_l, tw, th),
+        &measured(&chroma, stats_rect),
+        &measured(&light_new, stats_rect),
         p.target_chroma,
         p.max_boost,
     );
@@ -780,7 +702,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     }
 
     // --- sharpening -------------------------------------------------------
-    let amount = p.sharpen * (1.0 - 0.75 * noise) * s.render_scale.clamp(0.25, 1.0);
+    let amount = p.sharpen * (1.0 - 0.75 * noise) * render_scale.clamp(0.25, 1.0);
     if s.on("sharpen") && amount > 0.02 {
         let blurred = kit::gaussian_blur(&light_new, sharpen_sigma);
         let floor = 0.004 + 0.02 * noise;
@@ -796,7 +718,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
         report.skipped("sharpening", reason, json!({"noise": round_to(noise, 3)}));
     }
 
-    to_gamut(&light_new, &a, &b)
+    kit::to_gamut(&light_new, &a, &b)
 }
 
 /// A measured amount, moved by the photographer's -1..1.
@@ -835,77 +757,6 @@ pub fn recover_focus(l: &mut Plane, sigma: f32, amount: f32, noise: f32) -> usiz
     rounds
 }
 
-/// The gamut knee, in the shape of ACES's reference gamut compression.
-const GAMUT_KNEE: f32 = 0.9;
-const GAMUT_LIMIT: f32 = 1.4;
-const GAMUT_POWER: f32 = 1.2;
-
-/// Where a chroma at `ratio` of the boundary lands, `GAMUT_LIMIT` landing on
-/// it exactly.
-fn gamut_fold(ratio: f32) -> f32 {
-    if ratio <= GAMUT_KNEE {
-        return ratio;
-    }
-    let (t, l, p) = (GAMUT_KNEE, GAMUT_LIMIT, GAMUT_POWER);
-    let scale = (l - t) / (((1.0 - t) / (l - t)).powf(-p) - 1.0).powf(1.0 / p);
-    let x = (ratio - t) / scale;
-    t + scale * x / (1.0 + x.powf(p)).powf(1.0 / p)
-}
-
-/// Oklab -> linear sRGB, at constant lightness and hue, with the chroma brought
-/// inside what sRGB can show.
-pub fn to_gamut(lightness: &Plane, a: &Plane, b: &Plane) -> Image {
-    let mut out = Image::new(lightness.w, lightness.h);
-    let fits = |r: f32, g: f32, bl: f32| r.min(g).min(bl) >= -0.001 && r.max(g).max(bl) <= 1.001;
-    for i in 0..lightness.d.len() {
-        let l = lightness.d[i].clamp(0.0, 1.0);
-        let (aa, bb) = (a.d[i], b.d[i]);
-        let (mut r, mut g, mut bl) = kit::oklab_to_rgb_px(l, aa, bb);
-        // Chroma this low is inside sRGB at any lightness a picture has, so the
-        // search is spent only where it can matter.
-        let chroma = aa.hypot(bb);
-        let inside = fits(r, g, bl);
-        if chroma > 0.03 || !inside {
-            // How far the chroma may be scaled along this hue before leaving
-            // the gamut, found by bisection: 1 is where the pixel is now.
-            let mut hi = if inside { 1.0f32 / GAMUT_KNEE } else { 1.0 };
-            if inside {
-                let (tr, tg, tb) = kit::oklab_to_rgb_px(l, aa * hi, bb * hi);
-                if fits(tr, tg, tb) {
-                    // Nowhere near the edge.
-                    hi = f32::INFINITY;
-                }
-            }
-            if hi.is_finite() {
-                let mut lo = if inside { 1.0f32 } else { 0.0 };
-                for _ in 0..12 {
-                    let mid = 0.5 * (lo + hi);
-                    let (tr, tg, tb) = kit::oklab_to_rgb_px(l, aa * mid, bb * mid);
-                    if fits(tr, tg, tb) {
-                        lo = mid;
-                    } else {
-                        hi = mid;
-                    }
-                }
-                // Where this pixel sits against the boundary, 1 being on it.
-                let ratio = 1.0 / lo.max(1e-6);
-                if ratio > GAMUT_KNEE {
-                    let target = gamut_fold(ratio);
-                    // `lo` is the last scale known to fit, so the knee can
-                    // never land a pixel outside it.
-                    let scale = (target * lo).min(lo);
-                    let (fr, fg, fb) = kit::oklab_to_rgb_px(l, aa * scale, bb * scale);
-                    r = fr;
-                    g = fg;
-                    bl = fb;
-                }
-            }
-        }
-        out.px_mut()[i] = [r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), bl.clamp(0.0, 1.0)];
-    }
-    out
-}
-
 // -------------------------------------------------------------------------
 // entry point
 // -------------------------------------------------------------------------
@@ -927,9 +778,11 @@ pub struct ProcessArgs<'a> {
     pub sharpen_sigma: f32,
     pub noise_prior: f32,
     pub stats_rect: Option<Rect>,
-    pub preset: Option<Preset>,
+    /// This render's long edge over the full frame's: 1 for an export.
+    pub render_scale: f32,
+    pub preset: Preset,
     /// The noise floor measured once at full resolution.
-    pub native_noise_floor: Option<f32>,
+    pub native_noise_floor: f32,
     /// The blur `analyze::focus_width` measured, in pixels of the *rendered*
     /// frame.
     pub focus_sigma: f32,
@@ -938,7 +791,7 @@ pub struct ProcessArgs<'a> {
 
 /// Linear scene-referred RGB -> display-referred linear sRGB in [0,1].
 pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut Report) -> Image {
-    let p = args.preset.unwrap_or_else(|| settings.preset_obj());
+    let p = args.preset;
     let mut img = src.clone();
     // Healing before anything is measured; see `local`.
     crate::local::heal(&mut img, &settings.spots, args.stats_rect);
@@ -966,19 +819,8 @@ pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut
     step(&mut progress, &mut mark);
 
     // Noise must be measured at native resolution.
-    let (noise, info) = match args.native_noise_floor {
-        Some(floor) => analyze::noise_from_floor(floor * exposure_gain.max(1e-6).sqrt(),
-                                                 args.iso, args.noise_prior),
-        None => {
-            let view = stats_view_img(&img, args.stats_rect);
-            let crop = centre_crop(&view, 640);
-            let mut sqrt_luma = kit::luminance(&crop);
-            for v in sqrt_luma.d.iter_mut() {
-                *v = v.max(0.0).sqrt();
-            }
-            analyze::estimate_noise(&sqrt_luma, args.iso, args.noise_prior)
-        }
-    };
+    let (noise, info) = analyze::noise_from_floor(
+        args.native_noise_floor * exposure_gain.max(1e-6).sqrt(), args.iso, args.noise_prior);
     report.add("noise", info);
 
     step(&mut progress, &mut mark);
@@ -991,23 +833,9 @@ pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut
     filmic(&mut img);
     step(&mut progress, &mut mark);
     let out = apply_perceptual(&img, settings, &p, noise, args.sharpen_sigma, compression,
-                               args.focus_sigma, report, args.stats_rect);
+                               args.focus_sigma, args.render_scale, report, args.stats_rect);
     step(&mut progress, &mut mark);
     out
-}
-
-/// Toggle metadata for the interface, mirroring `develop.toggles`.
-pub fn toggle_list() -> Vec<Map<String, Value>> {
-    TOGGLES
-        .iter()
-        .map(|(id, label, group)| {
-            let mut m = Map::new();
-            m.insert("id".into(), json!(id));
-            m.insert("label".into(), json!(label));
-            m.insert("group".into(), json!(group));
-            m
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -1024,22 +852,6 @@ mod tests {
             assert!((got - want).abs() < 1e-4, "x={} got {} want {}", x, got, want);
         }
         assert_eq!(s_curve(0.3, 0.0, 0.5), 0.3);
-    }
-
-    /// Out-of-gamut colours lose chroma at constant lightness rather than
-    /// being clipped per channel, which is what keeps gradients and hue.
-    #[test]
-    fn to_gamut_preserves_lightness_and_hue() {
-        let l = Plane::filled(1, 1, 0.6);
-        let a = Plane::filled(1, 1, 0.35); // far outside sRGB
-        let b = Plane::filled(1, 1, 0.05);
-        let img = to_gamut(&l, &a, &b);
-        let (gl, ga, gb) = kit::rgb_to_oklab_px(img.d[0], img.d[1], img.d[2]);
-        assert!((gl - 0.6).abs() < 0.02, "lightness moved: {}", gl);
-        let hue_in = (0.05f32).atan2(0.35);
-        let hue_out = gb.atan2(ga);
-        assert!((hue_in - hue_out).abs() < 0.05, "hue moved: {} -> {}", hue_in, hue_out);
-        assert!(img.d.iter().all(|v| *v >= 0.0 && *v <= 1.0));
     }
 
     /// Grey goes exactly where the gains send it, because the gains are what
@@ -1079,42 +891,6 @@ mod tests {
             if shift > 180.0 { shift = 360.0 - shift; }
             assert!(shift < 1.0, "{c:?} turned by {shift} degrees");
             assert!(c1 < c0, "{c:?} was not bleached toward white: {c0} -> {c1}");
-        }
-    }
-
-    /// The knee has to keep what the hard stop threw away.
-    #[test]
-    fn to_gamut_keeps_gradation_beyond_the_edge() {
-        let chroma_out = |c: f32| -> f32 {
-            let l = Plane::filled(1, 1, 0.6);
-            let a = Plane::filled(1, 1, c);
-            let b = Plane::filled(1, 1, 0.3 * c);
-            let img = to_gamut(&l, &a, &b);
-            let (_, ga, gb) = kit::rgb_to_oklab_px(img.d[0], img.d[1], img.d[2]);
-            ga.hypot(gb)
-        };
-        let (near, far, farther) = (chroma_out(0.25), chroma_out(0.27), chroma_out(0.29));
-        assert!(near < far && far < farther,
-                "out-of-gamut chroma was flattened: {near} {far} {farther}");
-        let quiet = chroma_out(0.05);
-        assert!((quiet - 0.05f32.hypot(0.015)).abs() < 1e-3, "an ordinary colour moved: {quiet}");
-    }
-
-    /// The fold is continuous at the knee, never decreasing, lands the limit
-    /// on the boundary, and never pushes anything past it.
-    #[test]
-    fn the_gamut_fold_is_well_behaved() {
-        assert!((gamut_fold(GAMUT_KNEE + 1e-4) - GAMUT_KNEE).abs() < 1e-3);
-        assert!((gamut_fold(GAMUT_LIMIT) - 1.0).abs() < 1e-4, "{}", gamut_fold(GAMUT_LIMIT));
-        let mut previous = 0.0;
-        for i in 0..=200 {
-            let r = i as f32 / 100.0;
-            let f = gamut_fold(r);
-            assert!(f >= previous - 1e-6 && f <= r + 1e-6, "fold misbehaved at {r}: {f}");
-            if r <= GAMUT_LIMIT {
-                assert!(f <= 1.0 + 1e-5, "fold overshot at {r}: {f}");
-            }
-            previous = f;
         }
     }
 
@@ -1244,7 +1020,7 @@ mod tests {
             let mut s = Settings::default();
             s.denoise = denoise;
             let mut report = Report::new();
-            apply_perceptual(&src, &s, &Preset::default(), noise, 1.0, 1.0, 0.0, &mut report, None);
+            apply_perceptual(&src, &s, &Preset::default(), noise, 1.0, 1.0, 0.0, 1.0, &mut report, None);
             report.to_json()
         };
         let applied = |r: &Value, stage: &str| r[stage]["applied"].as_bool().unwrap_or(false);

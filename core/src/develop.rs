@@ -25,38 +25,15 @@ pub struct Development {
     pub profile: CaptureProfile,
     pub lens_match: Option<LensMatch>,
     cache: Vec<(String, Image, Option<Rect>, Map<String, Value>)>,
-    baseline_key: String,
-    baseline_img: Option<Image>,
+    /// The last "before" rendered, and the key it was rendered for.
+    baseline: Option<(String, Image)>,
 }
 
 impl Development {
     pub fn open(filename: &str, bytes: &[u8], db: Option<&Database>)
                 -> Result<Development, decode::DecodeError> {
         let d = decode::decode(bytes)?;
-        let (w, h) = (d.img.w, d.img.h);
-        let mut crop_factor = None;
-        let mut lens_match = None;
-        if let Some(db) = db {
-            if let Some(cam) = db.find_camera(&d.meta.make, &d.meta.model) {
-                crop_factor = Some(cam.crop);
-            }
-            lens_match = db.find_lens(&d.meta.make, &d.meta.model, &d.meta.lens_model,
-                                      d.meta.focal_mm, d.meta.aperture, 10.0);
-        }
-        let prof = profile::derive(&d.meta, w, h, crop_factor);
-        Ok(Development {
-            filename: filename.to_string(),
-            linear: d.img,
-            meta: d.meta,
-            exif: decode::collect_exif(bytes),
-            noise_floor: None,
-            profile: prof,
-            lens_match,
-            cache: Vec::new(),
-            focus: None,
-            baseline_key: String::new(),
-            baseline_img: None,
-        })
+        Ok(Self::from_frame(filename, d.img, d.meta, decode::collect_exif(bytes), db))
     }
 
     /// The noise floor of this capture, at native resolution.
@@ -64,16 +41,7 @@ impl Development {
         if let Some(floor) = self.noise_floor {
             return floor;
         }
-        let crop = {
-            let w = 640.min(self.linear.w);
-            let h = 640.min(self.linear.h);
-            self.linear.crop((self.linear.w - w) / 2, (self.linear.h - h) / 2, w, h)
-        };
-        let mut sqrt_luma = kit::luminance(&crop);
-        for v in sqrt_luma.d.iter_mut() {
-            *v = v.max(0.0).sqrt();
-        }
-        let floor = crate::analyze::noise_floor(&sqrt_luma);
+        let floor = crate::analyze::centre_noise_floor(&self.linear, 640);
         self.noise_floor = Some(floor);
         floor
     }
@@ -83,7 +51,7 @@ impl Development {
         if let Some(cached) = self.focus {
             return cached;
         }
-        let measured = crate::analyze::focus_width(&self.linear, |p| crate::analyze::noise_floor(p));
+        let measured = crate::analyze::focus_width(&self.linear);
         self.focus = Some(measured);
         measured
     }
@@ -112,8 +80,7 @@ impl Development {
             lens_match,
             cache: Vec::new(),
             focus: None,
-            baseline_key: String::new(),
-            baseline_img: None,
+            baseline: None,
         }
     }
 
@@ -193,8 +160,6 @@ impl Development {
             None => 1.0,
             Some(_) => src.w.max(src.h) as f32 / self.linear.w.max(self.linear.h) as f32,
         };
-        let mut s = settings.clone();
-        s.render_scale = scale;
 
         // When the canvas is shown uncropped, the estimators must still measure
         // only the rectangle being kept, see geometry::stats_view.
@@ -207,12 +172,8 @@ impl Development {
                 Box::new(move |f: f32, code: &str| cb(0.25 + 0.75 * f, code));
             f
         });
-        let mut boxed: Option<&mut dyn FnMut(f32, &str)> = match graded_progress.as_mut() {
-            Some(b) => Some(&mut **b),
-            None => None,
-        };
 
-        let native_noise_floor = Some(self.native_noise_floor());
+        let native_noise_floor = self.native_noise_floor();
         // The width was measured at a fixed working size, so the blur it
         // describes is that many pixels *there*.
         let measured_width = self.focus_width();
@@ -229,12 +190,13 @@ impl Development {
             sharpen_sigma: self.profile.sharpen_sigma,
             noise_prior: self.profile.noise_prior,
             stats_rect,
-            preset: Some(tuned),
+            render_scale: scale,
+            preset: tuned,
             native_noise_floor,
             focus_sigma,
-            progress: boxed.take(),
+            progress: graded_progress.as_mut().map(|f| &mut **f as &mut dyn FnMut(f32, &str)),
         };
-        let mut rgb = grade::process(&src, &s, args, &mut report);
+        let mut rgb = grade::process(&src, settings, args, &mut report);
 
         // What the frame measured, said out loud whichever way it came out.
         report.add("focus", match measured_width {
@@ -264,13 +226,12 @@ impl Development {
         effects::monochrome(&mut rgb, settings.monochrome);
 
         let counts = settings.curves.counts();
-        report.add("curves", match settings.curves.is_identity() {
-            true => json!({"applied": false}),
-            false => {
-                rgb = settings.curves.apply(&rgb);
-                json!({"applied": true, "points": {"rgb": counts[0], "r": counts[1],
-                                                   "g": counts[2], "b": counts[3]}})
-            }
+        report.add("curves", if settings.curves.is_identity() {
+            json!({"applied": false})
+        } else {
+            rgb = settings.curves.apply(&rgb);
+            json!({"applied": true, "points": {"rgb": counts[0], "r": counts[1],
+                                               "g": counts[2], "b": counts[3]}})
         });
 
         // The 3D table is the end of the colour stack and runs after the
@@ -320,14 +281,13 @@ impl Development {
             flat.tint,
             flat.preset
         );
-        if self.baseline_key == key {
-            if let Some(img) = &self.baseline_img {
+        if let Some((cached, img)) = &self.baseline {
+            if *cached == key {
                 return img.clone();
             }
         }
         let (img, _) = self.render(&flat, long_edge, true, None);
-        self.baseline_key = key;
-        self.baseline_img = Some(img.clone());
+        self.baseline = Some((key, img.clone()));
         img
     }
 
@@ -349,21 +309,16 @@ impl Development {
             Some(m) => m,
         };
         for (stage, key) in stages.iter().zip(keys.iter()) {
-            let mut info = Map::new();
-            info.insert("applied".into(), json!(settings.on(key)));
-            info.insert("lens".into(), json!(m.lens));
-            info.insert("focal".into(), json!(format!("{}mm", trim_num(m.focal))));
-            info.insert("aperture".into(), json!(format!("f/{}", trim_num(m.aperture))));
-            if let Some(extra) = measured.get(*stage).and_then(|v| v.as_object()) {
-                for (k, v) in extra {
-                    info.insert(k.clone(), v.clone());
-                }
+            let info = kit::with(
+                json!({"applied": settings.on(key), "lens": m.lens,
+                       "focal": format!("{}mm", trim_num(m.focal)),
+                       "aperture": format!("f/{}", trim_num(m.aperture))}),
+                measured.get(*stage).cloned().unwrap_or(Value::Null));
+            if settings.on(key) {
+                report.add(stage, info);
+            } else {
+                report.skipped(stage, "switched_off", info);
             }
-            if !settings.on(key) {
-                info.insert("applied".into(), json!(false));
-                info.insert("reason".into(), json!("switched_off"));
-            }
-            report.add(stage, Value::Object(info));
         }
     }
 
@@ -393,7 +348,7 @@ impl Development {
             // "Unavailable" means the correction *cannot* run, no lens match,
             // or no data for this correction, as opposed to switched off.
             let available = if key.starts_with("lens_") {
-                self.lens_match.is_some() && !(!applied && reason != "switched_off")
+                self.lens_match.is_some() && (applied || reason == "switched_off")
             } else {
                 true
             };

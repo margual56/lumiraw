@@ -32,9 +32,11 @@ pub fn soft_limit(x: f32, limit: f32) -> f32 {
 // white balance
 // -------------------------------------------------------------------------
 
-/// Refine the camera's white balance with a shades-of-grey estimate.
+/// How much of the automatic white balance's green-magenta correction is
+/// kept; see `auto_white_balance`.
 pub const TINT_TRUST: f32 = 0.2;
 
+/// Refine the camera's white balance with a shades-of-grey estimate.
 pub fn auto_white_balance(thumb: &Image, strength: f32, limit_ev: f32) -> ([f32; 3], Value) {
     let y = kit::luminance(thumb);
     let pct = kit::percentiles(&y.d, &[3.0, 97.0]);
@@ -84,8 +86,8 @@ pub fn auto_white_balance(thumb: &Image, strength: f32, limit_ev: f32) -> ([f32;
     (
         gains,
         json!({"applied": true,
-               "gains": [round_to(gains[0],4), round_to(gains[1],4), round_to(gains[2],4)],
-               "shift_ev": [round_to(log_gain[0],3), round_to(log_gain[1],3), round_to(log_gain[2],3)]}),
+               "gains": gains.map(|g| round_to(g, 4)),
+               "shift_ev": log_gain.map(|g| round_to(g, 3))}),
     )
 }
 
@@ -97,7 +99,9 @@ pub fn auto_white_balance(thumb: &Image, strength: f32, limit_ev: f32) -> ([f32;
 /// guard that gives way when the raw was already clipped.
 pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f32) -> (f32, Value) {
     let y = kit::luminance(thumb);
-    let floor = kit::percentile(&y.d, 1.0).max(1e-5);
+    // One sort for both ends: the floor here and the highlight guard below.
+    let ends = kit::percentiles(&y.d, &[1.0, 99.5]);
+    let floor = ends[0].max(1e-5);
     let sample: Vec<f32> = y.d.iter().cloned().filter(|v| *v > floor).collect();
     if sample.len() < 64 {
         return (1.0, json!({"applied": false}));
@@ -123,7 +127,7 @@ pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f3
     let mut guard: Option<f32> = None;
     let mut waived = false;
     if clipped < 0.005 {
-        let hi = kit::percentile(&y.d, 99.5);
+        let hi = ends[1];
         let cap = 1.20 / hi.max(EPS);
         if cap < gain {
             guard = Some(gain);
@@ -171,12 +175,13 @@ pub fn auto_tone_compression(thumb: &Image, comfortable_stops: f32, floor: f32) 
 
 /// Robust black/white point from percentiles, moved only part of the way.
 pub fn auto_levels(lightness: &Plane, strength: f32, clip_pct: f64) -> (f32, f32, Value) {
-    let p = kit::percentiles(&lightness.d, &[clip_pct, 100.0 - clip_pct]);
+    let p = kit::percentiles(&lightness.d,
+                             &[clip_pct, 100.0 - clip_pct, (CRUSH_BUDGET * 100.0) as f64]);
     let wanted = p[0] * strength;
     let white = p[1] + (1.0 - p[1]) * strength;
 
     // A black point read off a percentile assumes the shadows are spread out.
-    let budget_level = kit::percentile(&lightness.d, (CRUSH_BUDGET * 100.0) as f64);
+    let budget_level = p[2];
     let ceiling = (budget_level - BLACK_LIGHTNESS * white) / (1.0 - BLACK_LIGHTNESS);
     let black = wanted.min(ceiling).max(0.0);
 
@@ -241,9 +246,20 @@ pub fn auto_vibrance(chroma: &Plane, lightness: &Plane, target_chroma: f32, max_
     )
 }
 
-/// Noise level in [0,1].
-pub fn estimate_noise(lightness: &Plane, iso: f32, prior: f32) -> (f32, Value) {
-    noise_from_floor(noise_floor(lightness), iso, prior)
+/// Luminance on a square-root scale, roughly perceptual.
+pub fn sqrt_luminance(img: &Image) -> Plane {
+    let mut luma = kit::luminance(img);
+    for v in luma.d.iter_mut() {
+        *v = v.max(0.0).sqrt();
+    }
+    luma
+}
+
+/// The noise floor of a frame's centre `size` pixels square, at the frame's own
+/// resolution.
+pub fn centre_noise_floor(img: &Image, size: usize) -> f32 {
+    let (w, h) = (size.min(img.w), size.min(img.h));
+    noise_floor(&sqrt_luminance(&img.crop((img.w - w) / 2, (img.h - h) / 2, w, h)))
 }
 
 /// The noise floor of a frame: the local variation left where the picture is
@@ -273,9 +289,133 @@ pub fn noise_from_floor(floor: f32, iso: f32, prior: f32) -> (f32, Value) {
 }
 
 // -------------------------------------------------------------------------
-// report
+// focus
 // -------------------------------------------------------------------------
 
+/// The size the frame is measured at, whatever the sensor's.
+pub const FOCUS_LONG_EDGE: usize = 1800;
+const FOCUS_TILE: usize = 96;
+/// How far an edge is followed when measuring how far it climbs.
+const FOCUS_REACH: i32 = 18;
+/// How many pixels either side of the crest must climb the same way before
+/// this is an edge rather than a coincidence.
+const FOCUS_RUN: i32 = 3;
+/// How much structure a tile needs, as a multiple of the frame's noise floor.
+const FOCUS_STRUCTURE: f32 = 2.5;
+/// How many tiles have to produce an answer before there is an answer.
+const FOCUS_MIN_TILES: usize = 3;
+/// How many edges a tile needs before its median means anything.
+const FOCUS_MIN_EDGES: usize = 10;
+
+/// How wide the edges are in the sharpest part of the frame, in pixels of the
+/// working size, or `None` when the frame does not hold enough measurable edge
+/// to say.
+pub fn focus_width(img: &Image) -> Option<f32> {
+    let scale = (FOCUS_LONG_EDGE as f32 / img.w.max(img.h) as f32).min(1.0);
+    let small = kit::resize_rgb(img, ((img.w as f32 * scale) as usize).max(1),
+                                ((img.h as f32 * scale) as usize).max(1));
+    // The perceptual scale the noise estimator uses, or this would only ever
+    // describe the sky.
+    let mut luma = sqrt_luminance(&small);
+    let top = kit::percentile(&luma.d, 99.5).max(1e-6);
+    for v in luma.d.iter_mut() {
+        *v /= top;
+    }
+    let floor = noise_floor(&luma);
+
+    let mut widths: Vec<f32> = Vec::new();
+    for ty in (0..luma.h.saturating_sub(FOCUS_TILE)).step_by(FOCUS_TILE) {
+        for tx in (0..luma.w.saturating_sub(FOCUS_TILE)).step_by(FOCUS_TILE) {
+            let t = luma.crop(tx, ty, FOCUS_TILE, FOCUS_TILE);
+            if kit::std_dev(&t.d) < (FOCUS_STRUCTURE * floor).max(0.004) {
+                continue;
+            }
+            if let Some(w) = tile_edge_width(&t, floor) {
+                widths.push(w);
+            }
+        }
+    }
+    if widths.len() < FOCUS_MIN_TILES {
+        return None;
+    }
+    widths.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    // The sharpest tile the frame has.
+    Some(widths[0])
+}
+
+/// The median edge width of one tile, or `None` if it holds too few edges.
+fn tile_edge_width(p: &Plane, floor: f32) -> Option<f32> {
+    let mut widths: Vec<f32> = Vec::new();
+    let sample = |x: f32, y: f32| -> f32 {
+        let xi = (x.round() as isize).clamp(0, p.w as isize - 1) as usize;
+        let yi = (y.round() as isize).clamp(0, p.h as isize - 1) as usize;
+        p.d[yi * p.w + xi]
+    };
+    for y in 2..p.h - 2 {
+        for x in 2..p.w - 2 {
+            let i = y * p.w + x;
+            // Centred over two pixels rather than one.
+            let gx = (p.d[i + 1] - p.d[i - 1]) * 0.5;
+            let gy = (p.d[i + p.w] - p.d[i - p.w]) * 0.5;
+            let g = gx.hypot(gy);
+            // Only enough to give the climb a direction.
+            if g < (floor * 6.0).max(1e-5) {
+                continue;
+            }
+            let (ux, uy) = (gx / g, gy / g);
+            let along = |k: f32| sample(x as f32 + ux * k, y as f32 + uy * k);
+            // Only the crest of the ridge: without this every pixel of a wide
+            // ramp is an edge, and the widest ramps would be counted most.
+            let slope = |k: f32| (along(k + 1.0) - along(k - 1.0)).abs() * 0.5;
+            if slope(1.0) > g || slope(-1.0) > g {
+                continue;
+            }
+            // Monotonic, not strictly climbing.
+            let mut rising = 0;
+            let mut falling = 0;
+            for k in -FOCUS_RUN..FOCUS_RUN {
+                let step = along((k + 1) as f32) - along(k as f32);
+                if step >= 0.0 {
+                    rising += 1;
+                }
+                if step <= 0.0 {
+                    falling += 1;
+                }
+            }
+            // One step of the six may go the wrong way.
+            if rising.max(falling) < (2 * FOCUS_RUN) - 1 {
+                continue;
+            }
+            let (mut lo, mut hi) = (along(0.0), along(0.0));
+            for k in 1..=FOCUS_REACH {
+                let (a, b) = (along(-(k as f32)), along(k as f32));
+                lo = lo.min(a).min(b);
+                hi = hi.max(a).max(b);
+            }
+            let height = hi - lo;
+            if height < (floor * 8.0).max(1e-4) {
+                continue;
+            }
+            widths.push((height / g).clamp(0.5, 24.0));
+        }
+    }
+    if widths.len() < FOCUS_MIN_EDGES {
+        return None;
+    }
+    widths.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    // The tile's median edge, not its sharpest.
+    Some(kit::percentile_sorted(&widths, 50.0))
+}
+
+/// What a sharp frame measures, and the width past which one is soft enough to
+/// be worth offering to rescue.
+pub const FOCUS_SHARP: f32 = 3.4;
+pub const FOCUS_SOFT: f32 = 5.5;
+
+/// Turn a measured edge width into the blur that would explain it.
+pub fn focus_sigma(width: f32) -> f32 {
+    ((width - 2.4) / 2.3).max(0.0)
+}
 
 #[cfg(test)]
 mod tests {
@@ -383,9 +523,9 @@ mod tests {
     #[test]
     fn blur_widens_the_measured_edge() {
         let sharp = edged(600, 420);
-        let a = focus_width(&sharp, noise_floor).expect("a frame of edges is measurable");
-        let b = focus_width(&blur_rgb(&sharp, 2.0), noise_floor).expect("still measurable");
-        let c = focus_width(&blur_rgb(&sharp, 5.0), noise_floor).expect("still measurable");
+        let a = focus_width(&sharp).expect("a frame of edges is measurable");
+        let b = focus_width(&blur_rgb(&sharp, 2.0)).expect("still measurable");
+        let c = focus_width(&blur_rgb(&sharp, 5.0)).expect("still measurable");
         assert!(a < b && b < c, "width should rise with blur: {a} {b} {c}");
         assert!(a <= FOCUS_SHARP, "an unblurred frame of hard edges should read sharp: {a}");
         assert!(c >= FOCUS_SOFT, "five pixels of blur should read soft: {c}");
@@ -401,7 +541,7 @@ mod tests {
             let v = 0.35 + 0.25 * ((seed >> 8) as f32 / 16777216.0 - 0.5);
             px.iter_mut().for_each(|c| *c = v);
         }
-        match focus_width(&noise, noise_floor) {
+        match focus_width(&noise) {
             None => {}
             Some(w) => assert!(w > FOCUS_SHARP,
                                "noise must not come back as a sharp frame, got {w}"),
@@ -413,7 +553,7 @@ mod tests {
     fn a_featureless_frame_gives_no_answer() {
         let mut flat = Image::new(400, 300);
         flat.d.iter_mut().for_each(|v| *v = 0.4);
-        assert_eq!(focus_width(&flat, noise_floor), None);
+        assert_eq!(focus_width(&flat), None);
     }
 
     /// An underexposed frame has to be lifted past the usual restraint, or the
@@ -465,134 +605,4 @@ mod tests {
         let (more, _) = noise_from_floor(0.008, 200.0, 0.1);
         assert!(more > a, "a noisier floor should read noisier");
     }
-}
-
-// -------------------------------------------------------------------------
-// focus
-// -------------------------------------------------------------------------
-
-/// The size the frame is measured at, whatever the sensor's.
-pub const FOCUS_LONG_EDGE: usize = 1800;
-const FOCUS_TILE: usize = 96;
-/// How far an edge is followed when measuring how far it climbs.
-const FOCUS_REACH: i32 = 18;
-/// How many pixels either side of the crest must climb the same way before
-/// this is an edge rather than a coincidence.
-const FOCUS_RUN: i32 = 3;
-/// How much structure a tile needs, as a multiple of the frame's noise floor.
-const FOCUS_STRUCTURE: f32 = 2.5;
-/// How many tiles have to produce an answer before there is an answer.
-const FOCUS_MIN_TILES: usize = 3;
-/// How many edges a tile needs before its median means anything.
-const FOCUS_MIN_EDGES: usize = 10;
-
-/// How wide the edges are in the sharpest part of the frame, in pixels of the
-/// working size, or `None` when the frame does not hold enough measurable edge
-/// to say.
-pub fn focus_width(img: &Image, noise_floor_of: impl Fn(&Plane) -> f32) -> Option<f32> {
-    let scale = (FOCUS_LONG_EDGE as f32 / img.w.max(img.h) as f32).min(1.0);
-    let small = kit::resize_rgb(img, ((img.w as f32 * scale) as usize).max(1),
-                                ((img.h as f32 * scale) as usize).max(1));
-    let mut luma = kit::luminance(&small);
-    // A perceptual scale, as the noise estimator uses.
-    for v in luma.d.iter_mut() {
-        *v = v.max(0.0).sqrt();
-    }
-    let top = kit::percentile(&luma.d, 99.5).max(1e-6);
-    for v in luma.d.iter_mut() {
-        *v /= top;
-    }
-    let floor = noise_floor_of(&luma);
-
-    let mut widths: Vec<f32> = Vec::new();
-    for ty in (0..luma.h.saturating_sub(FOCUS_TILE)).step_by(FOCUS_TILE) {
-        for tx in (0..luma.w.saturating_sub(FOCUS_TILE)).step_by(FOCUS_TILE) {
-            let t = luma.crop(tx, ty, FOCUS_TILE, FOCUS_TILE);
-            if kit::std_dev(&t.d) < (FOCUS_STRUCTURE * floor).max(0.004) {
-                continue;
-            }
-            if let Some(w) = tile_edge_width(&t, floor) {
-                widths.push(w);
-            }
-        }
-    }
-    if widths.len() < FOCUS_MIN_TILES {
-        return None;
-    }
-    widths.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    // The sharpest tile the frame has.
-    Some(widths[0])
-}
-
-/// The median edge width of one tile, or `None` if it holds too few edges.
-fn tile_edge_width(p: &Plane, floor: f32) -> Option<f32> {
-    let mut widths: Vec<f32> = Vec::new();
-    let sample = |x: f32, y: f32| -> f32 {
-        let xi = (x.round() as isize).clamp(0, p.w as isize - 1) as usize;
-        let yi = (y.round() as isize).clamp(0, p.h as isize - 1) as usize;
-        p.d[yi * p.w + xi]
-    };
-    for y in 2..p.h - 2 {
-        for x in 2..p.w - 2 {
-            let i = y * p.w + x;
-            // Centred over two pixels rather than one.
-            let gx = (p.d[i + 1] - p.d[i - 1]) * 0.5;
-            let gy = (p.d[i + p.w] - p.d[i - p.w]) * 0.5;
-            let g = gx.hypot(gy);
-            // Only enough to give the climb a direction.
-            if g < (floor * 6.0).max(1e-5) {
-                continue;
-            }
-            let (ux, uy) = (gx / g, gy / g);
-            let along = |k: f32| sample(x as f32 + ux * k, y as f32 + uy * k);
-            // Only the crest of the ridge: without this every pixel of a wide
-            // ramp is an edge, and the widest ramps would be counted most.
-            let slope = |k: f32| (along(k + 1.0) - along(k - 1.0)).abs() * 0.5;
-            if slope(1.0) > g || slope(-1.0) > g {
-                continue;
-            }
-            // Monotonic, not strictly climbing.
-            let mut rising = 0;
-            let mut falling = 0;
-            for k in -FOCUS_RUN..FOCUS_RUN {
-                let step = along((k + 1) as f32) - along(k as f32);
-                if step >= 0.0 {
-                    rising += 1;
-                }
-                if step <= 0.0 {
-                    falling += 1;
-                }
-            }
-            // One step of the six may go the wrong way.
-            if rising.max(falling) < (2 * FOCUS_RUN) - 1 {
-                continue;
-            }
-            let (mut lo, mut hi) = (along(0.0), along(0.0));
-            for k in 1..=FOCUS_REACH {
-                lo = lo.min(along(-(k as f32))).min(along(k as f32));
-                hi = hi.max(along(-(k as f32))).max(along(k as f32));
-            }
-            let height = hi - lo;
-            if height < (floor * 8.0).max(1e-4) {
-                continue;
-            }
-            widths.push((height / g).clamp(0.5, 24.0));
-        }
-    }
-    if widths.len() < FOCUS_MIN_EDGES {
-        return None;
-    }
-    widths.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    // The tile's median edge, not its sharpest.
-    Some(kit::percentile_sorted(&widths, 50.0))
-}
-
-/// What a sharp frame measures, and the width past which one is soft enough to
-/// be worth offering to rescue.
-pub const FOCUS_SHARP: f32 = 3.4;
-pub const FOCUS_SOFT: f32 = 5.5;
-
-/// Turn a measured edge width into the blur that would explain it.
-pub fn focus_sigma(width: f32) -> f32 {
-    ((width - 2.4) / 2.3).max(0.0)
 }

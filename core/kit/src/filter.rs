@@ -233,3 +233,24 @@ pub fn sample_bilinear(p: &Plane, x: f32, y: f32) -> f32 {
     let bot = p.d[y1 * w + x0] * (1.0 - fx) + p.d[y1 * w + x1] * fx;
     top * (1.0 - fy) + bot * fy
 }
+
+/// `sample_bilinear` on all three channels of an interleaved frame at once,
+/// with the same arithmetic, so there is no need to split it into planes.
+pub fn sample_bilinear_rgb(img: &Image, x: f32, y: f32) -> [f32; 3] {
+    let (w, h) = (img.w, img.h);
+    let x = x.clamp(0.0, w as f32 - 1.001);
+    let y = y.clamp(0.0, h as f32 - 1.001);
+    let x0 = x as usize;
+    let y0 = y as usize;
+    let fx = x - x0 as f32;
+    let fy = y - y0 as f32;
+    let x1 = (x0 + 1).min(w - 1);
+    let y1 = (y0 + 1).min(h - 1);
+    let px = img.px();
+    let (a, b, c, d) = (px[y0 * w + x0], px[y0 * w + x1], px[y1 * w + x0], px[y1 * w + x1]);
+    std::array::from_fn(|k| {
+        let top = a[k] * (1.0 - fx) + b[k] * fx;
+        let bot = c[k] * (1.0 - fx) + d[k] * fx;
+        top * (1.0 - fy) + bot * fy
+    })
+}

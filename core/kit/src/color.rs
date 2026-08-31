@@ -133,8 +133,8 @@ impl Lab {
 /// Rec.709 luminance of linear RGB.
 pub fn luminance(img: &Image) -> Plane {
     let mut p = Plane::new(img.w, img.h);
-    for i in 0..img.w * img.h {
-        p.d[i] = 0.2126 * img.d[i * 3] + 0.7152 * img.d[i * 3 + 1] + 0.0722 * img.d[i * 3 + 2];
+    for (y, px) in p.d.iter_mut().zip(img.px()) {
+        *y = luminance_px(px);
     }
     p
 }
@@ -176,4 +176,75 @@ pub fn oklab_to_rgb_px(lightness: f32, a: f32, b: f32) -> (f32, f32, f32) {
         -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
         -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
     )
+}
+
+/// The gamut knee, in the shape of ACES's reference gamut compression.
+pub const GAMUT_KNEE: f32 = 0.9;
+pub const GAMUT_LIMIT: f32 = 1.4;
+pub const GAMUT_POWER: f32 = 1.2;
+
+/// Where a chroma at `ratio` of the boundary lands, `GAMUT_LIMIT` landing on
+/// it exactly.
+pub(crate) fn gamut_fold(ratio: f32) -> f32 {
+    if ratio <= GAMUT_KNEE {
+        return ratio;
+    }
+    let (t, l, p) = (GAMUT_KNEE, GAMUT_LIMIT, GAMUT_POWER);
+    let scale = (l - t) / (((1.0 - t) / (l - t)).powf(-p) - 1.0).powf(1.0 / p);
+    let x = (ratio - t) / scale;
+    t + scale * x / (1.0 + x.powf(p)).powf(1.0 / p)
+}
+
+/// Oklab -> linear sRGB, at constant lightness and hue, with the chroma brought
+/// inside what sRGB can show.
+pub fn to_gamut(lightness: &Plane, a: &Plane, b: &Plane) -> Image {
+    let mut out = Image::new(lightness.w, lightness.h);
+    let fits = |r: f32, g: f32, bl: f32| r.min(g).min(bl) >= -0.001 && r.max(g).max(bl) <= 1.001;
+    for i in 0..lightness.d.len() {
+        let l = lightness.d[i].clamp(0.0, 1.0);
+        let (aa, bb) = (a.d[i], b.d[i]);
+        let (mut r, mut g, mut bl) = oklab_to_rgb_px(l, aa, bb);
+        // Chroma this low is inside sRGB at any lightness a picture has, so the
+        // search is spent only where it can matter.
+        let chroma = aa.hypot(bb);
+        let inside = fits(r, g, bl);
+        if chroma > 0.03 || !inside {
+            // How far the chroma may be scaled along this hue before leaving
+            // the gamut, found by bisection: 1 is where the pixel is now.
+            let mut hi = if inside { 1.0f32 / GAMUT_KNEE } else { 1.0 };
+            if inside {
+                let (tr, tg, tb) = oklab_to_rgb_px(l, aa * hi, bb * hi);
+                if fits(tr, tg, tb) {
+                    // Nowhere near the edge.
+                    hi = f32::INFINITY;
+                }
+            }
+            if hi.is_finite() {
+                let mut lo = if inside { 1.0f32 } else { 0.0 };
+                for _ in 0..12 {
+                    let mid = 0.5 * (lo + hi);
+                    let (tr, tg, tb) = oklab_to_rgb_px(l, aa * mid, bb * mid);
+                    if fits(tr, tg, tb) {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                // Where this pixel sits against the boundary, 1 being on it.
+                let ratio = 1.0 / lo.max(1e-6);
+                if ratio > GAMUT_KNEE {
+                    let target = gamut_fold(ratio);
+                    // `lo` is the last scale known to fit, so the knee can
+                    // never land a pixel outside it.
+                    let scale = (target * lo).min(lo);
+                    let (fr, fg, fb) = oklab_to_rgb_px(l, aa * scale, bb * scale);
+                    r = fr;
+                    g = fg;
+                    bl = fb;
+                }
+            }
+        }
+        out.px_mut()[i] = [r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), bl.clamp(0.0, 1.0)];
+    }
+    out
 }

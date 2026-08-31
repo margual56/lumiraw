@@ -139,11 +139,9 @@ pub fn apply_filters(img: &mut Image, filters: &[Filter], frame: Option<Rect>) {
                 if f.temperature != 0.0 {
                     // The same gains as the global temperature control, and
                     // the same care to hold luminance while the colour moves.
-                    let t = f.temperature * k;
-                    let log = [0.35 * t, 0.0, -0.35 * t];
-                    let weighted = 0.2126 * log[0] + 0.0722 * log[2];
+                    let g = crate::grade::temp_tint_gains(f.temperature * k, 0.0);
                     for c in 0..3 {
-                        px[c] *= (log[c] - weighted).exp2();
+                        px[c] *= g[c];
                     }
                 }
                 if f.saturation != 0.0 {

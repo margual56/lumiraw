@@ -324,13 +324,7 @@ pub fn noise_stops(level: f32, k: f32) -> f32 {
 const FLOOR_TO_SIGMA: f32 = 5.3;
 
 pub fn shot_noise_constant(img: &Image) -> f32 {
-    let (w, h) = (PROBE_CROP.min(img.w), PROBE_CROP.min(img.h));
-    let crop = img.crop((img.w - w) / 2, (img.h - h) / 2, w, h);
-    let mut root = kit::luminance(&crop);
-    for v in root.d.iter_mut() {
-        *v = v.max(0.0).sqrt();
-    }
-    (2.0 * FLOOR_TO_SIGMA * crate::analyze::noise_floor(&root)).max(1e-6)
+    (2.0 * FLOOR_TO_SIGMA * crate::analyze::centre_noise_floor(img, PROBE_CROP)).max(1e-6)
 }
 
 /// How far two readings may differ before the difference is worth calling
@@ -445,19 +439,13 @@ pub fn merge(frames: &[Frame], options: Options) -> Result<(Image, Notes), Strin
 
     for (j, frame) in frames.iter().enumerate() {
         let (dx, dy) = notes.shifts[j];
-        for y in 0..h {
-            let sy = y as i32 + dy;
-            if sy < 0 || sy >= h as i32 {
-                continue;
-            }
-            for x in 0..w {
-                let sx = x as i32 + dx;
-                if sx < 0 || sx >= w as i32 {
-                    continue;
-                }
-                let src = ((sy as usize) * w + sx as usize) * 3;
+        let src_px = frame.linear.px();
+        for y in overlap(h, dy) {
+            let sy = (y as i32 + dy) as usize;
+            for x in overlap(w, dx) {
+                let sx = (x as i32 + dx) as usize;
                 let dst = (y * w + x) * 3;
-                let px = [frame.linear.d[src], frame.linear.d[src + 1], frame.linear.d[src + 2]];
+                let px = src_px[sy * w + sx];
                 let level = px[0].max(px[1]).max(px[2]);
                 let here = signal(level) * snr[j];
                 if here > 0.0 {
@@ -551,7 +539,7 @@ pub fn merge(frames: &[Frame], options: Options) -> Result<(Image, Notes), Strin
     Ok((out, notes))
 }
 
-/// Replace pixels where the frames disagree about the scene with the reference frame's own reading.
+/// Walk the pixels the reference frame is entitled to arbitrate.
 fn visit(frames: &[Frame], shifts: &[(i32, i32)], reference: usize, scale: &[f32],
          w: usize, h: usize, mut look: impl FnMut(usize, f32, [f32; 3])) {
     let (dx, dy) = shifts[reference];
@@ -595,7 +583,8 @@ fn probe_movement(out: &Image, frames: &[Frame], scale: &[f32], shifts: &[(i32, 
     if looked == 0 { 0.0 } else { moved as f32 / looked as f32 }
 }
 
-/// Put the reference frame back wherever the merge cannot be believed.
+/// Replace pixels where the frames disagree about the scene with the reference
+/// frame's own reading.
 fn deghost(out: &mut Image, frames: &[Frame], scale: &[f32], shifts: &[(i32, i32)],
            reference: usize, k: f32, sigmas: f32) -> f32 {
     let (w, h) = (out.w, out.h);
@@ -624,11 +613,8 @@ pub struct Bitmaps {
 
 /// Threshold a frame at its own median.
 pub fn median_bitmaps(img: &Image) -> Bitmaps {
-    let mut grey = kit::luminance(img);
     // Work in a perceptual-ish scale so the median sits somewhere useful.
-    for v in grey.d.iter_mut() {
-        *v = v.max(0.0).sqrt();
-    }
+    let grey = crate::analyze::sqrt_luminance(img);
     let mut levels = Vec::new();
     let mut plane = grey;
     while levels.len() < 6 && plane.w > 32 && plane.h > 32 {
@@ -691,23 +677,17 @@ pub fn align(anchor: &Bitmaps, other: &Bitmaps) -> Option<(i32, i32)> {
     Some(shift)
 }
 
-/// How many pixels the two bitmaps disagree about at this offset.
+/// How many of the pixels worth comparing disagree, and how many were worth
+/// comparing.
 fn mismatch(a: &[bool], a_use: &[bool], b: &[bool], b_use: &[bool], w: usize, h: usize,
             (dx, dy): (i32, i32)) -> (usize, usize) {
     let mut wrong = 0usize;
     let mut compared = 0usize;
-    for y in 0..h {
-        let sy = y as i32 + dy;
-        if sy < 0 || sy >= h as i32 {
-            continue;
-        }
-        for x in 0..w {
-            let sx = x as i32 + dx;
-            if sx < 0 || sx >= w as i32 {
-                continue;
-            }
+    for y in overlap(h, dy) {
+        let sy = (y as i32 + dy) as usize;
+        for x in overlap(w, dx) {
             let i = y * w + x;
-            let j = sy as usize * w + sx as usize;
+            let j = sy * w + (x as i32 + dx) as usize;
             if a_use[i] && b_use[j] {
                 compared += 1;
                 if a[i] != b[j] {
@@ -717,6 +697,12 @@ fn mismatch(a: &[bool], a_use: &[bool], b: &[bool], b_use: &[bool], w: usize, h:
         }
     }
     (wrong, compared)
+}
+
+/// The positions along an axis of `len` whose neighbour `d` away is also on it.
+fn overlap(len: usize, d: i32) -> std::ops::Range<usize> {
+    let len = len as i32;
+    (-d).clamp(0, len) as usize..(len - d).clamp(0, len) as usize
 }
 
 #[cfg(test)]

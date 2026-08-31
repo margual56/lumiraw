@@ -145,8 +145,8 @@ impl Lut {
 
     fn apply_to(&self, img: &mut Image, strength: f32) {
         let n = self.size - 1;
-        for p in 0..img.w * img.h {
-            let src = [img.d[p * 3], img.d[p * 3 + 1], img.d[p * 3 + 2]];
+        for px in img.px_mut() {
+            let src = *px;
             let enc = src.map(kit::srgb_encode_scalar);
             // Into the table's own domain, which is 0..1 unless the file says
             // otherwise.
@@ -179,7 +179,7 @@ impl Lut {
                 let c0 = c00 + (c10 - c00) * fg;
                 let c1 = c01 + (c11 - c01) * fg;
                 let graded = kit::srgb_decode_scalar((c0 + (c1 - c0) * fb).clamp(0.0, 1.0));
-                img.d[p * 3 + c] = src[c] * (1.0 - strength) + graded * strength;
+                px[c] = src[c] * (1.0 - strength) + graded * strength;
             }
         }
     }

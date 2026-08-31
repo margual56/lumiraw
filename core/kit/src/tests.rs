@@ -176,3 +176,60 @@ mod matrix_tests {
     }
 }
 
+#[cfg(test)]
+mod gamut_tests {
+    use crate::*;
+    use crate::color::gamut_fold;
+
+    /// Out-of-gamut colours lose chroma at constant lightness rather than
+    /// being clipped per channel, which is what keeps gradients and hue.
+    #[test]
+    fn to_gamut_preserves_lightness_and_hue() {
+        let l = Plane::filled(1, 1, 0.6);
+        let a = Plane::filled(1, 1, 0.35); // far outside sRGB
+        let b = Plane::filled(1, 1, 0.05);
+        let img = to_gamut(&l, &a, &b);
+        let (gl, ga, gb) = rgb_to_oklab_px(img.d[0], img.d[1], img.d[2]);
+        assert!((gl - 0.6).abs() < 0.02, "lightness moved: {}", gl);
+        let hue_in = (0.05f32).atan2(0.35);
+        let hue_out = gb.atan2(ga);
+        assert!((hue_in - hue_out).abs() < 0.05, "hue moved: {} -> {}", hue_in, hue_out);
+        assert!(img.d.iter().all(|v| *v >= 0.0 && *v <= 1.0));
+    }
+
+    /// The knee has to keep what the hard stop threw away.
+    #[test]
+    fn to_gamut_keeps_gradation_beyond_the_edge() {
+        let chroma_out = |c: f32| -> f32 {
+            let l = Plane::filled(1, 1, 0.6);
+            let a = Plane::filled(1, 1, c);
+            let b = Plane::filled(1, 1, 0.3 * c);
+            let img = to_gamut(&l, &a, &b);
+            let (_, ga, gb) = rgb_to_oklab_px(img.d[0], img.d[1], img.d[2]);
+            ga.hypot(gb)
+        };
+        let (near, far, farther) = (chroma_out(0.25), chroma_out(0.27), chroma_out(0.29));
+        assert!(near < far && far < farther,
+                "out-of-gamut chroma was flattened: {near} {far} {farther}");
+        let quiet = chroma_out(0.05);
+        assert!((quiet - 0.05f32.hypot(0.015)).abs() < 1e-3, "an ordinary colour moved: {quiet}");
+    }
+
+    /// The fold is continuous at the knee, never decreasing, lands the limit
+    /// on the boundary, and never pushes anything past it.
+    #[test]
+    fn the_gamut_fold_is_well_behaved() {
+        assert!((gamut_fold(GAMUT_KNEE + 1e-4) - GAMUT_KNEE).abs() < 1e-3);
+        assert!((gamut_fold(GAMUT_LIMIT) - 1.0).abs() < 1e-4, "{}", gamut_fold(GAMUT_LIMIT));
+        let mut previous = 0.0;
+        for i in 0..=200 {
+            let r = i as f32 / 100.0;
+            let f = gamut_fold(r);
+            assert!(f >= previous - 1e-6 && f <= r + 1e-6, "fold misbehaved at {r}: {f}");
+            if r <= GAMUT_LIMIT {
+                assert!(f <= 1.0 + 1e-5, "fold overshot at {r}: {f}");
+            }
+            previous = f;
+        }
+    }
+}

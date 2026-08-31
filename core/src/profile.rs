@@ -37,13 +37,6 @@ pub struct CaptureProfile {
     pub notes: Vec<Value>,
 }
 
-/// A smooth 0 to 1 ramp between two edges.
-fn smooth(edge0: f32, edge1: f32, x: f32) -> f32 {
-    let t = ((x - edge0) / (edge1 - edge0).max(1e-9)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
-
 impl CaptureProfile {
     /// Raw numbers for a client to format in whatever locale it is in.
     pub fn values(&self) -> Value {
@@ -141,7 +134,7 @@ pub fn derive(meta: &Meta, w: usize, h: usize, crop_factor: Option<f32>) -> Capt
     // --- camera shake -----------------------------------------------------
     // The hand-holding rule only describes a hand.
     if p.shutter_s > 0.0 && p.focal35_mm > 0.0 {
-        let handheld = 1.0 - smooth(0.5, 2.0, p.shutter_s);
+        let handheld = 1.0 - kit::smoothstep(0.5, 2.0, p.shutter_s);
         p.shake_risk =
             ((p.shutter_s * p.focal35_mm).log2() / 2.0).clamp(0.0, 1.0) * handheld;
         if p.shake_risk > 0.3 {
@@ -187,7 +180,7 @@ pub fn tune(preset: &Preset, p: &CaptureProfile) -> Preset {
     // The automatic white balance assumes the scene averages out to grey, which
     // daylight mostly does and a city at night does not.
     if let (Some(ev), false) = (p.scene_ev, p.flash) {
-        out.wb_strength = preset.wb_strength * (0.3 + 0.7 * smooth(2.0, 7.0, ev));
+        out.wb_strength = preset.wb_strength * (0.3 + 0.7 * kit::smoothstep(2.0, 7.0, ev));
     }
     out
 }

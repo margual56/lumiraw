@@ -275,21 +275,6 @@ impl Stack {
         out
     }
 
-    /// A short digest of what this stack does to a picture, for a cache key.
-    pub fn fingerprint(&self) -> u64 {
-        if self.identity {
-            return 0;
-        }
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for v in &self.baked {
-            for byte in v.to_bits().to_le_bytes() {
-                h ^= byte as u64;
-                h = h.wrapping_mul(0x100_0000_01b3);
-            }
-        }
-        h
-    }
-
     /// How many control points shaped each curve, composite first.
     pub fn counts(&self) -> [usize; 4] {
         [self.composite.knots(), self.channel[0].knots(), self.channel[1].knots(),
@@ -303,18 +288,8 @@ impl Stack {
         let strength = v.get("strength").and_then(|x| x.as_f64()).unwrap_or(1.0) as f32;
         // The region sliders run first and the dragged points second, so the
         // points are read on tones the sliders have already placed.
-        let regions = v.get("regions");
-        let region = |k: &str| regions.and_then(|r| r.get(k)).and_then(|x| x.as_f64())
-                                      .unwrap_or(0.0) as f32;
-        let bands = parametric(region("shadows"), region("darks"), region("lights"),
-                               region("highlights"));
-        Stack::new(
-            bands.then(&Curve::new(&points(v, "rgb"))),
-            Curve::new(&points(v, "r")),
-            Curve::new(&points(v, "g")),
-            Curve::new(&points(v, "b")),
-            strength,
-        )
+        let [bands, rgb, r, g, b] = edited(Some(v));
+        Stack::new(bands.then(&rgb), r, g, b, strength)
     }
 }
 
@@ -458,7 +433,6 @@ mod tests {
     fn an_ungraded_frame_comes_back_untouched() {
         let stack = Stack::identity();
         assert!(stack.is_identity());
-        assert_eq!(stack.fingerprint(), 0, "the identity must key as it did before curves");
         let img = grey(0.1837);
         let out = stack.apply(&img);
         assert_eq!(out.d, img.d, "an identity stack altered a pixel");
@@ -506,18 +480,6 @@ mod tests {
         let img = grey(0.2);
         assert_eq!(none.apply(&img).d, img.d);
         assert!((full.apply(&img).d[0] - 0.2).abs() > 0.05, "full strength did nothing");
-    }
-
-    /// The cache key has to move when the picture would and hold still when it
-    /// would not, or a graded frame is served from a render of an ungraded one.
-    #[test]
-    fn a_fingerprint_follows_the_picture() {
-        let a = Stack::from_json(Some(&serde_json::json!({"rgb": [[0, 0], [0.4, 0.5], [1, 1]]})));
-        let b = Stack::from_json(Some(&serde_json::json!({"rgb": [[0, 0], [0.4, 0.5], [1, 1]]})));
-        let c = Stack::from_json(Some(&serde_json::json!({"rgb": [[0, 0], [0.4, 0.51], [1, 1]]})));
-        assert_eq!(a.fingerprint(), b.fingerprint(), "the same grade keyed two ways");
-        assert_ne!(a.fingerprint(), c.fingerprint(), "a changed grade kept its key");
-        assert_ne!(a.fingerprint(), 0, "a real grade keyed as the identity");
     }
 
     /// Nothing asked for is the ordinary case: most settings carry no curves

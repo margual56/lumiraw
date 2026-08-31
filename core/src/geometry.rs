@@ -1,6 +1,6 @@
 //! Framing: straightening, perspective and crop.
 
-use kit::{sample_bilinear, Image, Mat3d, Matrix3, Plane};
+use kit::{sample_bilinear_rgb, Image, Mat3d, Matrix3, Plane};
 use std::borrow::Cow;
 
 pub const MAX_CANVAS_GROWTH: f64 = 2.4;
@@ -128,27 +128,37 @@ pub fn apply(img: &Image, f: &Framing, crop: bool) -> Image {
         out_h = ((chf as f64 * ch as f64).round() as usize).max(8);
     }
 
-    let planes = [img.plane(0), img.plane(1), img.plane(2)];
     let mut out = Image::new(out_w, out_h);
+    let dst = out.px_mut();
     for oy in 0..out_h {
         let gy = (oy as f64 + y0) - ch as f64 / 2.0;
         for ox in 0..out_w {
             let gx = (ox as f64 + x0) - cw as f64 / 2.0;
-            let mut den = inv[2][0] * gx + inv[2][1] * gy + inv[2][2];
-            if den.abs() < 1e-9 {
-                den = 1e-9;
-            }
-            let sx = (inv[0][0] * gx + inv[0][1] * gy + inv[0][2]) / den + (w as f64 - 1.0) / 2.0;
-            let sy = (inv[1][0] * gx + inv[1][1] * gy + inv[1][2]) / den + (h as f64 - 1.0) / 2.0;
-            let i = (oy * out_w + ox) * 3;
-            if sx >= 0.0 && sx <= w as f64 - 1.0 && sy >= 0.0 && sy <= h as f64 - 1.0 {
-                for c in 0..3 {
-                    out.d[i + c] = sample_bilinear(&planes[c], sx as f32, sy as f32);
-                }
+            let (sx, sy) = to_source(&inv, gx, gy, w, h);
+            if inside(sx, sy, w, h) {
+                dst[oy * out_w + ox] = sample_bilinear_rgb(img, sx as f32, sy as f32);
             }
         }
     }
     out
+}
+
+/// Where a point of the output canvas, measured from its centre, comes from
+/// in the source frame, in the source's pixel coordinates.
+#[inline]
+fn to_source(inv: &Mat3d, gx: f64, gy: f64, w: usize, h: usize) -> (f64, f64) {
+    let mut den = inv[2][0] * gx + inv[2][1] * gy + inv[2][2];
+    if den.abs() < 1e-9 {
+        den = 1e-9;
+    }
+    let sx = (inv[0][0] * gx + inv[0][1] * gy + inv[0][2]) / den + (w as f64 - 1.0) / 2.0;
+    let sy = (inv[1][0] * gx + inv[1][1] * gy + inv[1][2]) / den + (h as f64 - 1.0) / 2.0;
+    (sx, sy)
+}
+
+#[inline]
+fn inside(sx: f64, sy: f64, w: usize, h: usize) -> bool {
+    sx >= 0.0 && sx <= w as f64 - 1.0 && sy >= 0.0 && sy <= h as f64 - 1.0
 }
 
 /// The largest centred crop with no empty corners.  Closed form for the
@@ -205,15 +215,8 @@ fn corners_inside(inv: &Mat3d, w: usize, h: usize, cw: usize, ch: usize, fw: f32
     let xs = [-fw as f64, fw as f64, fw as f64, -fw as f64];
     let ys = [-fh as f64, -fh as f64, fh as f64, fh as f64];
     for i in 0..4 {
-        let gx = xs[i] * cw as f64 / 2.0;
-        let gy = ys[i] * ch as f64 / 2.0;
-        let mut den = inv[2][0] * gx + inv[2][1] * gy + inv[2][2];
-        if den.abs() < 1e-9 {
-            den = 1e-9;
-        }
-        let sx = (inv[0][0] * gx + inv[0][1] * gy + inv[0][2]) / den + (w as f64 - 1.0) / 2.0;
-        let sy = (inv[1][0] * gx + inv[1][1] * gy + inv[1][2]) / den + (h as f64 - 1.0) / 2.0;
-        if !(sx >= 0.0 && sx <= w as f64 - 1.0 && sy >= 0.0 && sy <= h as f64 - 1.0) {
+        let (sx, sy) = to_source(inv, xs[i] * cw as f64 / 2.0, ys[i] * ch as f64 / 2.0, w, h);
+        if !inside(sx, sy, w, h) {
             return false;
         }
     }

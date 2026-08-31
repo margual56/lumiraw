@@ -61,22 +61,20 @@ impl Image {
     }
     pub fn plane(&self, c: usize) -> Plane {
         let mut p = Plane::new(self.w, self.h);
-        for i in 0..self.w * self.h {
-            p.d[i] = self.d[i * 3 + c];
+        for (v, px) in p.d.iter_mut().zip(self.px()) {
+            *v = px[c];
         }
         p
     }
     pub fn set_plane(&mut self, c: usize, p: &Plane) {
-        for i in 0..self.w * self.h {
-            self.d[i * 3 + c] = p.d[i];
+        for (px, v) in self.px_mut().iter_mut().zip(&p.d) {
+            px[c] = *v;
         }
     }
     pub fn from_planes(r: &Plane, g: &Plane, b: &Plane) -> Image {
         let mut img = Image::new(r.w, r.h);
-        for i in 0..r.w * r.h {
-            img.d[i * 3] = r.d[i];
-            img.d[i * 3 + 1] = g.d[i];
-            img.d[i * 3 + 2] = b.d[i];
+        for (i, px) in img.px_mut().iter_mut().enumerate() {
+            *px = [r.d[i], g.d[i], b.d[i]];
         }
         img
     }
@@ -89,7 +87,7 @@ impl Image {
         out
     }
     pub fn scale_channels(&mut self, g: [f32; 3]) {
-        for px in self.d.chunks_exact_mut(3) {
+        for px in self.px_mut() {
             px[0] *= g[0];
             px[1] *= g[1];
             px[2] *= g[2];

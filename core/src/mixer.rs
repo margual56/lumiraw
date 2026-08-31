@@ -1,6 +1,6 @@
 //! Eight hue bands, each with a hue, a saturation and a lightness.
 
-use crate::grade::to_gamut;
+use kit::to_gamut;
 use kit::Plane;
 
 /// The eight bands, by the name each is known by.
@@ -59,21 +59,6 @@ impl Mixer {
             m.lum[i] = read("l").clamp(-1.0, 1.0);
         }
         m
-    }
-
-    /// A digest for the render cache: zero when there is nothing to do.
-    pub fn fingerprint(&self) -> u64 {
-        if self.is_identity() {
-            return 0;
-        }
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for v in self.hue.iter().chain(&self.sat).chain(&self.lum) {
-            for byte in v.to_bits().to_le_bytes() {
-                h ^= byte as u64;
-                h = h.wrapping_mul(0x100_0000_01b3);
-            }
-        }
-        h
     }
 }
 
@@ -165,7 +150,6 @@ mod tests {
         let src = flat(srgb([0.6, 0.3, 0.2]));
         let out = apply(&src, &Mixer::default());
         assert_eq!(out.d, src.d);
-        assert_eq!(Mixer::default().fingerprint(), 0);
     }
 
     /// The eight centres have to be eight distinct hues going round once, or

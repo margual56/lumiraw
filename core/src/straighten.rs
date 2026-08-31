@@ -1,7 +1,7 @@
 //! What would make this picture level, and its verticals upright.
 
 use crate::geometry::Rect;
-use kit::Image;
+use kit::{Image, Plane};
 use serde_json::{json, Value};
 
 /// Long edge the measurement runs at.
@@ -147,20 +147,24 @@ impl Frame {
     }
 }
 
-/// One edge pixel's vote.
+/// One edge pixel's vote on the roll.
 struct Vote {
-    /// Where it is, in pixels from the centre of the working frame.
-    x: f32,
-    y: f32,
-    /// The direction the edge runs in, normalised, pointing down the frame.
-    dx: f32,
-    dy: f32,
     /// How much it should count: the gradient's own strength.
     weight: f32,
     /// How far this edge is from level, in degrees, folded so that a vertical
     /// and a horizontal disagreeing by the same amount vote together.
     tilt: f32,
     vertical: bool,
+}
+
+/// One block of the frame with a single near-vertical line through it.
+struct Cell {
+    /// Where it is, in pixels from the centre of the working frame.
+    x: f32,
+    y: f32,
+    /// The direction the line runs in, normalised, pointing down the frame.
+    dx: f32,
+    dy: f32,
 }
 
 /// Measure the frame and say what would straighten it.
@@ -180,7 +184,9 @@ pub fn propose(img: &Image, rect: Option<Rect>) -> Option<Proposal> {
         img_centre: ((img.w as f64 - 1.0) / 2.0, (img.h as f64 - 1.0) / 2.0),
         half_diag: ((img.w * img.w + img.h * img.h) as f64).sqrt() / 2.0,
     };
-    let votes = gather(&work);
+    // Blurred first, and not only against noise.
+    let luma = kit::gaussian_blur(&kit::luminance(&work), EDGE_SIGMA);
+    let votes = gather(&luma);
     if votes.is_empty() {
         return None;
     }
@@ -205,7 +211,7 @@ pub fn propose(img: &Image, rect: Option<Rect>) -> Option<Proposal> {
     }
     // The vanishing point is fitted from pooled cells rather than from the
     // votes above, for a reason worth writing down.
-    if let Some((perspective, agreement)) = verticals(&cells(&work), &frame, vertical_support) {
+    if let Some((perspective, agreement)) = verticals(&cells(&luma), &frame, vertical_support) {
         out.perspective_v = perspective;
         out.perspective_confidence = agreement;
     }
@@ -213,10 +219,8 @@ pub fn propose(img: &Image, rect: Option<Rect>) -> Option<Proposal> {
 }
 
 /// The frame in blocks, each with the one orientation that runs through it.
-fn cells(work: &Image) -> Vec<Vote> {
-    let luma = kit::gaussian_blur(&kit::luminance(work), EDGE_SIGMA);
+fn cells(luma: &Plane) -> Vec<Cell> {
     let (w, h) = (luma.w, luma.h);
-    let at = |x: usize, y: usize| luma.d[y * w + x];
     let (cx, cy) = ((w as f32 - 1.0) / 2.0, (h as f32 - 1.0) / 2.0);
     let family = VERTICAL_DEGREES.to_radians();
     let right_angle = std::f32::consts::FRAC_PI_2;
@@ -229,10 +233,7 @@ fn cells(work: &Image) -> Vec<Vote> {
             let (mut jxx, mut jxy, mut jyy) = (0.0f64, 0.0f64, 0.0f64);
             for y in y0..y0 + CELL {
                 for x in x0..x0 + CELL {
-                    let gx = (at(x + 1, y - 1) + 2.0 * at(x + 1, y) + at(x + 1, y + 1))
-                        - (at(x - 1, y - 1) + 2.0 * at(x - 1, y) + at(x - 1, y + 1));
-                    let gy = (at(x - 1, y + 1) + 2.0 * at(x, y + 1) + at(x + 1, y + 1))
-                        - (at(x - 1, y - 1) + 2.0 * at(x, y - 1) + at(x + 1, y - 1));
+                    let (gx, gy) = sobel(luma, x, y);
                     jxx += (gx * gx) as f64;
                     jxy += (gx * gy) as f64;
                     jyy += (gy * gy) as f64;
@@ -262,16 +263,11 @@ fn cells(work: &Image) -> Vec<Vote> {
             if phi.abs() < right_angle - family {
                 continue;
             }
-            out.push(Vote {
+            out.push(Cell {
                 x: (x0 - CELL) as f32 + CELL as f32 / 2.0 - cx,
                 y: y0 as f32 + CELL as f32 / 2.0 - cy,
                 dx,
                 dy,
-                // The coherent part of the energy: a long clean edge across
-                // the cell counts for more than a faint one.
-                weight: (diff * coherence) as f32,
-                tilt: (phi - phi.signum() * right_angle).to_degrees(),
-                vertical: true,
             });
         }
         y0 += CELL;
@@ -280,36 +276,25 @@ fn cells(work: &Image) -> Vec<Vote> {
 }
 
 /// Every pixel with a strong enough gradient, as a vote.
-fn gather(work: &Image) -> Vec<Vote> {
-    // Blurred first, and not only against noise.
-    let luma = kit::gaussian_blur(&kit::luminance(work), EDGE_SIGMA);
+fn gather(luma: &Plane) -> Vec<Vote> {
     let (w, h) = (luma.w, luma.h);
-    let at = |x: usize, y: usize| luma.d[y * w + x];
-
-    // Sobel, which is a derivative and a smoothing in one and is enough here:
-    // the question is which way an edge runs, not exactly where it is.
     let mut grads = Vec::with_capacity((w - 2) * (h - 2));
     for y in 1..h - 1 {
         for x in 1..w - 1 {
-            let gx = (at(x + 1, y - 1) + 2.0 * at(x + 1, y) + at(x + 1, y + 1))
-                - (at(x - 1, y - 1) + 2.0 * at(x - 1, y) + at(x - 1, y + 1));
-            let gy = (at(x - 1, y + 1) + 2.0 * at(x, y + 1) + at(x + 1, y + 1))
-                - (at(x - 1, y - 1) + 2.0 * at(x, y - 1) + at(x + 1, y - 1));
-            grads.push((x, y, gx, gy));
+            grads.push(sobel(luma, x, y));
         }
     }
-    let mut mags: Vec<f32> = grads.iter().map(|(_, _, gx, gy)| gx.hypot(*gy)).collect();
+    let mut mags: Vec<f32> = grads.iter().map(|(gx, gy)| gx.hypot(*gy)).collect();
     let cut = kit::percentile(&mags, EDGE_QUANTILE);
     // A frame of flat sky has a ninetieth percentile too, and it is noise.
     let cut = cut.max(0.10);
     mags.clear();
     mags.shrink_to_fit();
 
-    let (cx, cy) = ((w as f32 - 1.0) / 2.0, (h as f32 - 1.0) / 2.0);
     let family = FAMILY_DEGREES.to_radians();
     let right_angle = std::f32::consts::FRAC_PI_2;
     let mut votes = Vec::new();
-    for (x, y, gx, gy) in grads {
+    for (gx, gy) in grads {
         let weight = gx.hypot(gy);
         if weight < cut {
             continue;
@@ -338,17 +323,22 @@ fn gather(work: &Image) -> Vec<Vote> {
         } else {
             continue;
         };
-        votes.push(Vote {
-            x: x as f32 - cx,
-            y: y as f32 - cy,
-            dx,
-            dy,
-            weight,
-            tilt: tilt.to_degrees(),
-            vertical,
-        });
+        votes.push(Vote { weight, tilt: tilt.to_degrees(), vertical });
     }
     votes
+}
+
+/// Sobel, which is a derivative and a smoothing in one and is enough here:
+/// the question is which way an edge runs, not exactly where it is.
+#[inline]
+fn sobel(luma: &Plane, x: usize, y: usize) -> (f32, f32) {
+    let w = luma.w;
+    let at = |x: usize, y: usize| luma.d[y * w + x];
+    let gx = (at(x + 1, y - 1) + 2.0 * at(x + 1, y) + at(x + 1, y + 1))
+        - (at(x - 1, y - 1) + 2.0 * at(x - 1, y) + at(x - 1, y + 1));
+    let gy = (at(x - 1, y + 1) + 2.0 * at(x, y + 1) + at(x + 1, y + 1))
+        - (at(x - 1, y - 1) + 2.0 * at(x, y - 1) + at(x + 1, y - 1));
+    (gx, gy)
 }
 
 /// The roll, from the fullest bin of the folded tilt histogram.
@@ -410,7 +400,7 @@ fn roll(votes: &[Vote], total: f32) -> Option<(f32, f32)> {
 }
 
 /// Where the verticals meet, and what that is worth as a shift.
-fn verticals(cells: &[Vote], frame: &Frame, support: f32) -> Option<(f64, f32)> {
+fn verticals(cells: &[Cell], frame: &Frame, support: f32) -> Option<(f64, f32)> {
     if support < MIN_SUPPORT || cells.len() < MIN_CELLS {
         return None;
     }

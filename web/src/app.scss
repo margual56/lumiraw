@@ -98,6 +98,9 @@
   .shell { display: flex; flex-direction: column; height: 100%; }
 
   .brand {
+    /* An h1 on the main page, where the name is the page's heading, so it
+       has to shed the browser's heading size and margins. */
+    margin: 0; font-size: inherit; line-height: inherit;
     font-weight: 650; letter-spacing: .2px;
     @include phone { font-size: 15px; }
     /* The direct child only: the sub-line holds the tagline and the version,

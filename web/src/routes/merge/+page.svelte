@@ -4,6 +4,7 @@
   import { base } from '$app/paths';
   import Progress from '$lib/components/Progress.svelte';
   import LocalePicker from '$lib/components/LocalePicker.svelte';
+  import Meta from '$lib/components/Meta.svelte';
   import * as api from '$lib/api.js';
   import { t, n, signed, shutter, loose } from '$lib/i18n.svelte.js';
   import { errorText, RAW_ACCEPT } from '$lib/format.js';
@@ -192,6 +193,8 @@
     ? Math.max(0, ...result.merge.shifts.flatMap(([x, y]) => [Math.abs(x), Math.abs(y)]))
     : 0);
 </script>
+
+<Meta title={t('seo.merge.title')} description={t('seo.merge.description')} path="/merge" />
 
 <div class="shell">
   <header>

@@ -1,6 +1,23 @@
 /** Source language.  Any key missing from another locale falls back to here. */
 export default {
   'app.tagline': 'raw → finished photograph',
+
+  // Page titles and descriptions: what a search result or a pasted link shows.
+  'seo.home.title': 'LumiRaw · Develop raw photos in your browser',
+  'seo.home.description': 'Open a raw file from your camera or phone and download a finished JPEG, PNG or TIFF. It runs in the browser tab: nothing is uploaded, there is no account, and it works offline.',
+  'seo.merge.title': 'Merge bracketed raw exposures · LumiRaw',
+  'seo.merge.description': 'Combine a bracket of raw exposures into one frame with more dynamic range, aligned and with moving objects handled, then develop it. In your browser, without uploading anything.',
+  'seo.about.title': 'About LumiRaw',
+  'seo.about.description': 'What LumiRaw does with a raw file, step by step, why your photos never leave your computer, and what it can’t do yet.',
+  'seo.cameras.title': 'Supported cameras and raw formats · LumiRaw',
+  'seo.cameras.description': 'LumiRaw opens raw files from more than 700 cameras by Canon, Sony, Nikon, Fujifilm, Panasonic, OM System and others, and DNG from any camera or phone.',
+  'links.about': 'About',
+  'links.cameras': 'Supported cameras',
+  'links.open': 'Open a raw file',
+  'cameras.maker': 'Maker',
+  'cameras.models': 'Models',
+  'cameras.files': 'Files',
+  'cameras.examples': 'Including',
   'locale.label': 'Language',
 
   'step.upload': 'Upload',

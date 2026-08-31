@@ -1,6 +1,22 @@
 /** Español (castellano). */
 export default {
   'app.tagline': 'del raw a la fotografía terminada',
+
+  'seo.home.title': 'LumiRaw · Revela fotos RAW en el navegador',
+  'seo.home.description': 'Abre un RAW de tu cámara o tu móvil y descarga la foto terminada en JPEG, PNG o TIFF. Funciona en la pestaña del navegador: no se sube nada, no hay cuenta y funciona sin conexión.',
+  'seo.merge.title': 'Fusionar exposiciones RAW horquilladas · LumiRaw',
+  'seo.merge.description': 'Combina varias exposiciones RAW en un solo fotograma con más rango dinámico, alineado y teniendo en cuenta lo que se movió, y revélalo después. En el navegador, sin subir nada.',
+  'seo.about.title': 'Qué es LumiRaw',
+  'seo.about.description': 'Qué hace LumiRaw con un RAW, paso a paso, por qué tus fotos no salen de tu ordenador y lo que todavía no sabe hacer.',
+  'seo.cameras.title': 'Cámaras y formatos RAW compatibles · LumiRaw',
+  'seo.cameras.description': 'LumiRaw abre RAW de más de 700 cámaras de Canon, Sony, Nikon, Fujifilm, Panasonic, OM System y otras marcas, y DNG de cualquier cámara o móvil.',
+  'links.about': 'Qué es',
+  'links.cameras': 'Cámaras compatibles',
+  'links.open': 'Abrir un RAW',
+  'cameras.maker': 'Marca',
+  'cameras.models': 'Modelos',
+  'cameras.files': 'Archivos',
+  'cameras.examples': 'Entre ellas',
   'locale.label': 'Idioma',
 
   'step.upload': 'Subir',

@@ -21,7 +21,8 @@
   import * as api from '$lib/api.js';
   import { t, n } from '$lib/i18n.svelte.js';
   import { errorText } from '$lib/format.js';
-  import { NAME } from '$lib/brand.js';
+  import { NAME, SITE } from '$lib/brand.js';
+  import Meta from '$lib/components/Meta.svelte';
   import { history, observe, resetHistory, undo, redo, onKey } from '$lib/history.svelte.js';
   import {
     app, settingsKey, stepVisible, setStraight, ungraded,
@@ -191,15 +192,28 @@
 
 <svelte:window onkeydown={onKey} />
 
+<Meta title={t('seo.home.title')} description={t('seo.home.description')} path="/"
+      schema={{
+        '@context': 'https://schema.org',
+        '@type': 'WebApplication',
+        name: NAME,
+        url: `${SITE}/`,
+        description: t('seo.home.description'),
+        applicationCategory: 'MultimediaApplication',
+        operatingSystem: 'Any',
+        browserRequirements: 'Requires WebAssembly',
+        offers: { '@type': 'Offer', price: '0', priceCurrency: 'EUR' },
+      }} />
+
 <div class="shell">
   <header>
-    <div class="brand">
+    <h1 class="brand">
       {NAME}
       <span>
         <span class="tagline">{t('app.tagline')}</span>
         {#if app.version}<span class="ver">v{app.version}</span>{/if}
       </span>
-    </div>
+    </h1>
     <Stepper onstep={go} />
     <LocalePicker />
   </header>
@@ -220,6 +234,10 @@
           <strong>{t('merge.link')}</strong>
           <span>{t('merge.linkHint')}</span>
         </a>
+        <nav class="more">
+          <a href="{base}/about">{t('links.about')}</a>
+          <a href="{base}/cameras">{t('links.cameras')}</a>
+        </nav>
       </div>
     {:else if app.step === FRAME}
       <Framing />
@@ -297,6 +315,13 @@
   .nav-start {
     display: flex; gap: 6px;
     .icon { min-width: 36px; padding-inline: 8px; font-size: 16px; line-height: 1; }
+  }
+
+  /* For whoever wants to know more before handing over a file, and for
+     search engines, which only find the other pages through links. */
+  .more {
+    display: flex; gap: 18px; margin-top: 12px; padding-left: 2px; font-size: 12.5px;
+    a { color: var(--color-muted); text-decoration: none; &:hover { color: var(--color-ink); } }
   }
 
   .straight {

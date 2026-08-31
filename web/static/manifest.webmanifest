@@ -2,11 +2,18 @@
   "name": "LumiRaw",
   "short_name": "LumiRaw",
   "description": "A raw developer that runs entirely in your browser. Nothing is uploaded.",
+  "id": "./",
+  "lang": "en",
+  "categories": ["photo", "graphics"],
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#0d0e10",
   "theme_color": "#0d0e10",
+  "shortcuts": [
+    { "name": "Merge exposures", "short_name": "Merge", "url": "./merge",
+      "description": "Combine a bracket of raw files into one frame" }
+  ],
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },

@@ -236,6 +236,15 @@ pub fn view_bounds(w: usize, h: usize, rect: Option<Rect>) -> Option<(usize, usi
     Some((x0, y0, x1 - x0, y1 - y0))
 }
 
+/// A rectangle drawn in fractions of the kept frame, in fractions of the whole
+/// canvas instead.
+pub fn in_frame(rect: Rect, frame: Option<Rect>) -> Rect {
+    match frame {
+        None => rect,
+        Some((fx, fy, fw, fh)) => (fx + rect.0 * fw, fy + rect.1 * fh, rect.2 * fw, rect.3 * fh),
+    }
+}
+
 /// The estimators measure only the rectangle being kept.
 pub fn stats_view_img(img: &Image, rect: Option<Rect>) -> Cow<'_, Image> {
     match view_bounds(img.w, img.h, rect) {

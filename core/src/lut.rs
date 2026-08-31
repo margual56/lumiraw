@@ -1,7 +1,7 @@
 //! A 3D lookup table, read from a `.cube` file.
 
 use kit::Image;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 /// The largest cube this will read.
 pub const MAX_SIZE: usize = 64;
@@ -22,11 +22,20 @@ pub struct Lut {
 thread_local! {
     /// The one loaded table, if any.
     static CURRENT: RefCell<Option<Lut>> = const { RefCell::new(None) };
+    /// Bumped whenever the table in force changes, so a cached render can tell
+    /// that the same settings would now come out differently.
+    static GENERATION: Cell<u64> = const { Cell::new(0) };
 }
 
 /// Hold this table as the one in force, or clear it.
 pub fn set(lut: Option<Lut>) {
     CURRENT.with(|c| *c.borrow_mut() = lut);
+    GENERATION.with(|g| g.set(g.get() + 1));
+}
+
+/// Which table is in force, as a number that changes whenever it does.
+pub fn generation() -> u64 {
+    GENERATION.with(|g| g.get())
 }
 
 /// Whether a table is loaded, and what it is.

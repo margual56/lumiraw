@@ -64,6 +64,8 @@ export function toggleDetail(detail) {
       return t('detail.vibrance', { boost: n(p.boost) });
     case 'denoise':
       return t('detail.denoise', { blend: n(p.blend), radius: loose(p.radius) });
+    case 'refocus':
+      return t('detail.refocus', { amount: n(p.amount), blur: n(p.blur, 1) });
     case 'sharpen':
       return t('detail.sharpen', { amount: n(p.amount), radius: n(p.radius) });
     default:

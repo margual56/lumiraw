@@ -2,7 +2,7 @@
 
 use crate::analyze;
 use crate::curve;
-use crate::geometry::{stats_view_img, stats_view_plane, Framing, Rect};
+use crate::geometry::{in_frame, stats_view_img, stats_view_plane, Framing, Rect};
 use kit::{Image, Lab, Plane, Report, round_to, with};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -81,25 +81,25 @@ pub fn preset_by_name(name: &str) -> Preset {
 }
 
 /// Every automatic correction the user is allowed to switch off, in the order
-/// the pipeline applies them.  The UI builds its toggle list straight from here.
-pub const TOGGLES: [(&str, &str, &str); 13] = [
-    ("lens_vignetting", "Vignetting", "Lens"),
-    ("lens_distortion", "Distortion", "Lens"),
-    ("lens_tca", "Chromatic aberration", "Lens"),
-    ("white_balance", "White balance", "Colour"),
-    ("exposure", "Exposure", "Tone"),
-    ("tone_map", "Local tone mapping", "Tone"),
-    ("levels", "Black & white point", "Tone"),
-    ("contrast", "Contrast", "Tone"),
-    ("vibrance", "Vibrance", "Colour"),
-    ("denoise_chroma", "Colour noise", "Detail"),
-    ("denoise_luma", "Luminance noise", "Detail"),
-    ("refocus", "Focus recovery", "Detail"),
-    ("sharpen", "Sharpening", "Detail"),
+/// the pipeline applies them.
+pub const TOGGLES: [(&str, &str, &str, &str); 13] = [
+    ("lens_vignetting", "Vignetting", "Lens", "vignetting"),
+    ("lens_distortion", "Distortion", "Lens", "distortion"),
+    ("lens_tca", "Chromatic aberration", "Lens", "chromatic aberration"),
+    ("white_balance", "White balance", "Colour", "white balance"),
+    ("exposure", "Exposure", "Tone", "exposure"),
+    ("tone_map", "Local tone mapping", "Tone", "tone mapping"),
+    ("levels", "Black & white point", "Tone", "levels"),
+    ("contrast", "Contrast", "Tone", "contrast"),
+    ("vibrance", "Vibrance", "Colour", "vibrance"),
+    ("denoise_chroma", "Colour noise", "Detail", "colour noise"),
+    ("denoise_luma", "Luminance noise", "Detail", "luminance noise"),
+    ("refocus", "Focus recovery", "Detail", "focus recovery"),
+    ("sharpen", "Sharpening", "Detail", "sharpening"),
 ];
 
 /// Everything the user chose.  `None` means "decide it automatically".
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub framing: Framing,
     pub exposure_rect: Option<Rect>,
@@ -251,10 +251,11 @@ fn skin_hue() -> f32 {
 // region sampling
 // -------------------------------------------------------------------------
 
-/// Pixels inside a normalised rectangle, with blown ones dropped.
-pub fn sample_rect(img: &Image, rect: Rect) -> Option<Vec<[f32; 3]>> {
+/// Pixels inside a rectangle given in fractions of the kept `frame`, with blown
+/// ones dropped.
+pub fn sample_rect(img: &Image, rect: Rect, frame: Option<Rect>) -> Option<Vec<[f32; 3]>> {
     let (w, h) = (img.w as f32, img.h as f32);
-    let (x, y, rw, rh) = rect;
+    let (x, y, rw, rh) = in_frame(rect, frame);
     let x0 = (x.clamp(0.0, 1.0) * w) as usize;
     let y0 = (y.clamp(0.0, 1.0) * h) as usize;
     let x1 = ((x + rw).clamp(0.0, 1.0) * w) as usize;
@@ -279,13 +280,13 @@ pub fn sample_rect(img: &Image, rect: Rect) -> Option<Vec<[f32; 3]>> {
 
 /// White balance, on the frame and on its measuring thumbnail alike.
 pub fn apply_white_balance(img: &mut Image, thumb: &mut Image, s: &Settings, p: &Preset,
-                           report: &mut Report) {
+                           frame: Option<Rect>, report: &mut Report) {
     if !s.on("white_balance") {
         report.skipped("white balance", "switched_off", json!({}));
         apply_temp_tint(img, thumb, s, report);
         return;
     }
-    if let Some(patch) = s.wb_rect.and_then(|r| sample_rect(img, r)).filter(|p| p.len() >= 4) {
+    if let Some(patch) = s.wb_rect.and_then(|r| sample_rect(img, r, frame)).filter(|p| p.len() >= 4) {
         let n = patch.len() as f32;
         let mut mean = [0f32; 3];
         for px in &patch {
@@ -352,14 +353,14 @@ pub fn adapt(img: &mut Image, gains: [f32; 3]) {
 }
 
 pub fn apply_exposure(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
-                      report: &mut Report) -> f32 {
+                      frame: Option<Rect>, report: &mut Report) -> f32 {
     if !s.on("exposure") {
         report.skipped("exposure", "switched_off", json!({}));
         let gain = s.exposure_bias.exp2();
         img.scale(gain);
         return gain;
     }
-    if let Some(patch) = s.exposure_rect.and_then(|r| sample_rect(img, r)) {
+    if let Some(patch) = s.exposure_rect.and_then(|r| sample_rect(img, r, frame)) {
         // Geometric mean: a few bright specks in the selection should not
         // drag the whole frame down.
         let log_sum: f64 = patch
@@ -812,9 +813,9 @@ pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut
     // One thumbnail for every scene-linear measurement, carried through the
     // same white balance and exposure as the frame (see apply_white_balance).
     let mut thumb = measure(&img, args.stats_rect);
-    apply_white_balance(&mut img, &mut thumb, settings, &p, report);
+    apply_white_balance(&mut img, &mut thumb, settings, &p, args.stats_rect, report);
     step(&mut progress, &mut mark);
-    let exposure_gain = apply_exposure(&mut img, &thumb, settings, &p, report);
+    let exposure_gain = apply_exposure(&mut img, &thumb, settings, &p, args.stats_rect, report);
     thumb.scale(exposure_gain);
     step(&mut progress, &mut mark);
 
@@ -841,6 +842,28 @@ pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The interface draws the white balance and exposure boxes on the framed
+    /// picture.
+    #[test]
+    fn a_box_is_read_inside_the_kept_frame() {
+        let mut img = Image::new(8, 8);
+        for (i, px) in img.px_mut().iter_mut().enumerate() {
+            *px = [(i % 8) as f32 / 10.0, (i / 8) as f32 / 10.0, 0.5];
+        }
+        // The frame is the middle half; its top-left quarter is canvas 2..4.
+        let got = sample_rect(&img, (0.0, 0.0, 0.5, 0.5), Some((0.25, 0.25, 0.5, 0.5))).unwrap();
+        let mut want = Vec::new();
+        for y in 2..4 {
+            for x in 2..4 {
+                want.push(img.px()[y * 8 + x]);
+            }
+        }
+        assert_eq!(got, want);
+        // With no frame in play the box is the canvas's own, as before.
+        let whole = sample_rect(&img, (0.0, 0.0, 0.25, 0.25), None).unwrap();
+        assert_eq!(whole, vec![img.px()[0], img.px()[1], img.px()[8], img.px()[9]]);
+    }
 
     /// The S-curve is pivoted on the image's own midtone, so it must hold the
     /// pivot in place while it steepens either side of it.

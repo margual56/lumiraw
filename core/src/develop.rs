@@ -25,8 +25,9 @@ pub struct Development {
     pub profile: CaptureProfile,
     pub lens_match: Option<LensMatch>,
     cache: Vec<(String, Image, Option<Rect>, Map<String, Value>)>,
-    /// The last "before" rendered, and the key it was rendered for.
-    baseline: Option<(String, Image)>,
+    /// The last "before" rendered, with the settings, size and 3D table it
+    /// was rendered from.
+    baseline: Option<(Settings, Option<usize>, u64, Image)>,
 }
 
 impl Development {
@@ -256,7 +257,7 @@ impl Development {
         flat.enabled.clear();
         // The grade comes off the "before" for the same reason the look does.
         flat.curves = crate::curve::Stack::identity();
-        for (key, _, _) in TOGGLES.iter() {
+        for (key, ..) in TOGGLES.iter() {
             // Hold on to what the user asked for themselves, drop what was
             // decided for them.
             let keep = match *key {
@@ -266,28 +267,16 @@ impl Development {
             };
             flat.enabled.insert(key.to_string(), if keep { settings.on(key) } else { false });
         }
-        // The photographer's own local work stays on both sides of the
-        // comparison, like the grade stays off both.
-        let key = format!(
-            "{:?}|{:?}|{:?}|{}|{:?}|{:?}|{}|{}|{}|{}",
-            flat.filters,
-            flat.spots,
-            long_edge,
-            settings.framing.key(),
-            flat.exposure_rect,
-            flat.wb_rect,
-            flat.exposure_bias,
-            flat.temperature,
-            flat.tint,
-            flat.preset
-        );
-        if let Some((cached, img)) = &self.baseline {
-            if *cached == key {
+        // Cached on everything the render reads, compared whole rather than
+        // listed field by field.
+        let lut = crate::lut::generation();
+        if let Some((s, edge, g, img)) = &self.baseline {
+            if *s == flat && *edge == long_edge && *g == lut {
                 return img.clone();
             }
         }
         let (img, _) = self.render(&flat, long_edge, true, None);
-        self.baseline = Some((key, img.clone()));
+        self.baseline = Some((flat, long_edge, lut, img.clone()));
         img
     }
 
@@ -324,30 +313,14 @@ impl Development {
 
     /// The automatic corrections, with what each one actually decided.
     pub fn toggles(&self, settings: &Settings, report: &Report) -> Value {
-        let stage_for = |key: &str| -> &str {
-            match key {
-                "lens_vignetting" => "vignetting",
-                "lens_distortion" => "distortion",
-                "lens_tca" => "chromatic aberration",
-                "white_balance" => "white balance",
-                "exposure" => "exposure",
-                "tone_map" => "tone mapping",
-                "levels" => "levels",
-                "contrast" => "contrast",
-                "vibrance" => "vibrance",
-                "denoise_chroma" => "colour noise",
-                "denoise_luma" => "luminance noise",
-                _ => "sharpening",
-            }
-        };
         let mut out = Vec::new();
-        for (key, label, group) in TOGGLES.iter() {
-            let info = report.get(stage_for(key));
+        for (key, label, group, stage) in TOGGLES.iter() {
+            let info = report.get(stage);
             let applied = info.get("applied").and_then(|v| v.as_bool()).unwrap_or(true);
             let reason = info.get("reason").and_then(|v| v.as_str()).unwrap_or("");
             // "Unavailable" means the correction *cannot* run, no lens match,
             // or no data for this correction, as opposed to switched off.
-            let available = if key.starts_with("lens_") {
+            let available = if *group == "Lens" {
                 self.lens_match.is_some() && (applied || reason == "switched_off")
             } else {
                 true
@@ -435,8 +408,56 @@ fn detail(key: &str, info: &Value) -> Value {
         "vibrance" => json!({"code": "vibrance", "params": {"boost": g("final_boost")}}),
         "denoise_chroma" | "denoise_luma" => json!({"code": "denoise",
                              "params": {"blend": g("blend"), "radius": g("radius")}}),
+        "refocus" => json!({"code": "refocus",
+                            "params": {"amount": g("amount"), "blur": g("sigma_px")}}),
         "sharpen" => json!({"code": "sharpen",
                             "params": {"amount": g("amount"), "radius": g("radius_px")}}),
         _ => json!({}),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn development() -> Development {
+        let mut img = Image::new(96, 64);
+        for (i, px) in img.px_mut().iter_mut().enumerate() {
+            let (x, y) = ((i % 96) as f32 / 96.0, (i / 96) as f32 / 64.0);
+            *px = [0.05 + 0.3 * x, 0.08 + 0.2 * y, 0.04 + 0.1 * x * y];
+        }
+        Development::from_frame("test", img, Meta::default(), Vec::new(), None)
+    }
+
+    /// The "before" is cached, and the cache has to notice every setting the
+    /// render reads.
+    #[test]
+    fn the_before_follows_every_setting_it_renders() {
+        let mut dev = development();
+        let plain = Settings::default();
+        let a = dev.baseline(&plain, Some(64));
+        assert_eq!(dev.baseline(&plain, Some(64)).d, a.d, "the same settings rendered twice");
+        let mut vignetted = plain.clone();
+        vignetted.vignette = 0.8;
+        assert_ne!(dev.baseline(&vignetted, Some(64)).d, a.d, "a stale before for the vignette");
+        let mut toned = plain.clone();
+        toned.highlights = -0.8;
+        assert_ne!(dev.baseline(&toned, Some(64)).d, a.d, "a stale before for the tone zones");
+    }
+
+    /// Each toggle reports what its own stage did, not a neighbour's.
+    #[test]
+    fn every_toggle_reads_its_own_stage() {
+        let mut dev = development();
+        let settings = Settings::default();
+        let (_, report) = dev.render(&settings, Some(64), true, None);
+        let toggles = dev.toggles(&settings, &report);
+        let refocus = toggles.as_array().unwrap().iter().find(|t| t["id"] == "refocus").unwrap();
+        assert_eq!(refocus["detail"]["code"], "reason");
+        let reason = refocus["detail"]["params"]["reason"].as_str().unwrap();
+        assert!(reason == "sharp_enough" || reason == "not_asked", "refocus said {reason}");
+        for (_, _, _, stage) in TOGGLES.iter() {
+            assert!(!report.get(stage).as_object().unwrap().is_empty(), "no report stage called {stage}");
+        }
     }
 }

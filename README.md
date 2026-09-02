@@ -4,6 +4,8 @@ Raw photo developer that runs entirely in the browser. The pipeline is
 written in Rust and compiled to WebAssembly, so photos never leave your
 machine.
 
+https://lumiraw.app
+
 ## Building
 
 ```

@@ -70,15 +70,18 @@
 </details>
 
 <style lang="scss">
+  @use '../../styles/type' as *;
+  @use '../../styles/breakpoints' as *;
   .mixer { margin-top: 16px; border-top: 1px solid var(--color-line); padding-top: 12px; }
-  summary { cursor: pointer; color: var(--color-muted); font-size: 12px; }
-  .small { font-size: 11.5px; margin: 10px 0; }
+  summary { cursor: pointer; color: var(--color-muted); @include small(12px); }
+  .small { @include small(11.5px); margin: 10px 0; }
   .chips {
     display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 12px;
   }
   .chips button {
     display: flex; flex-direction: column; align-items: center; gap: 3px;
     padding: 6px 2px; cursor: pointer; font: inherit; font-size: 10px;
+    @include phone { padding: 8px 2px; font-size: 12px; }
     color: var(--color-muted); background: var(--color-panel-2);
     border: 1px solid var(--color-line); border-radius: 7px;
     &:hover { border-color: var(--color-muted); filter: none; }

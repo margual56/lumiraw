@@ -61,16 +61,17 @@
 </div>
 
 <style lang="scss">
+  @use '../../styles/type' as *;
+  @use '../../styles/breakpoints' as *;
   .cube { margin-top: 18px; }
   h3 {
-    margin: 0 0 4px; font-size: 10.5px; text-transform: uppercase;
-    letter-spacing: .09em; color: var(--color-muted); font-weight: 600;
+    margin: 0 0 4px; @include section-label;
   }
-  .small { font-size: 11.8px; margin-bottom: 10px; }
+  .small { @include small(11.8px); margin-bottom: 10px; }
   .loaded {
     margin: 0 0 10px; padding: 8px 10px; border-radius: 8px;
     background: var(--color-panel-2); color: var(--color-muted);
     font-size: 11.8px; line-height: 1.5;
   }
-  .problem { margin: 10px 0 0; color: var(--color-warn, #e5a03c); font-size: 11.8px; }
+  .problem { margin: 10px 0 0; color: var(--color-warn, #e5a03c); @include small(11.8px); }
 </style>

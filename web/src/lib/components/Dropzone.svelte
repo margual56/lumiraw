@@ -32,7 +32,10 @@
     accept={RAW_ACCEPT}
     onchange={(e) => take(e.currentTarget.files)}
   />
-  <strong>{t('upload.drop')}</strong>
+  <strong>
+    <span class="on-hover">{t('upload.drop')}</span>
+    <span class="on-touch">{t('upload.drop.touch')}</span>
+  </strong>
   <span>{t('upload.formats')}</span>
   <em>{app.message}</em>
 </label>

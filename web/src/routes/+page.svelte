@@ -262,7 +262,7 @@
 
   <Filmstrip />
 
-  <footer>
+  <footer class:idle={!app.id}>
     <span class="nav-start">
       <button class="ghost" disabled={app.step === UPLOAD} onclick={() => go(app.step - 1)}>
         {t('nav.back')}
@@ -277,11 +277,12 @@
     <span class="file-label">{fileLabel}</span>
     <span class="nav-end">
     {#if app.id && app.step < DOWNLOAD - 1}
-      <button class="ghost" onclick={() => go(DOWNLOAD)} title={t('nav.straight.why')}>
+      <button class="ghost skip" onclick={() => go(DOWNLOAD)} title={t('nav.straight.why')}>
         {t('nav.straight')}
       </button>
     {/if}
-    <button disabled={!app.id || app.step === STEPS.length - 1} onclick={() => go(app.step + 1)}>
+    <button class="next" class:last={app.step === STEPS.length - 1}
+            disabled={!app.id || app.step === STEPS.length - 1} onclick={() => go(app.step + 1)}>
       {app.step === STEPS.length - 2 ? t('step.download') : t('nav.continue')}
     </button>
     </span>
@@ -314,7 +315,18 @@
   .nav-end { display: flex; gap: 8px; }
   .nav-start {
     display: flex; gap: 6px;
-    .icon { min-width: 36px; padding-inline: 8px; font-size: 16px; line-height: 1; }
+    .icon {
+      min-width: 36px; padding-inline: 8px; font-size: 16px; line-height: 1;
+      @include phone { min-width: 44px; font-size: 18px; }
+    }
+  }
+
+  /* One row on a phone, with the way forward taking what is left of it. */
+  @include phone {
+    footer.idle { display: none; }
+    .nav-end { flex: 1; }
+    .nav-end .next { flex: 1; }
+    .skip, .next.last { display: none; }
   }
 
   /* For whoever wants to know more before handing over a file, and for
@@ -322,6 +334,10 @@
   .more {
     display: flex; gap: 18px; margin-top: 12px; padding-left: 2px; font-size: 12.5px;
     a { color: var(--color-muted); text-decoration: none; &:hover { color: var(--color-ink); } }
+    @include phone {
+      gap: 8px; margin-top: 6px; font-size: 14px;
+      a { padding: 10px 6px; }
+    }
   }
 
   .straight {

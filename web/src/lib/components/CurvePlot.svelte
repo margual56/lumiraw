@@ -52,9 +52,14 @@
 </svg>
 
 <style lang="scss">
+  @use '../../styles/breakpoints' as *;
+
   .plot {
     display: block; width: 100%; height: auto;
     border: 1px solid var(--color-line); border-radius: 10px;
+    /* A summary to glance at, not the editor: full width on a phone it was a
+       square the size of the screen, and pushed the looks out of sight. */
+    @include phone { max-width: 220px; margin-inline: auto; }
   }
   .field { fill: var(--color-panel-2); }
   .grid { stroke: var(--color-line); stroke-width: 1; }

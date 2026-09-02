@@ -1,0 +1,15 @@
+// Text that more than one component sets the same way.
+@use 'breakpoints' as *;
+
+// The small capitals over a group of controls.
+@mixin section-label {
+  font-size: 10.5px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .09em; color: var(--color-muted);
+  @include phone { font-size: 12px; }
+}
+
+// Secondary text: the line under a control, a hint, a note.
+@mixin small($size) {
+  font-size: $size;
+  @include phone { font-size: 13px; }
+}

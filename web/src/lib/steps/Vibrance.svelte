@@ -39,9 +39,10 @@
 </div>
 
 <style lang="scss">
+  @use '../../styles/type' as *;
+  @use '../../styles/breakpoints' as *;
   h3 {
-    margin: 20px 0 6px; font-size: 10.5px; text-transform: uppercase;
-    letter-spacing: .09em; color: var(--color-muted); font-weight: 600;
+    margin: 20px 0 6px; @include section-label;
   }
-  .now { margin: -2px 0 0; font-size: 12px; color: var(--color-muted); }
+  .now { margin: -2px 0 0; @include small(12px); color: var(--color-muted); }
 </style>

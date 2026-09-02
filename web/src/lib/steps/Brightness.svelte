@@ -55,7 +55,12 @@
       <Slider label={t('brightness.highlights')} bind:value={app.settings.highlights}
               min={-1} max={1} step={0.02} format={(v) => signed(v, 2)} />
     </div>
-    <p class="lede zonehint">{t('brightness.zoneMask')}</p>
+    <!-- A finger never hovers, but touching a slider enters it, so on a
+         touchscreen the same thing is done by holding one. -->
+    <p class="lede zonehint">
+      <span class="on-hover">{t('brightness.zoneMask')}</span>
+      <span class="on-touch">{t('brightness.zoneMask.touch')}</span>
+    </p>
 
     <div class="row">
       <button class="ghost" onclick={resetZones} disabled={!zones}>

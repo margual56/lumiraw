@@ -52,7 +52,10 @@
       color: var(--color-muted); text-decoration: none;
       &:hover, &[aria-current] { color: var(--color-ink); }
     }
-    @include phone { order: 3; width: 100%; gap: 16px; }
+    @include phone {
+      order: 3; width: 100%; gap: 4px; font-size: 14px;
+      a { padding: 8px 10px 6px 0; margin-right: 8px; }
+    }
   }
 
   article {

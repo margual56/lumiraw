@@ -36,12 +36,14 @@
 {/if}
 
 <style lang="scss">
+  @use '../../styles/type' as *;
+  @use '../../styles/breakpoints' as *;
   .auto {
     display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px;
     margin: -6px 0 16px; padding: 8px 10px;
     border-left: 2px solid var(--color-accent);
     background: var(--color-panel-2); border-radius: 0 6px 6px 0;
-    font-size: 12px; color: var(--color-muted);
+    @include small(12px); color: var(--color-muted);
     strong {
       color: var(--color-ink); font-weight: 600; font-size: 12.5px;
       font-variant-numeric: tabular-nums;
@@ -49,5 +51,5 @@
     /* Switched off: the same block, said quietly. */
     &.off { border-left-color: var(--color-line); font-style: italic; }
   }
-  .source { flex-basis: 100%; font-size: 11.5px; }
+  .source { flex-basis: 100%; @include small(11.5px); }
 </style>

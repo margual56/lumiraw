@@ -94,20 +94,22 @@
 </div>
 
 <style lang="scss">
+  @use '../../styles/type' as *;
+  @use '../../styles/breakpoints' as *;
   .view { position: relative; min-width: 0; }
   .mode {
     display: flex; gap: 4px; margin-top: 8px; justify-content: center;
     button {
       padding: 4px 12px; font-size: 12px; font-weight: 500; min-width: 0;
+      @include phone { padding: 8px 14px; min-height: 40px; font-size: 13px; }
       background: var(--color-panel-2); color: var(--color-muted); border: 1px solid var(--color-line);
       &[aria-checked='true'] { color: var(--color-ink); border-color: var(--color-accent); }
     }
   }
   h3 {
-    margin: 18px 0 4px; font-size: 10.5px; text-transform: uppercase;
-    letter-spacing: .09em; color: var(--color-muted); font-weight: 600;
+    margin: 18px 0 4px; @include section-label;
   }
-  .small { font-size: 11.8px; margin-bottom: 10px; }
+  .small { @include small(11.8px); margin-bottom: 10px; }
   .list { display: flex; flex-direction: column; gap: 6px; margin: 14px 0; }
   .list button {
     display: flex; flex-direction: column; gap: 1px; text-align: left;
@@ -116,11 +118,12 @@
     font-weight: 400;
     &:hover { border-color: var(--color-muted); filter: none; }
     &[aria-checked="true"] { border-color: var(--color-accent); background: var(--color-panel); }
-    b { font-size: 12.5px; font-weight: 600; }
-    span { color: var(--color-muted); font-size: 11.5px; }
+    b { font-size: 12.5px; font-weight: 600; @include phone { font-size: 14px; } }
+    span { color: var(--color-muted); @include small(11.5px); }
+    @include phone { padding: 10px 12px; }
   }
   .points {
-    margin: 6px 0 0; color: var(--color-muted); font-size: 11.5px;
+    margin: 6px 0 0; color: var(--color-muted); @include small(11.5px);
     font-variant-numeric: tabular-nums;
   }
 </style>

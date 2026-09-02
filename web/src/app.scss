@@ -49,7 +49,7 @@
     @include surface;
     padding: 18px;
     @include phone { padding: 14px; }
-    h2 { margin: 0 0 8px; font-size: 15px; font-weight: 650; }
+    h2 { margin: 0 0 8px; font-size: 15px; font-weight: 650; @include phone { font-size: 17px; } }
   }
 
   button {
@@ -62,6 +62,12 @@
     @include phone { padding: 11px 18px; min-height: 44px; }
   }
 
+  /* The disclosure headings ("Edit the curves", "Capture profile"): a line
+     of text with a mouse, a row a thumb can hit on a phone. */
+  summary {
+    @include phone { padding: 12px 0; font-size: 14px; }
+  }
+
   select {
     width: 100%; margin-top: 6px; background: var(--color-panel-2);
     color: var(--color-ink); border: 1px solid var(--color-line);
@@ -71,8 +77,15 @@
 
   input[type=range] {
     width: 100%; margin-top: 8px; appearance: none;
-    height: 4px; border-radius: 3px; background: var(--color-line); outline: none;
-    @include phone { height: 6px; margin-top: 12px; }
+    height: 4px; border-radius: 3px; background-color: var(--color-line); outline: none;
+    /*
+     * A thumb can only be caught inside the input's own box, and a 6px box
+     * under a 22px thumb misses half the touches aimed at it.
+     */
+    @include phone {
+      height: 28px; padding: 11px 0; margin-top: 4px;
+      background-clip: content-box;
+    }
     /*
      * The thumbs are what get dragged, so they are the controls that most need the
      * room on a phone.
@@ -88,9 +101,9 @@
       @include phone { width: 22px; height: 22px; }
     }
     /* What the slider is adjusting, painted along its own track. */
-    &.temp { background: linear-gradient(90deg,#5b8fd8,#3a3f46,#e0a24c); }
-    &.tint { background: linear-gradient(90deg,#c67fd1,#3a3f46,#7fd18a); }
-    &.vib  { background: linear-gradient(90deg,#4a4f57,#3a3f46,#4fbfb0); }
+    &.temp { background-image: linear-gradient(90deg,#5b8fd8,#3a3f46,#e0a24c); }
+    &.tint { background-image: linear-gradient(90deg,#c67fd1,#3a3f46,#7fd18a); }
+    &.vib  { background-image: linear-gradient(90deg,#4a4f57,#3a3f46,#4fbfb0); }
   }
 }
 
@@ -119,12 +132,14 @@
   .drop {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 8px; cursor: pointer; transition: border-color .15s, background .15s;
+    text-align: center;
+    @include phone { padding: 20px 16px; }
     @include surface(16px);
     border-style: dashed; border-width: 1.5px;
     &:hover, &.over { border-color: var(--color-accent); background: var(--color-panel-2); }
     input { display: none; }
     strong { font-size: 19px; font-weight: 600; }
-    span { color: var(--color-muted); font-size: 13px; }
+    > span { color: var(--color-muted); font-size: 13px; }
     /* Whatever the pipeline is saying about the file right now. */
     em { color: var(--color-accent); font-style: normal; font-size: 13px; min-height: 20px; }
   }
@@ -153,17 +168,22 @@
     margin: 18px 0;
     @include phone { margin: 20px 0; }
     .row { display: flex; justify-content: space-between; align-items: baseline; }
-    label { font-size: 12.5px; color: var(--color-muted); }
-    output { font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--color-ink); }
+    label { font-size: 12.5px; color: var(--color-muted); @include phone { font-size: 14px; } }
+    output {
+      font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--color-ink);
+      @include phone { font-size: 14px; }
+    }
   }
 
   .lede {
     color: var(--color-muted); font-size: 12.8px; margin: 0 0 4px;
+    @include phone { font-size: 14px; line-height: 1.5; }
     em { color: var(--color-ink); font-style: italic; }
   }
   .hint {
     display: block; margin-top: 10px; font-style: normal;
     font-size: 12px; color: var(--color-muted); min-height: 18px;
+    @include phone { font-size: 13px; }
   }
   .pagetitle {
     margin: 0 0 14px; font-size: 15px; font-weight: 650;
@@ -182,11 +202,19 @@
       margin: 1px 0 0; flex: 0 0 auto; cursor: pointer;
       @include phone { width: 18px; height: 18px; }
     }
-    span { font-size: 12.5px; line-height: 1.35; }
+    span { font-size: 12.5px; line-height: 1.35; @include phone { font-size: 14px; } }
     em {
       display: block; margin-top: 2px; font-style: normal;
       font-size: 11.5px; color: var(--color-muted);
+      @include phone { font-size: 13px; }
     }
+  }
+
+  /* Wording for a mouse and wording for a finger, both rendered and one shown. */
+  .on-touch { display: none; }
+  @media (hover: none) and (pointer: coarse) {
+    .on-hover { display: none; }
+    .on-touch { display: inline; }
   }
 
   /* The quieter of the two buttons: the same shape with no fill. */

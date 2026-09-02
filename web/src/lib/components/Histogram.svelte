@@ -45,6 +45,8 @@
 {/if}
 
 <style lang="scss">
+  @use '../../styles/type' as *;
+  @use '../../styles/breakpoints' as *;
   .histogram {
     width: 200px; padding: 6px 6px 4px; border-radius: 8px;
     background: rgba(0, 0, 0, .65); pointer-events: none; user-select: none;
@@ -52,6 +54,7 @@
     .ends {
       display: flex; justify-content: space-between; margin-top: 3px;
       font-size: 10.5px; color: #bbb;
+      @include phone { font-size: 12px; }
       .warn { color: #ff8a70; }
     }
   }

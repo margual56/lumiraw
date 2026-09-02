@@ -49,7 +49,7 @@
         background: var(--color-accent); color: var(--color-accent-ink); font-weight: 600;
       }
       &:disabled { opacity: .38; cursor: default; }
-      @include phone { scroll-snap-align: center; padding: 8px 12px; min-height: 0; }
+      @include phone { scroll-snap-align: center; padding: 10px 14px; min-height: 42px; font-size: 14px; }
     }
   }
 </style>

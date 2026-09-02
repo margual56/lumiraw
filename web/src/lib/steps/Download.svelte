@@ -135,7 +135,7 @@
     </div>
 
     <p class="lede">{summary}</p>
-    <button onclick={download} disabled={working}>
+    <button class="go" onclick={download} disabled={working}>
       {working ? t('download.working') : t('download.button')}
     </button>
 
@@ -168,9 +168,13 @@
 </div>
 
 <style lang="scss">
+  @use '../../styles/type' as *;
+  @use '../../styles/breakpoints' as *;
   .job { margin-top: 14px; }
+  /* The one thing this step is for, as wide as the thumb that presses it. */
+  .go { @include phone { width: 100%; min-height: 48px; } }
   .roll { margin-top: 8px; width: 100%; }
-  .small { display: block; margin-top: 4px; font-size: 11.5px; }
+  .small { display: block; margin-top: 4px; @include small(11.5px); }
   .hint { white-space: pre-line; }
   .track {
     height: 5px; border-radius: 3px; background: var(--color-panel-2); overflow: hidden;
@@ -178,7 +182,7 @@
   }
   .row {
     display: flex; justify-content: space-between; gap: 10px; margin-top: 6px;
-    font-size: 11.5px; color: var(--color-muted); font-variant-numeric: tabular-nums;
+    @include small(11.5px); color: var(--color-muted); font-variant-numeric: tabular-nums;
     /* The stage name can be long in either language; the elapsed time beside
        it must not be pushed off the end. */
     span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

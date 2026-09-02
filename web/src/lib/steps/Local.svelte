@@ -83,6 +83,8 @@
 </div>
 
 <style lang="scss">
+  @use '../../styles/type' as *;
+  @use '../../styles/breakpoints' as *;
   .tools {
     display: flex; gap: 6px; margin: 4px 0 8px;
     button {
@@ -92,10 +94,9 @@
     }
   }
   h3 {
-    margin: 16px 0 6px; font-size: 10.5px; text-transform: uppercase;
-    letter-spacing: .09em; color: var(--color-muted); font-weight: 600;
+    margin: 16px 0 6px; @include section-label;
   }
-  .hint { font-size: 12px; color: var(--color-muted); margin: 4px 0 10px; }
+  .hint { @include small(12px); color: var(--color-muted); margin: 4px 0 10px; }
   .check { display: flex; gap: 8px; align-items: center; font-size: 13px; margin: 4px 0 12px;
            input { accent-color: var(--color-accent); } }
 </style>

@@ -40,15 +40,20 @@
 {/if}
 
 <style lang="scss">
+  @use '../../styles/type' as *;
+  @use '../../styles/breakpoints' as *;
+
   .strip {
     border-top: 1px solid var(--color-line); background: var(--color-panel);
     padding: 6px 22px 8px;
+    @include phone { padding: 6px 12px 8px; }
   }
   .head {
     display: flex; gap: 12px; align-items: baseline;
-    font-size: 12px; color: var(--color-muted); margin-bottom: 6px;
+    @include small(12px); color: var(--color-muted); margin-bottom: 6px;
     .link {
-      all: unset; cursor: pointer; color: var(--color-accent); font-size: 12px;
+      all: unset; cursor: pointer; color: var(--color-accent); @include small(12px);
+      @include phone { padding: 8px 0; }
       &:hover { text-decoration: underline; }
     }
   }
@@ -74,6 +79,9 @@
   }
   .keep {
     position: absolute; right: 4px; top: 3px; line-height: 0;
-    input { margin: 0; accent-color: var(--color-accent); cursor: pointer; }
+    input {
+      margin: 0; accent-color: var(--color-accent); cursor: pointer;
+      @include phone { width: 20px; height: 20px; }
+    }
   }
 </style>

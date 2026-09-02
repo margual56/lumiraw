@@ -46,5 +46,12 @@
     position: absolute; right: 22px; top: 6px;
     font-size: 11px; color: var(--color-muted); letter-spacing: .02em;
     white-space: nowrap; pointer-events: none;
+    /* On a phone the page's margin is too narrow for it to sit above the
+       picture, so it sits on it, on a backing of its own. */
+    @include phone {
+      right: 12px; z-index: 5; font-size: 12px; padding: 2px 8px;
+      border-radius: 999px; background: rgb(13 14 16 / 85%);
+      max-width: calc(100% - 24px); overflow: hidden; text-overflow: ellipsis;
+    }
   }
 </style>

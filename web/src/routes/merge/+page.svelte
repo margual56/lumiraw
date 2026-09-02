@@ -236,7 +236,10 @@
           accept={RAW_ACCEPT}
           onchange={(e) => add(e.currentTarget.files)}
         />
-        <strong>{frames.length ? t('merge.dropMore') : t('merge.drop')}</strong>
+        <strong>
+          <span class="on-hover">{frames.length ? t('merge.dropMore') : t('merge.drop')}</span>
+          <span class="on-touch">{frames.length ? t('merge.dropMore.touch') : t('merge.drop.touch')}</span>
+        </strong>
         <span>{t('merge.formats')}</span>
       </label>
 
@@ -433,9 +436,12 @@
     .back {
       margin-left: auto; color: var(--color-muted); text-decoration: none; font-size: 13px;
       &:hover { color: var(--color-ink); }
-      @include card { font-size: 12px; }
+      /* Its own row on a phone, under the name and the language, and tall enough to hit. */
+      @include phone {
+        order: 3; width: 100%; margin-left: 0; padding: 10px 0 4px; font-size: 14px;
+      }
     }
-    :global(.picker) { margin-left: 0; }
+    :global(.picker) { margin-left: 0; @include phone { margin-left: auto; } }
   }
 
   .lead { margin: 0; font-size: 15px; line-height: 1.6; color: var(--color-muted); }

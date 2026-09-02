@@ -20,11 +20,13 @@
 </details>
 
 <style lang="scss">
+  @use '../../styles/type' as *;
+  @use '../../styles/breakpoints' as *;
   .capture { margin-top: 8px; border-top: 1px solid var(--color-line); padding-top: 12px; }
-  summary { cursor: pointer; color: var(--color-muted); font-size: 12px; }
+  summary { cursor: pointer; color: var(--color-muted); @include small(12px); }
   dl {
     display: grid; grid-template-columns: auto 1fr; gap: 3px 12px;
-    margin: 10px 0 0; font-size: 11.8px;
+    margin: 10px 0 0; @include small(11.8px);
   }
   dt { color: var(--color-muted); }
   dd { margin: 0; font-variant-numeric: tabular-nums; }

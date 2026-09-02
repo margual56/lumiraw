@@ -166,12 +166,15 @@
 </details>
 
 <style lang="scss">
+  @use '../../styles/type' as *;
+  @use '../../styles/breakpoints' as *;
   .editor { margin-top: 16px; border-top: 1px solid var(--color-line); padding-top: 12px; }
-  summary { cursor: pointer; color: var(--color-muted); font-size: 12px; }
-  .small { font-size: 11.5px; margin: 10px 0; }
+  summary { cursor: pointer; color: var(--color-muted); @include small(12px); }
+  .small { @include small(11.5px); margin: 10px 0; }
   .tabs { display: flex; gap: 4px; margin-top: 12px; }
   .tabs button {
-    flex: 1; padding: 5px 2px; cursor: pointer; font: inherit; font-size: 11.5px;
+    flex: 1; padding: 5px 2px; cursor: pointer; font: inherit; @include small(11.5px);
+    @include phone { padding: 9px 2px; min-height: 40px; }
     font-weight: 600; color: var(--color-muted); background: var(--color-panel-2);
     border: 1px solid var(--color-line); border-radius: 7px;
     &:hover { border-color: var(--color-muted); filter: none; }

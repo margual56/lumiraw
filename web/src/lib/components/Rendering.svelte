@@ -25,16 +25,18 @@
 </div>
 
 <style lang="scss">
+  @use '../../styles/type' as *;
+  @use '../../styles/breakpoints' as *;
   .rendering { margin-top: 4px; }
   h3 {
-    margin: 0 0 6px; font-size: 10.5px; text-transform: uppercase;
-    letter-spacing: .09em; color: var(--color-muted); font-weight: 600;
+    margin: 0 0 6px; @include section-label;
   }
   .row { display: flex; gap: 6px; }
   button {
     flex: 1; padding: 7px 4px; cursor: pointer;
     background: var(--color-panel-2); border: 1px solid var(--color-line); border-radius: 8px;
     color: var(--color-muted); font: inherit; font-size: 12.5px; font-weight: 600;
+    @include phone { font-size: 14px; }
     &:hover { border-color: var(--color-muted); filter: none; }
     &[aria-checked="true"] {
       border-color: var(--color-accent); color: var(--color-ink);
@@ -44,6 +46,6 @@
   /* What the chosen one actually does, because three words on a button cannot
      say that this moves colour and sharpening as well as contrast. */
   .why {
-    margin: 8px 0 0; color: var(--color-muted); font-size: 11.8px; line-height: 1.5;
+    margin: 8px 0 0; color: var(--color-muted); @include small(11.8px); line-height: 1.5;
   }
 </style>

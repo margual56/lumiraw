@@ -70,8 +70,11 @@ export default {
   'carry.title': 'The next photograph keeps this grade',
   'carry.curve': 'your curve',
 
+  'memory.restored': 'Your earlier edit of this photo is back.',
+  'memory.startOver': 'Start over',
+  'memory.dismiss': 'Hide this note',
   'privacy.title': 'Your photographs never leave this device',
-  'privacy.body': 'Your raw file is developed right here, inside this browser tab. Nothing is uploaded, stored or tracked, and there is no account. Close the tab and it is gone.',
+  'privacy.body': 'Your raw file is developed right here, inside this browser tab. Nothing is uploaded or tracked, and there is no account. The photo itself is never stored: only your adjustments are kept, in this browser, so the same file opens where you left it.',
   'privacy.downloads': 'The page only downloads its own code, the processing engine and a lens database. Your browser’s network panel will show nothing else.',
   'upload.drop': 'Drop raw files here, or a whole folder',
   'upload.drop.touch': 'Tap to choose raw files',
@@ -141,6 +144,7 @@ export default {
   'compare.title': 'Automatic corrections',
   'compare.lede': 'Drag the divider to compare. <em>Before</em> is the photo as the camera recorded it. Everything listed below was decided automatically; click one to turn it off.',
   'compare.before': 'Before',
+  'compare.divider': 'Divider between before and after',
   'compare.after': 'After',
 
   'render.title': 'Rendering',
@@ -180,6 +184,8 @@ export default {
   'look.faded': 'Faded',
   'look.faded.description': 'Both ends pulled in, colour quietly drained',
 
+  'editor.point': 'Curve point {n}',
+  'editor.point.value': 'in {x}, out {y}. Arrow keys move it, Delete removes it.',
   'editor.title': 'Edit the curves',
   'editor.tab.regions': 'Regions',
   'editor.tab.rgb': 'RGB',

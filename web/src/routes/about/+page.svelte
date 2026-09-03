@@ -9,17 +9,18 @@
 
 <DocPage>
 {#if i18n.locale === 'es'}
-  <h1>Qué es LumiRaw</h1>
+  <h1>Acerca de LumiRaw</h1>
   <p class="lede">
-    LumiRaw revela fotos RAW en una pestaña del navegador. Arrastras el archivo que guardó
-    la cámara, el programa toma las decisiones de un revelado (exposición, balance de
-    blancos, contraste, ruido, corrección del objetivo) y descargas la foto terminada en
-    JPEG, PNG o TIFF.
+    LumiRaw revela fotos RAW en una pestaña del navegador. Abres el archivo que guardó la
+    cámara, el programa toma las decisiones de un revelado (exposición, balance de blancos,
+    contraste, ruido, corrección del objetivo) y descargas la foto terminada en JPEG, PNG o
+    TIFF.
   </p>
   <p>
-    El revelado se hace en tu ordenador. El programa está escrito en Rust y compilado a
-    WebAssembly, y la página lo descarga una vez, como cualquier otro script. Tus fotos las
-    lee ese código desde tu disco y no se envían a ningún sitio.
+    El revelado se hace en tu propio dispositivo, sea un ordenador o un móvil. El programa
+    está escrito en Rust y compilado a WebAssembly, y la página lo descarga una vez, como
+    cualquier otro script. Ese código lee tus fotos directamente y no las envía a ningún
+    sitio.
   </p>
 
   <h2>Por qué</h2>
@@ -43,7 +44,7 @@
       recuperar parte del desenfoque, no todo.</li>
     <li><strong>Brillo.</strong> Exposición medida en toda la imagen o en la zona que
       marques, y además sombras, medios tonos y luces.</li>
-    <li><strong>Balance de blancos.</strong> Automático, o a partir de algo que pinches y
+    <li><strong>Balance de blancos.</strong> Automático, o a partir de una zona que marques y
       que debería ser gris neutro.</li>
     <li><strong>Color y detalle.</strong> Intensidad, claridad y reducción de ruido, según
       el ruido que se mide en el archivo.</li>
@@ -54,7 +55,8 @@
     <li><strong>Gradación.</strong> Curvas, estilos, un mezclador de color, LUT 3D en
       formato .cube, grano y viñeteado.</li>
     <li><strong>Descarga.</strong> JPEG, PNG (8 o 16 bits), TIFF o WebP, a tamaño completo o
-      más pequeña. Varias fotos se pueden exportar juntas en un zip.</li>
+      más pequeña, hasta 1080 px para redes sociales. Varias fotos se pueden exportar juntas
+      en un zip.</li>
   </ol>
   <p>
     También hay una página para <a href="{base}/merge">fusionar exposiciones horquilladas</a>
@@ -71,8 +73,10 @@
     <li>No se sube nada. Puedes comprobarlo en las herramientas de desarrollo del
       navegador: en la pestaña de red solo aparecen la página, sus scripts, el motor de
       revelado y la base de datos de objetivos.</li>
-    <li>Tampoco se guarda nada. No hay cuenta ni estadísticas de uso. Al cerrar la pestaña,
-      la foto y lo que hayas hecho con ella desaparecen.</li>
+    <li>La foto no se guarda en ningún sitio. No hay cuenta ni estadísticas de uso. Lo que sí
+      se conserva, solo en tu navegador, son los ajustes que hiciste a cada archivo, para que
+      al volver a abrirlo estén donde los dejaste. Borrar los datos del sitio en el navegador
+      los olvida.</li>
     <li>Después de la primera visita funciona sin conexión, y se puede instalar como una
       aplicación. Instalada, aparece en «Abrir con» para los archivos RAW.</li>
     <li>Los archivos exportados conservan los metadatos de la cámara: fecha de la toma,
@@ -82,9 +86,13 @@
 
   <h2>Lo que todavía no hace</h2>
   <ul>
-    <li>Las ediciones no se guardan. Si recargas la página, se pierden.</li>
     <li>Todo se ejecuta en un solo núcleo del procesador, así que exportar a tamaño completo
-      un archivo de 26 MP tarda unos diez segundos, y la vista al 100 % unos quince.</li>
+      un archivo de 26 MP tarda unos diez segundos en un portátil, y la vista al 100 % unos
+      quince.</li>
+    <li>Tus ajustes se quedan en el navegador donde los hiciste. Todavía no hay forma de
+      llevarlos a otro dispositivo ni de guardarlos en un archivo.</li>
+    <li>Un RAW grande necesita mucha memoria, y puede que un móvil antiguo no tenga
+      suficiente.</li>
     <li>No hay pincel para los ajustes locales, solo filtros graduados y radiales.</li>
     <li>Los archivos X-Trans de Fujifilm y el ProRAW del iPhone están contemplados, pero solo
       se han probado con datos sintéticos, no con fotos reales.</li>
@@ -103,14 +111,15 @@
 {:else}
   <h1>About LumiRaw</h1>
   <p class="lede">
-    LumiRaw develops raw photos in a browser tab. You drop in the file your camera saved, it
+    LumiRaw develops raw photos in a browser tab. You open the file your camera saved, it
     makes the decisions a raw developer makes (exposure, white balance, contrast, noise, lens
     corrections), and you download a finished JPEG, PNG or TIFF.
   </p>
   <p>
-    The developing happens on your own computer. The program is written in Rust and
-    compiled to WebAssembly, which the page downloads once like any other script. Your
-    photos are read from your disk by that code and are never sent anywhere.
+    The developing happens on your own device, whether that's a computer or a phone. The
+    program is written in Rust and compiled to WebAssembly, which the page downloads once
+    like any other script. That code reads your photos directly and never sends them
+    anywhere.
   </p>
 
   <h2>Why</h2>
@@ -133,8 +142,8 @@
       of the blur, not all of it.</li>
     <li><strong>Brightness.</strong> Exposure metered on the whole frame or on an area you
       mark, plus shadows, midtones and highlights.</li>
-    <li><strong>White balance.</strong> Automatic, or taken from something you click on that
-      should be neutral grey.</li>
+    <li><strong>White balance.</strong> Automatic, or taken from an area you mark that should
+      be neutral grey.</li>
     <li><strong>Colour and detail.</strong> Vibrance, clarity and noise reduction, set from
       the noise measured in the file.</li>
     <li><strong>Local.</strong> Graduated and radial filters, and a tool for removing dust
@@ -144,7 +153,8 @@
     <li><strong>Grade.</strong> Tone curves, looks, a colour mixer, 3D LUTs in .cube format,
       grain and vignetting.</li>
     <li><strong>Download.</strong> JPEG, PNG (8 or 16-bit), TIFF or WebP, at full size or
-      smaller. Several photos can be exported together as a zip.</li>
+      smaller, down to 1080 px for social media. Several photos can be exported together as a
+      zip.</li>
   </ol>
   <p>
     There is also a page for <a href="{base}/merge">merging bracketed exposures</a> into a
@@ -161,8 +171,9 @@
     <li>Nothing is uploaded. You can check this in your browser's developer tools: the
       network tab shows the page, its scripts, the processing engine and the lens database,
       and nothing else.</li>
-    <li>Nothing is stored either. There's no account and no analytics. Close the tab and the
-      photo and your edit are gone.</li>
+    <li>The photo isn't stored anywhere. There's no account and no analytics. What is kept,
+      in your browser only, is the adjustments you made to each file, so opening it again
+      brings them back. Clearing the site's data in your browser forgets them.</li>
     <li>After the first visit it works offline, and it can be installed as an app. Once
       installed, it shows up under "Open with" for raw files.</li>
     <li>Exported files keep the camera's metadata: when the photo was taken, the camera, lens
@@ -172,9 +183,11 @@
 
   <h2>What it doesn't do yet</h2>
   <ul>
-    <li>Edits aren't saved. Reloading the page loses them.</li>
     <li>Everything runs on a single processor core, so a full-size export of a 26 MP file
-      takes about ten seconds, and the 100 % view about fifteen.</li>
+      takes about ten seconds on a laptop, and the 100 % view about fifteen.</li>
+    <li>Your edits stay in the browser you made them in. There's no way yet to take them to
+      another device or save them to a file.</li>
+    <li>A large raw file needs a lot of memory, and an older phone may not have enough.</li>
     <li>There's no brush for local adjustments, only graduated and radial filters.</li>
     <li>Fujifilm X-Trans files and iPhone ProRAW are supported, but have only been tested on
       synthetic data, not on real photos.</li>

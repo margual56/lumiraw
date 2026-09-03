@@ -24,8 +24,9 @@
   import { NAME, SITE } from '$lib/brand.js';
   import Meta from '$lib/components/Meta.svelte';
   import { history, observe, resetHistory, undo, redo, onKey } from '$lib/history.svelte.js';
+  import { remember, forget } from '$lib/memory.js';
   import {
-    app, settingsKey, stepVisible, setStraight, ungraded,
+    app, settingsKey, stepVisible, setStraight, ungraded, defaultSettings,
     STEPS, UPLOAD, FRAME, REFOCUS, EXPOSURE, WB, VIBRANCE, LOCAL, COMPARE, LOOKS, DOWNLOAD,
   } from '$lib/state.svelte.js';
 
@@ -40,6 +41,7 @@
 
   // Undo history is per photograph.
   let historyFor = null;
+  let saving;
   $effect(() => {
     const key = settingsKey();
     if (app.id !== historyFor) {
@@ -47,8 +49,20 @@
       resetHistory();
     } else if (key) {
       observe();
+      const file = app.fileKey;
+      const settings = $state.snapshot(app.settings);
+      const blank = JSON.stringify(settings) === JSON.stringify(defaultSettings());
+      clearTimeout(saving);
+      saving = setTimeout(() => (blank ? forget(file) : remember(file, settings)), 500);
     }
   });
+
+  /** Throw away a remembered edit and start from what the pipeline decides.
+   *  One step in the history like any other, so it can be undone. */
+  function startOver() {
+    app.settings = defaultSettings();
+    app.restored = false;
+  }
 
   // Opened through the system's "Open with" on an installed LumiRaw: the
   // files arrive as handles, and become a roll like any other drop.
@@ -220,6 +234,14 @@
   <Progress />
 
   <main>
+    {#if app.restored && app.step !== UPLOAD}
+      <div class="restored">
+        <span>{t('memory.restored')}</span>
+        <button class="ghost" onclick={startOver}>{t('memory.startOver')}</button>
+        <button class="ghost icon" aria-label={t('memory.dismiss')}
+                onclick={() => (app.restored = false)}>✕</button>
+      </div>
+    {/if}
     {#if app.step === UPLOAD}
       <div class="intro">
         <Privacy />
@@ -338,6 +360,18 @@
       gap: 8px; margin-top: 6px; font-size: 14px;
       a { padding: 10px 6px; }
     }
+  }
+
+  /* Said once, when a photograph opens with an earlier edit already on it. */
+  .restored {
+    @include surface;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+    max-width: 1080px; margin: 0 auto 14px; padding: 8px 8px 8px 14px;
+    font-size: 13px; color: var(--color-muted);
+    span { flex: 1; min-width: 12em; }
+    button { padding: 6px 12px; }
+    .icon { padding-inline: 10px; }
+    @include phone { font-size: 14px; }
   }
 
   .straight {

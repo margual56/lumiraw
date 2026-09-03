@@ -51,19 +51,40 @@
     event.stopPropagation();
   }
 
+  /** Put handle `index` at (x, y), as far as its neighbours allow. */
+  function place(index, x, y) {
+    const next = points.map((p) => [...p]);
+    const first = index === 0;
+    const last = index === next.length - 1;
+    // A point may not pass its neighbours: two points at one x is a vertical
+    // step, which has no slope and no meaning.
+    const low = first ? 0 : next[index - 1][0] + 0.02;
+    const high = last ? 1 : next[index + 1][0] - 0.02;
+    next[index] = [first || last ? next[index][0] : clamp(Math.min(Math.max(x, low), high)),
+                   clamp(y)];
+    write(next);
+  }
+
   function move(event) {
     if (dragging < 0) return;
     const [x, y] = at(event);
-    const next = points.map((p) => [...p]);
-    const first = dragging === 0;
-    const last = dragging === next.length - 1;
-    // A point may not pass its neighbours: two points at one x is a vertical
-    // step, which has no slope and no meaning.
-    const low = first ? 0 : next[dragging - 1][0] + 0.02;
-    const high = last ? 1 : next[dragging + 1][0] - 0.02;
-    next[dragging] = [first || last ? next[dragging][0] : clamp(Math.min(Math.max(x, low), high)),
-                      y];
-    write(next);
+    place(dragging, x, y);
+  }
+
+  /** The same handles from the keyboard: arrows move one, a hundredth at a
+   *  time or a twentieth with Shift, and Delete takes it away. */
+  function key(index, event) {
+    const step = event.shiftKey ? 0.05 : 0.01;
+    const [x, y] = points[index];
+    const moves = { ArrowUp: [0, step], ArrowDown: [0, -step],
+                    ArrowRight: [step, 0], ArrowLeft: [-step, 0] };
+    if (moves[event.key]) {
+      event.preventDefault();
+      place(index, x + moves[event.key][0], y + moves[event.key][1]);
+    } else if (event.key === 'Delete' || event.key === 'Backspace') {
+      event.preventDefault();
+      drop(index, event);
+    }
   }
 
   function release(event) {
@@ -147,7 +168,12 @@
     {#each points as p, i (i)}
       <circle cx={p[0] * SIZE} cy={(1 - p[1]) * SIZE} r={dragging === i ? 7 : 5}
               class="handle" style:--tint={active.colour}
-              onpointerdown={(e) => grab(i, e)} ondblclick={(e) => drop(i, e)} />
+              role="slider" tabindex="0"
+              aria-label={t('editor.point', { n: i + 1 })}
+              aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(p[1] * 100)}
+              aria-valuetext={t('editor.point.value', { x: Math.round(p[0] * 100), y: Math.round(p[1] * 100) })}
+              onpointerdown={(e) => grab(i, e)} ondblclick={(e) => drop(i, e)}
+              onkeydown={(e) => key(i, e)} />
     {/each}
   </svg>
 
@@ -191,6 +217,10 @@
   .handle {
     fill: var(--color-panel); stroke: var(--tint); stroke-width: 2; cursor: grab;
     &:hover { fill: var(--tint); }
+    /* Reached by Tab: filled, and ringed, so it is clear which one the arrow
+       keys will move. */
+    &:focus { outline: none; }
+    &:focus-visible { fill: var(--tint); stroke: var(--color-ink); stroke-width: 3; }
   }
   .regions { margin-top: 12px; }
 </style>

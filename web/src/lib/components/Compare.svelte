@@ -10,9 +10,21 @@
   let dragging = false;
   let host = $state(null);
 
+  const clamp = (v) => Math.min(Math.max(v, 0), 1);
+
   function move(event) {
     const box = host.getBoundingClientRect();
-    at = Math.min(Math.max((event.clientX - box.left) / box.width, 0), 1);
+    at = clamp((event.clientX - box.left) / box.width);
+  }
+
+  /** The divider from the keyboard, as a slider: arrows move it by a
+   *  twentieth, Home and End go to either edge. */
+  function key(event) {
+    const step = { ArrowLeft: -0.05, ArrowDown: -0.05, ArrowRight: 0.05, ArrowUp: 0.05 }[event.key];
+    const to = { Home: 0, End: 1 }[event.key];
+    if (step === undefined && to === undefined) return;
+    event.preventDefault();
+    at = to ?? clamp(at + step);
   }
 </script>
 
@@ -21,6 +33,10 @@
   class:busy
   bind:this={host}
   style:--split={`${(at * 100).toFixed(2)}%`}
+  role="slider" tabindex="0"
+  aria-label={t('compare.divider')}
+  aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(at * 100)}
+  onkeydown={key}
   onpointerdown={(e) => { host.setPointerCapture(e.pointerId); dragging = true; move(e); }}
   onpointermove={(e) => dragging && move(e)}
   onpointerup={() => (dragging = false)}
@@ -76,4 +92,7 @@
     &.left { left: 12px; }
     &.right { right: 12px; }
   }
+  /* Only a keyboard focus gets a ring; a drag should not leave one behind. */
+  .compare:focus { outline: none; }
+  .compare:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 </style>

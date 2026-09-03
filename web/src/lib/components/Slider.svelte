@@ -10,6 +10,10 @@
     onpreview = null,
   } = $props();
 
+  // Ties the label to the range, so it is read out with it and a click on
+  // the label reaches it.
+  const id = $props.id();
+
   let draft = $state(value);
   $effect(() => { draft = value; });     // follow changes made elsewhere
 
@@ -31,9 +35,9 @@
 </script>
 
 <div class="field">
-  <div class="row"><label>{label}</label><output>{format(shown)}</output></div>
+  <div class="row"><label for={id}>{label}</label><output for={id}>{format(shown)}</output></div>
   <input
-    type="range" {min} {max} {step} class={tone}
+    {id} type="range" {min} {max} {step} class={tone}
     value={shown}
     oninput={input}
     onchange={commit}

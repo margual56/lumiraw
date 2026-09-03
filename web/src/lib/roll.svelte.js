@@ -1,7 +1,8 @@
 /** Several photographs at once: the roll, the filmstrip and the batch export. */
 
 import * as api from './api.js';
-import { app, resetForNewPhoto, settingsFor, FRAME, UPLOAD, DOWNLOAD } from './state.svelte.js';
+import { app, resetForNewPhoto, settingsFor, usable, FRAME, UPLOAD, DOWNLOAD } from './state.svelte.js';
+import { fileKey, recall } from './memory.js';
 import { t } from './i18n.svelte.js';
 import { errorText, RAW_ACCEPT } from './format.js';
 import { zip } from './zip.js';
@@ -80,10 +81,16 @@ export async function openFile(file, { roll = null, index = 0 } = {}) {
     } else if (leaving >= 0 && app.roll[leaving]) {
       app.roll[leaving].settings = kept;
     }
+    // What this photograph was left at: this visit, from the roll, or an
+    // earlier one, from this browser's memory of the file.
     const own = roll ? null : app.roll[index]?.settings;
+    const saved = own ? null : usable(recall(fileKey(file)));
     const wasOpen = !!app.id;
     resetForNewPhoto();
     if (own) app.settings = $state.snapshot(own);
+    else if (saved) app.settings = saved;
+    app.fileKey = fileKey(file);
+    app.restored = !!saved;
     app.id = info.id;
     app.info = info;
     app.rollAt = roll ? 0 : index;

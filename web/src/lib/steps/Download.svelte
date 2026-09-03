@@ -17,7 +17,9 @@
   // One photograph, one file.
   const summary = $derived(t('download.one', { name: lookLabel(app.settings.curves.look) }));
 
-  const SIZES = ['', '4000', '2560', '1600'];
+  // 1080 is what Instagram and most feeds show a picture at; anything larger
+  // is resized again on their side, and less kindly.
+  const SIZES = ['', '4000', '2560', '1600', '1080'];
 
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

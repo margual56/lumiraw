@@ -6,11 +6,11 @@ export default {
   'seo.home.description': 'Abre un RAW de tu cámara o tu móvil y descarga la foto terminada en JPEG, PNG o TIFF. Funciona en la pestaña del navegador: no se sube nada, no hay cuenta y funciona sin conexión.',
   'seo.merge.title': 'Fusionar exposiciones RAW horquilladas · LumiRaw',
   'seo.merge.description': 'Combina varias exposiciones RAW en un solo fotograma con más rango dinámico, alineado y teniendo en cuenta lo que se movió, y revélalo después. En el navegador, sin subir nada.',
-  'seo.about.title': 'Qué es LumiRaw',
+  'seo.about.title': 'Acerca de LumiRaw',
   'seo.about.description': 'Qué hace LumiRaw con un RAW, paso a paso, por qué tus fotos no salen de tu ordenador y lo que todavía no sabe hacer.',
   'seo.cameras.title': 'Cámaras y formatos RAW compatibles · LumiRaw',
   'seo.cameras.description': 'LumiRaw abre RAW de más de 700 cámaras de Canon, Sony, Nikon, Fujifilm, Panasonic, OM System y otras marcas, y DNG de cualquier cámara o móvil.',
-  'links.about': 'Qué es',
+  'links.about': 'Acerca de',
   'links.cameras': 'Cámaras compatibles',
   'links.open': 'Abrir un RAW',
   'cameras.maker': 'Marca',
@@ -69,8 +69,11 @@ export default {
   'carry.title': 'La próxima fotografía conserva estos ajustes de color',
   'carry.curve': 'tu curva',
 
+  'memory.restored': 'Ha vuelto lo que hiciste con esta foto la última vez.',
+  'memory.startOver': 'Empezar de cero',
+  'memory.dismiss': 'Ocultar este aviso',
   'privacy.title': 'Tus fotografías nunca salen de este dispositivo',
-  'privacy.body': 'Tu archivo raw se revela aquí mismo, dentro de esta pestaña. No se sube, no se guarda y no se rastrea nada, y no hace falta cuenta. Cierra la pestaña y desaparece.',
+  'privacy.body': 'Tu archivo raw se revela aquí mismo, dentro de esta pestaña. No se sube ni se rastrea nada, y no hace falta cuenta. La foto nunca se guarda: solo se conservan tus ajustes, en este navegador, para que el mismo archivo se abra donde lo dejaste.',
   'privacy.downloads': 'La página solo descarga su propio código, el motor de revelado y una base de datos de objetivos. El panel de red de tu navegador no mostrará nada más.',
   'upload.drop': 'Arrastra aquí archivos raw, o una carpeta entera',
   'upload.drop.touch': 'Toca para elegir archivos raw',
@@ -139,6 +142,7 @@ export default {
 
   'compare.title': 'Correcciones automáticas',
   'compare.lede': 'Arrastra el divisor para comparar. <em>Antes</em> es la foto tal como la grabó la cámara. Todo lo de la lista se decidió automáticamente; pulsa uno para apagarlo.',
+  'compare.divider': 'Separador entre el antes y el después',
   'compare.before': 'Antes',
   'compare.after': 'Después',
 
@@ -179,6 +183,8 @@ export default {
   'look.faded': 'Desvaído',
   'look.faded.description': 'Los dos extremos recogidos, color apagado sin estridencias',
 
+  'editor.point': 'Punto {n} de la curva',
+  'editor.point.value': 'entrada {x}, salida {y}. Las flechas lo mueven y Supr lo quita.',
   'editor.title': 'Editar las curvas',
   'editor.tab.regions': 'Zonas',
   'editor.tab.rgb': 'RGB',

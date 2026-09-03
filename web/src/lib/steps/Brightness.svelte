@@ -37,19 +37,19 @@
       The three zones share a scale, so their handles line up and the picture's own tonal
       order is easy to read off the panel.
     -->
-    <div class="zone"
+    <div class="zone" role="group" aria-label={t('brightness.shadows')}
          onpointerenter={enter('shadows')} onpointerleave={leave('shadows')}
          onfocusin={enter('shadows')} onfocusout={leave('shadows')}>
       <Slider label={t('brightness.shadows')} bind:value={app.settings.shadows}
               min={-1} max={1} step={0.02} format={(v) => signed(v, 2)} />
     </div>
-    <div class="zone"
+    <div class="zone" role="group" aria-label={t('brightness.midtones')}
          onpointerenter={enter('midtones')} onpointerleave={leave('midtones')}
          onfocusin={enter('midtones')} onfocusout={leave('midtones')}>
       <Slider label={t('brightness.midtones')} bind:value={app.settings.midtones}
               min={-1} max={1} step={0.02} format={(v) => signed(v, 2)} />
     </div>
-    <div class="zone"
+    <div class="zone" role="group" aria-label={t('brightness.highlights')}
          onpointerenter={enter('highlights')} onpointerleave={leave('highlights')}
          onfocusin={enter('highlights')} onfocusout={leave('highlights')}>
       <Slider label={t('brightness.highlights')} bind:value={app.settings.highlights}

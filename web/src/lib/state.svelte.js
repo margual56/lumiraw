@@ -1,5 +1,7 @@
 /** The whole wizard's state, as runes. */
 
+import { fileKey, recall } from './memory.js';
+
 export const STEPS = ['step.upload', 'step.framing', 'step.refocus', 'step.brightness',
                       'step.wb', 'step.vibrance', 'step.local', 'step.compare', 'step.looks',
                       'step.download'];
@@ -112,15 +114,31 @@ export const app = $state({
   // Every raw dropped together, for the filmstrip.
   roll: [],
   rollAt: -1,
+
+  // Which file the open photograph came from, as `memory.fileKey` puts it, so
+  // its settings can be remembered.
+  fileKey: null,
+  restored: false,
 });
 
 /** The settings a photograph from the roll is exported with. */
 export function settingsFor(index) {
   if (index === app.rollAt) return $state.snapshot(app.settings);
-  const own = app.roll[index]?.settings;
+  const own = app.roll[index]?.settings ?? usable(recall(fileKey(app.roll[index]?.file)));
   if (own) return own;
   const grade = Object.fromEntries(GRADE_KEYS.map((k) => [k, $state.snapshot(app.settings[k])]));
   return { ...defaultSettings(), ...grade };
+}
+
+/** Remembered settings as they can be used now. */
+export function usable(saved) {
+  if (!saved) return null;
+  const out = { ...defaultSettings(), ...saved };
+  if (!app.lut || app.lut.id !== out.lut_id) {
+    out.lut = 0;
+    out.lut_id = '';
+  }
+  return out;
 }
 
 /** These settings with the grade step's own work taken off. */
@@ -146,6 +164,8 @@ export function resetForNewPhoto() {
         .map((k) => [k, $state.snapshot(app.settings[k])]))
     : {};
   app.settings = { ...defaultSettings(), ...grade, ...table };
+  app.fileKey = null;
+  app.restored = false;
   app.ratio = '';
   app.coverCrop = null;
   app.focus = null;

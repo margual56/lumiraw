@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Pipeline (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+      - name: Tests (kit, pipeline, darkroom)
+        run: cargo test --release --manifest-path core/Cargo.toml --workspace --lib
+      - name: Binaries and examples
+        run: cargo build --release --manifest-path core/Cargo.toml --workspace --bins
+      - name: The wasm module builds
+        run: cargo build --release --manifest-path core/Cargo.toml -p darkroom --target wasm32-unknown-unknown
+
+  web:
+    name: Site
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: web/.node-version
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: Build, with no Svelte warnings
+        run: |
+          npm run build 2>&1 | tee build.log
+          if grep -q '\[vite-plugin-svelte\] src/' build.log; then
+            echo "::error::Svelte reported warnings; see the build log above."
+            exit 1
+          fi
+      - name: Interface arithmetic
+        working-directory: .
+        run: |
+          node tools/check-crop.mjs
+          node tools/check-webp.mjs
+          node tools/check-histogram.mjs
+
+  release:
+    name: Versions agree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cargo, package.json and the committed wasm module
+        run: |
+          core=$(grep -m1 '^version' core/Cargo.toml | cut -d'"' -f2)
+          darkroom=$(grep -m1 '^version' core/darkroom/Cargo.toml | cut -d'"' -f2)
+          web=$(node -p "require('./web/package.json').version")
+          echo "core $core, darkroom $darkroom, web $web"
+          test "$core" = "$darkroom" || { echo "::error::darkroom is $darkroom, core is $core"; exit 1; }
+          test "$core" = "$web" || { echo "::error::web/package.json is $web, core is $core"; exit 1; }
+          grep -aq "LumiRaw $core" web/src/lib/wasm/darkroom.wasm \
+            || { echo "::error::web/src/lib/wasm/darkroom.wasm was not rebuilt for $core (run tools/build.sh)"; exit 1; }

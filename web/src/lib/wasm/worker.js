@@ -21,6 +21,18 @@ import { withExif } from './webp.js';
 // them.
 import wasmUrl from './darkroom.wasm?url';
 import databaseUrl from './lensfun.json?url';
+import camerasUrl from './lenses/cameras.json?url';
+
+// The lens calibrations come in pieces (see tools/split_lensfun.py).
+const LENS_FILES = import.meta.glob('./lenses/lens-*.json',
+                                    { query: '?url', import: 'default', eager: true });
+
+/** What this session has loaded, so a fresh module can be given it again. */
+const lenses = {
+  chunks: {},      // mount -> file name, from cameras.json
+  loaded: [],      // the mounts' lens buffers, in the order they were added
+  whole: null,     // the whole database, once a photograph has needed it
+};
 
 const decoder = new TextDecoder();
 const TRANSFER = Symbol('transfer');
@@ -43,21 +55,56 @@ async function compile(url, imports) {
   }
 }
 
+const fetchBytes = (url) => fetch(url).then((r) => {
+  if (!r.ok) throw new Error(`${url}: ${r.status}`);
+  return r.arrayBuffer();
+});
+
 async function init() {
-  const [module, db] = await Promise.all([
+  const [module, cameras] = await Promise.all([
     compile(wasmUrl, { env: { host_progress: hostProgress } }),
-    fetch(databaseUrl).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null),
+    fetchBytes(camerasUrl).catch(() => null),
   ]);
   wasm = module.instance.exports;
   memory = wasm.memory;
   wasm.ar_version();
   const { version } = readJson();
-  if (db) {
-    const ptr = copyIn(new Uint8Array(db));
-    wasm.ar_set_database(ptr, db.byteLength);
-    wasm.ar_free(ptr, db.byteLength);
+  // The database as far as this session had got with it: a module started
+  // again after a crash is given everything the one before had.
+  if (lenses.whole) {
+    withBytes(new Uint8Array(lenses.whole), (p, n) => wasm.ar_set_database(p, n));
+  } else if (cameras) {
+    lenses.chunks = JSON.parse(decoder.decode(cameras)).chunks ?? {};
+    withBytes(new Uint8Array(cameras), (p, n) => wasm.ar_set_database(p, n));
+    for (const bytes of lenses.loaded) {
+      withBytes(new Uint8Array(bytes), (p, n) => wasm.ar_add_lenses(p, n));
+    }
   }
-  return { version, lenses: db ? readJson().lenses : 0 };
+  return { version, lenses: cameras || lenses.whole ? readJson().lenses ?? 0 : 0 };
+}
+
+/**
+ * Load the lens calibrations a photograph is waiting for, and have the module
+ * look its lens up again.
+ */
+async function ensureLenses(info) {
+  const mount = info?.lens_mount_needed;
+  if (!mount || lenses.whole) return info;
+  try {
+    const file = lenses.chunks[mount];
+    const url = file && LENS_FILES[`./lenses/${file}.json`];
+    if (url) {
+      const bytes = await fetchBytes(url);
+      lenses.loaded.push(bytes);
+      withBytes(new Uint8Array(bytes), (p, n) => wasm.ar_add_lenses(p, n));
+    } else {
+      lenses.whole = await fetchBytes(databaseUrl);
+      withBytes(new Uint8Array(lenses.whole), (p, n) => wasm.ar_set_database(p, n));
+    }
+    return { ...info, ...readJson() };
+  } catch {
+    return info;
+  }
 }
 
 /** Copy bytes into wasm memory and return the pointer (freed by the caller). */
@@ -146,7 +193,7 @@ async function open({ name, buffer }) {
   }
   session.photo = { name, buffer };
   session.merged = null;
-  return info;
+  return ensureLenses(info);
 }
 
 /** Reopen whatever was being developed, quietly. */
@@ -339,7 +386,7 @@ async function mergeFinish({ align, deghost }) {
   if (rc !== 0) fail(info);
   session.merged = { align, deghost };
   session.photo = null;
-  return info;
+  return ensureLenses(info);
 }
 
 const HANDLERS = { open, render, full, thumbnail, compare, looks, curves, lutLoad, lutClear,

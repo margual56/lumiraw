@@ -49,9 +49,10 @@ jobs:
             echo "::error::Svelte reported warnings; see the build log above."
             exit 1
           fi
-      - name: Interface arithmetic
+      - name: Interface arithmetic, and the lens pieces match the database
         working-directory: .
         run: |
+          python3 tools/split_lensfun.py --check
           node tools/check-crop.mjs
           node tools/check-webp.mjs
           node tools/check-histogram.mjs

@@ -16,4 +16,9 @@ export default {
   // The pipeline is a wasm module fetched at runtime, so there is no backend
   // to proxy to any more: `npm run dev` is the whole application.
   worker: { format: 'es' },
+  // The lens calibrations are split per mount so that only the one a photograph
+  // needs is downloaded.
+  build: {
+    assetsInlineLimit: (file) => (file.includes('/lib/wasm/lenses/') ? false : undefined),
+  },
 };

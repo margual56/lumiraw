@@ -35,6 +35,10 @@ impl Lenses {
     pub fn len(&self) -> usize {
         self.0.lenses.len()
     }
+    /// Take in another part of the database.
+    pub fn extend(&mut self, more: Lenses) {
+        self.0.extend(more.0);
+    }
 }
 
 /// Open a raw file: decode it, read its metadata, find its lens.

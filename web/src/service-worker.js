@@ -5,13 +5,15 @@ import { build, files, prerendered, version } from '$service-worker';
 const CACHE = `lumiraw-${version}`;
 const IMMUTABLE = new Set(build);
 const ALL = [...build, ...files.filter((f) => !f.endsWith('_headers')), ...prerendered];
+const onDemand = (path) => /\/(lens-[^/]*|lensfun-[^/]*)\.json$/.test(path);
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
     // The code and the engine must all be there, or offline is a promise the
     // page cannot keep.
-    await cache.addAll([...build, ...files.filter((f) => !f.endsWith('_headers'))]);
+    await cache.addAll([...build.filter((f) => !onDemand(f)),
+                        ...files.filter((f) => !f.endsWith('_headers'))]);
     // Pages are best effort, each on its own.
     await Promise.all(prerendered.flatMap((page) => [page, `${page.replace(/\/$/, '')}.html`])
       .map((url) => cache.add(url).catch(() => {})));
@@ -21,7 +23,17 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
-    for (const key of await caches.keys()) if (key !== CACHE) await caches.delete(key);
+    const cache = await caches.open(CACHE);
+    for (const key of await caches.keys()) {
+      if (key === CACHE) continue;
+      // Lens pieces fetched under the last deploy, still wanted by this one.
+      const old = await caches.open(key);
+      for (const path of build.filter(onDemand)) {
+        const hit = await old.match(path);
+        if (hit) await cache.put(path, hit);
+      }
+      await caches.delete(key);
+    }
     await self.clients.claim();
   })());
 });
@@ -33,7 +45,16 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
 
   if (IMMUTABLE.has(url.pathname)) {
-    event.respondWith(caches.match(request).then((hit) => hit ?? fetch(request)));
+    event.respondWith((async () => {
+      const hit = await caches.match(request);
+      if (hit) return hit;
+      const response = await fetch(request);
+      if (response.ok && onDemand(url.pathname)) {
+        const cache = await caches.open(CACHE);
+        await cache.put(request, response.clone());
+      }
+      return response;
+    })());
     return;
   }
   event.respondWith((async () => {

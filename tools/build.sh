@@ -4,6 +4,7 @@ cd "$(dirname "$0")/.."
 
 if [[ "${1:-}" == "--db" ]]; then
   python tools/bake_lensfun.py /usr/share/lensfun/version_1 web/src/lib/wasm/lensfun.json
+  python tools/split_lensfun.py
 fi
 
 if command -v cargo >/dev/null && rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown; then

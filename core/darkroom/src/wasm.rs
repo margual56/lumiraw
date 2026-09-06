@@ -179,13 +179,55 @@ pub extern "C" fn ar_bytes_len() -> usize {
 
 // -- the calls ---------------------------------------------------------------
 
+/// A photograph's description, plus the lens mount whose calibrations it is
+/// still waiting for (`lens_mount_needed`, null when none).
+fn describe(photo: &Photo) -> serde_json::Value {
+    let missing = LENSES.with(|l| l.borrow().as_ref().and_then(|l| photo.missing_mount(l)));
+    kit::with(photo.describe(), json!({"lens_mount_needed": missing}))
+}
+
+/// After the database changes: the open photograph looks its lens up again,
+/// and its description is what the call answers with.
+fn relens() -> i32 {
+    let described = LENSES.with(|l| with_photo(|photo| {
+        if let Some(lenses) = l.borrow().as_ref() {
+            photo.use_lenses(lenses);
+        }
+        describe(photo)
+    }));
+    let count = LENSES.with(|l| l.borrow().as_ref().map_or(0, |l| l.len()));
+    set_json(kit::with(described.unwrap_or(json!({})), json!({"lenses": count})));
+    0
+}
+
+/// Replace the lens database: the whole of it, or the cameras alone to start
+/// from (see `ar_add_lenses`).
 #[no_mangle]
 pub extern "C" fn ar_set_database(ptr: *const u8, len: usize) -> i32 {
     match Lenses::parse(unsafe { slice(ptr, len) }) {
         Ok(lenses) => {
-            set_json(json!({"lenses": lenses.len()}));
             LENSES.with(|l| *l.borrow_mut() = Some(lenses));
-            0
+            relens()
+        }
+        Err(e) => set_error(&e, "database"),
+    }
+}
+
+/// Add one mount's lenses to the database, and find the open photograph's
+/// lens among them.
+#[no_mangle]
+pub extern "C" fn ar_add_lenses(ptr: *const u8, len: usize) -> i32 {
+    match Lenses::parse(unsafe { slice(ptr, len) }) {
+        Ok(more) => {
+            LENSES.with(|l| {
+                let mut slot = l.borrow_mut();
+                if let Some(lenses) = slot.as_mut() {
+                    lenses.extend(more);
+                } else {
+                    *slot = Some(more);
+                }
+            });
+            relens()
         }
         Err(e) => set_error(&e, "database"),
     }
@@ -198,7 +240,7 @@ pub extern "C" fn ar_open(name_ptr: *const u8, name_len: usize, ptr: *const u8, 
     progress(0.05, "decoding");
     match LENSES.with(|l| crate::open(&name, unsafe { slice(ptr, len) }, l.borrow().as_ref())) {
         Ok(photo) => {
-            set_json(photo.describe());
+            set_json(describe(&photo));
             PHOTO.with(|p| *p.borrow_mut() = Some(photo));
             progress(1.0, "done");
             0
@@ -366,7 +408,7 @@ pub extern "C" fn ar_merge_finish(align: i32, deghost: f32) -> i32 {
     }));
     match merged {
         Ok((photo, notes)) => {
-            set_json(kit::with(photo.describe(), json!({"merge": crate::notes_json(&notes)})));
+            set_json(kit::with(describe(&photo), json!({"merge": crate::notes_json(&notes)})));
             PHOTO.with(|p| *p.borrow_mut() = Some(photo));
             0
         }

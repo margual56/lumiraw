@@ -85,6 +85,25 @@ impl Development {
         }
     }
 
+    /// Look the lens up again, in a database that has grown since the file was
+    /// opened (the web app loads a mount's lenses once a photograph says which
+    /// it needs).
+    pub fn use_lenses(&mut self, db: &Database) {
+        let m = &self.meta;
+        let found = db.find_lens(&m.make, &m.model, &m.lens_model, m.focal_mm, m.aperture, 10.0);
+        if found.as_ref().map(|f| &f.entry.model) != self.lens_match.as_ref().map(|f| &f.entry.model) {
+            self.lens_match = found;
+            self.cache.clear();
+            self.baseline = None;
+        }
+    }
+
+    /// The mount whose lenses `db` would need to find this photograph's lens;
+    /// see `Database::missing_mount`.
+    pub fn missing_mount(&self, db: &Database) -> Option<String> {
+        db.missing_mount(&self.meta.make, &self.meta.model, &self.meta.lens_model)
+    }
+
     pub fn width(&self) -> usize {
         self.linear.w
     }

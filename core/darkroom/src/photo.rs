@@ -85,6 +85,18 @@ impl Photo {
         Photo { dev }
     }
 
+    /// Find this photograph's lens again in a set of calibrations that has
+    /// grown since it was opened; see `Lenses::extend`.
+    pub fn use_lenses(&mut self, lenses: &crate::Lenses) {
+        self.dev.use_lenses(&lenses.0);
+    }
+
+    /// The lens mount whose calibrations `lenses` still lacks for this
+    /// photograph, if any: the one to load before its lens can be corrected.
+    pub fn missing_mount(&self, lenses: &crate::Lenses) -> Option<String> {
+        self.dev.missing_mount(&lenses.0)
+    }
+
     pub fn width(&self) -> usize {
         self.dev.width()
     }

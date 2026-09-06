@@ -71,8 +71,13 @@ fn one() -> f32 {
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct Database {
+    #[serde(default)]
     pub cameras: Vec<CameraEntry>,
+    #[serde(default)]
     pub lenses: Vec<LensEntry>,
+    /// Absent for the whole database.
+    #[serde(default)]
+    pub mounts: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug)]
@@ -89,6 +94,23 @@ pub struct LensMatch {
 impl Database {
     pub fn parse(bytes: &[u8]) -> Result<Database, String> {
         serde_json::from_slice(bytes).map_err(|e| e.to_string())
+    }
+
+    /// Take in another part of the database, one mount's lenses as a rule.
+    pub fn extend(&mut self, other: Database) {
+        self.cameras.extend(other.cameras);
+        self.lenses.extend(other.lenses);
+        if let Some(mounts) = &mut self.mounts {
+            mounts.extend(other.mounts.unwrap_or_default());
+        }
+    }
+
+    /// The mount whose lenses this photograph's lens has to be looked up among,
+    /// when they have not been loaded.
+    pub fn missing_mount(&self, make: &str, model: &str, lens: &str) -> Option<String> {
+        let loaded = self.mounts.as_ref()?;
+        let mount = self.find_camera(make, model)?.mount.to_lowercase();
+        (!norm(lens).is_empty() && !loaded.contains(&mount)).then_some(mount)
     }
 
     /// The camera body on its own: worth doing even when the lens is unknown,
@@ -114,6 +136,11 @@ impl Database {
             return None;
         }
         let mount = cam.mount.to_lowercase();
+        // A part of the database without this mount cannot answer yet, and
+        // must not answer from another mount's lenses in the meantime.
+        if self.mounts.as_ref().is_some_and(|loaded| !loaded.contains(&mount)) {
+            return None;
+        }
         let mut candidates: Vec<&LensEntry> = self
             .lenses
             .iter()
@@ -541,4 +568,61 @@ fn autoscale(dk: &DistCoeffs, w: usize, h: usize, unit: f32, cx: f32, cy: f32) -
         }
     }
     hi
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read(path: &str) -> Database {
+        let full = concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/lib/wasm/");
+        Database::parse(&std::fs::read(format!("{full}{path}")).expect(path)).expect(path)
+    }
+
+    /// The web app never holds the whole database.
+    #[test]
+    fn a_mount_at_a_time_finds_what_the_whole_database_finds() {
+        let whole = read("lensfun.json");
+        let cameras_only = read("lenses/cameras.json");
+        let index: serde_json::Value = serde_json::from_slice(&std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"), "/../web/src/lib/wasm/lenses/cameras.json")).unwrap()).unwrap();
+        let mut compared = 0;
+        for cam in &whole.cameras {
+            // A body listed twice is only ever found as its first entry.
+            if !std::ptr::eq(whole.find_camera(&cam.maker, &cam.model).unwrap(), cam) {
+                continue;
+            }
+            let mount = cam.mount.to_lowercase();
+            let Some(file) = index["chunks"][&mount].as_str() else { continue };
+            let mut partial = cameras_only.clone();
+            assert_eq!(partial.missing_mount(&cam.maker, &cam.model, "Some Lens"), Some(mount.clone()));
+            assert!(partial.find_lens(&cam.maker, &cam.model, "Some Lens", 50.0, 8.0, 10.0).is_none(),
+                    "a lens was found before its mount was loaded");
+            partial.extend(read(&format!("lenses/{file}.json")));
+            assert_eq!(partial.missing_mount(&cam.maker, &cam.model, "Some Lens"), None);
+            for lens in whole.lenses.iter().filter(|l| l.mount.to_lowercase() == mount) {
+                let a = whole.find_lens(&cam.maker, &cam.model, &lens.model, 50.0, 8.0, 10.0);
+                let b = partial.find_lens(&cam.maker, &cam.model, &lens.model, 50.0, 8.0, 10.0);
+                assert_eq!(a.map(|m| m.entry.model), b.map(|m| m.entry.model),
+                           "{} on a {}", lens.model, cam.model);
+                compared += 1;
+            }
+        }
+        assert!(compared > 10_000, "compared only {compared}");
+    }
+
+    /// Another mount's lenses already loaded must not stand in for the
+    /// right ones while those are still on their way.
+    #[test]
+    fn another_mount_does_not_answer_for_a_missing_one() {
+        let index: serde_json::Value = serde_json::from_slice(&std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"), "/../web/src/lib/wasm/lenses/cameras.json")).unwrap()).unwrap();
+        let mut partial = read("lenses/cameras.json");
+        partial.extend(read(&format!("lenses/{}.json", index["chunks"]["canon ef"].as_str().unwrap())));
+        let whole = read("lensfun.json");
+        let sony = whole.cameras.iter().find(|c| c.mount.to_lowercase() == "sony e").unwrap();
+        assert!(partial.find_lens(&sony.maker, &sony.model, "EF 50mm f/1.8 II", 50.0, 8.0, 10.0).is_none());
+        assert_eq!(partial.missing_mount(&sony.maker, &sony.model, "E 16-55mm F2.8 G").as_deref(),
+                   Some("sony e"));
+    }
 }

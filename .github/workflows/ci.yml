@@ -16,17 +16,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          cache-on-failure: true
+      - name: Tests
+        run: cargo test --profile ci --manifest-path core/Cargo.toml --workspace --lib --bins
+
+  wasm:
+    name: Wasm target
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
-      - name: Tests (kit, pipeline, darkroom)
-        run: cargo test --release --manifest-path core/Cargo.toml --workspace --lib
-      - name: Binaries and examples
-        run: cargo build --release --manifest-path core/Cargo.toml --workspace --bins
-      - name: The wasm module builds
-        run: cargo build --release --manifest-path core/Cargo.toml -p darkroom --target wasm32-unknown-unknown
+          key: wasm
+          cache-on-failure: true
+      - name: The module compiles for the browser
+        run: cargo check --profile ci --manifest-path core/Cargo.toml -p darkroom --target wasm32-unknown-unknown
 
   web:
     name: Site

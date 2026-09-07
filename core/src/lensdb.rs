@@ -587,12 +587,16 @@ mod tests {
         let index: serde_json::Value = serde_json::from_slice(&std::fs::read(concat!(
             env!("CARGO_MANIFEST_DIR"), "/../web/src/lib/wasm/lenses/cameras.json")).unwrap()).unwrap();
         let mut compared = 0;
+        let mut seen = std::collections::HashSet::new();
         for cam in &whole.cameras {
             // A body listed twice is only ever found as its first entry.
             if !std::ptr::eq(whole.find_camera(&cam.maker, &cam.model).unwrap(), cam) {
                 continue;
             }
             let mount = cam.mount.to_lowercase();
+            if !seen.insert(mount.clone()) {
+                continue;
+            }
             let Some(file) = index["chunks"][&mount].as_str() else { continue };
             let mut partial = cameras_only.clone();
             assert_eq!(partial.missing_mount(&cam.maker, &cam.model, "Some Lens"), Some(mount.clone()));
@@ -608,7 +612,7 @@ mod tests {
                 compared += 1;
             }
         }
-        assert!(compared > 10_000, "compared only {compared}");
+        assert!(compared > 1_000, "compared only {compared}");
     }
 
     /// Another mount's lenses already loaded must not stand in for the

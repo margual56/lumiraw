@@ -10,6 +10,7 @@ pub use grades::{clear_cube, curves, load_cube, looks, CubeInfo};
 pub use photo::{Developed, Encoded, Export, Exported, Photo, Size};
 
 pub use autoraw_core::grade::Settings as Edit;
+pub use autoraw_core::develop::Region;
 pub use autoraw_core::merge::{Finding, Notes as MergeNotes, Options as MergeOptions};
 pub use autoraw_core::raw::DecodeError;
 pub use kit::{Image, Report};

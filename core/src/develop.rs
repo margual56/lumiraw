@@ -3,7 +3,7 @@
 use kit::Report;
 use crate::decode::{self, Meta};
 use crate::geometry::{self, Rect};
-use crate::grade::{self, ProcessArgs, Settings, TOGGLES};
+use crate::grade::{self, Decisions, ProcessArgs, Settings, Window, TOGGLES};
 use crate::lensdb::{self, Database, LensMatch};
 use kit::Image;
 use crate::profile::{self, CaptureProfile};
@@ -28,6 +28,29 @@ pub struct Development {
     /// The last "before" rendered, with the settings, size and 3D table it
     /// was rendered from.
     baseline: Option<(Settings, Option<usize>, u64, Image)>,
+    /// What an export would decide for these settings, measured for the last
+    /// region developed; see `decide_at_full_size`.
+    decided_full: Option<(Settings, Decisions)>,
+    /// The whole frame at full size, corrected, framed and healed, while
+    /// regions of it are being looked at.
+    full_frame: Option<(String, Vec<crate::local::Spot>, Image)>,
+}
+
+/// A piece of the frame developed at full size; see `render_region`.
+pub struct Region {
+    pub image: Image,
+    /// Where the piece is in the whole framed picture, which is `full_w` by
+    /// `full_h` pixels.
+    pub x: usize,
+    pub y: usize,
+    pub full_w: usize,
+    pub full_h: usize,
+}
+
+/// How far past the edges of a region it is developed, then cut back, for a
+/// frame `long` pixels on its long edge.
+fn region_margin(long: usize) -> usize {
+    (long / 17).max(64)
 }
 
 impl Development {
@@ -82,6 +105,8 @@ impl Development {
             cache: Vec::new(),
             focus: None,
             baseline: None,
+            decided_full: None,
+            full_frame: None,
         }
     }
 
@@ -115,15 +140,7 @@ impl Development {
     fn corrected(&mut self, s: &Settings, long_edge: Option<usize>, crop: bool,
                  progress: &mut Option<&mut dyn FnMut(f32, &str)>)
                  -> (Image, Map<String, Value>, Option<Rect>) {
-        let key = format!(
-            "{:?}|{}|{}|{}|{}|{}",
-            long_edge,
-            s.on("lens_vignetting"),
-            s.on("lens_distortion"),
-            s.on("lens_tca"),
-            s.framing.key(),
-            crop
-        );
+        let key = corrected_key(s, long_edge, crop);
         // The measurements travel with the cached proxy.
         if let Some((_, img, rect, infos)) = self.cache.iter().find(|(k, _, _, _)| *k == key) {
             return (img.clone(), infos.clone(), *rect);
@@ -172,6 +189,11 @@ impl Development {
                   long_edge: Option<usize>, crop: bool,
                   mut progress: Option<&mut dyn FnMut(f32, &str)>)
                   -> (Image, Report) {
+        // A full-size render has no room for a second full-size frame kept
+        // for looking around at 100 %.
+        if long_edge.is_none() {
+            self.release_region();
+        }
         let mut report = Report::new();
         let (src, lens_info, eff_crop) = self.corrected(settings, long_edge, crop, &mut progress);
         self.report_lens(settings, &lens_info, &mut report);
@@ -197,14 +219,7 @@ impl Development {
         // The width was measured at a fixed working size, so the blur it
         // describes is that many pixels *there*.
         let measured_width = self.focus_width();
-        let focus_sigma = match measured_width {
-            Some(w) if w >= crate::analyze::FOCUS_SOFT => {
-                let at_work = crate::analyze::focus_sigma(w);
-                let long = src.w.max(src.h) as f32;
-                at_work * (long / crate::analyze::FOCUS_LONG_EDGE as f32).min(4.0)
-            }
-            _ => 0.0,
-        };
+        let focus_sigma = self.focus_sigma_at(src.w.max(src.h));
         let args = ProcessArgs {
             iso: self.profile.iso,
             sharpen_sigma: self.profile.sharpen_sigma,
@@ -214,9 +229,11 @@ impl Development {
             preset: tuned,
             native_noise_floor,
             focus_sigma,
+            window: Window::whole(&src),
+            decided: None,
             progress: graded_progress.as_mut().map(|f| &mut **f as &mut dyn FnMut(f32, &str)),
         };
-        let mut rgb = grade::process(&src, settings, args, &mut report);
+        let (rgb, _) = grade::process(&src, settings, args, &mut report);
 
         // What the frame measured, said out loud whichever way it came out.
         report.add("focus", match measured_width {
@@ -237,6 +254,121 @@ impl Development {
                 report.add("framing", hint.to_json());
             }
         }
+        let window = Window::whole(&rgb);
+        (finish(rgb, settings, window, &mut report), report)
+    }
+
+    /// The blur focus recovery aims at, in pixels of a render `long` pixels on
+    /// its long edge.
+    pub fn release_region(&mut self) {
+        self.full_frame = None;
+        self.decided_full = None;
+    }
+
+    fn decide_at_full_size(&mut self, full: &Image, settings: &Settings) -> Decisions {
+        if let Some((s, d)) = &self.decided_full {
+            if s == settings {
+                return d.clone();
+            }
+        }
+        let proxy = kit::thumbnail(full, 1024);
+        let args = ProcessArgs {
+            iso: self.profile.iso,
+            sharpen_sigma: self.profile.sharpen_sigma,
+            noise_prior: self.profile.noise_prior,
+            stats_rect: None,
+            render_scale: 1.0,
+            preset: profile::tune(&settings.preset_obj(), &self.profile),
+            native_noise_floor: self.native_noise_floor(),
+            focus_sigma: 0.0,
+            window: Window::whole(&proxy),
+            decided: None,
+            progress: None,
+        };
+        let (_, decided) = grade::process(&proxy, settings, args, &mut Report::new());
+        self.decided_full = Some((settings.clone(), decided.clone()));
+        decided
+    }
+
+    fn focus_sigma_at(&mut self, long: usize) -> f32 {
+        match self.focus_width() {
+            Some(w) if w >= crate::analyze::FOCUS_SOFT => {
+                let at_work = crate::analyze::focus_sigma(w);
+                at_work * (long as f32 / crate::analyze::FOCUS_LONG_EDGE as f32).min(4.0)
+            }
+            _ => 0.0,
+        }
+    }
+
+    /// A piece of the framed picture at full size, as it would be in an export.
+    pub fn render_region(&mut self, settings: &Settings, centre: (f32, f32), want: (usize, usize),
+                         mut progress: Option<&mut dyn FnMut(f32, &str)>) -> Region {
+        let key = corrected_key(settings, None, true);
+        let fresh = !matches!(&self.full_frame, Some((k, spots, _)) if *k == key && *spots == settings.spots);
+        if fresh {
+            self.full_frame = None;
+            let (mut full, _, _) = self.corrected(settings, None, true, &mut progress);
+            crate::local::heal(&mut full, &settings.spots, None);
+            self.full_frame = Some((key, settings.spots.clone(), full));
+        }
+        let (key, spots, full) = self.full_frame.take().expect("made above");
+        // Healed above, on the whole frame.
+        let healed = Settings { spots: Vec::new(), ..settings.clone() };
+        let decided = self.decide_at_full_size(&full, &healed);
+        let (fw, fh) = (full.w, full.h);
+        let (w, h) = (want.0.clamp(1, fw), want.1.clamp(1, fh));
+        let place = |c: f32, size: usize, whole: usize| {
+            ((c.clamp(0.0, 1.0) * whole as f32) as usize).saturating_sub(size / 2).min(whole - size)
+        };
+        let (x, y) = (place(centre.0, w, fw), place(centre.1, h, fh));
+        let margin = region_margin(fw.max(fh));
+        let (x0, y0) = (x.saturating_sub(margin), y.saturating_sub(margin));
+        let (x1, y1) = ((x + w + margin).min(fw), (y + h + margin).min(fh));
+        let piece = full.crop(x0, y0, x1 - x0, y1 - y0);
+        self.full_frame = Some((key, spots, full));
+
+        let window = Window { x: x0, y: y0, w: fw, h: fh };
+        let mut report = Report::new();
+        let mut graded_progress = progress.map(|cb| {
+            let f: Box<dyn FnMut(f32, &str) + '_> =
+                Box::new(move |f: f32, code: &str| cb(0.25 + 0.75 * f, code));
+            f
+        });
+        let args = ProcessArgs {
+            iso: self.profile.iso,
+            sharpen_sigma: self.profile.sharpen_sigma,
+            noise_prior: self.profile.noise_prior,
+            stats_rect: None,
+            render_scale: 1.0,
+            preset: profile::tune(&settings.preset_obj(), &self.profile),
+            native_noise_floor: self.native_noise_floor(),
+            focus_sigma: self.focus_sigma_at(fw.max(fh)),
+            window,
+            decided: Some(decided),
+            progress: graded_progress.as_mut().map(|f| &mut **f as &mut dyn FnMut(f32, &str)),
+        };
+        let (rgb, _) = grade::process(&piece, &healed, args, &mut report);
+        let rgb = finish(rgb, settings, window, &mut report);
+        Region { image: rgb.crop(x - x0, y - y0, w, h), x, y, full_w: fw, full_h: fh }
+    }
+}
+
+/// What a lens-corrected, framed frame depends on, and nothing else.
+fn corrected_key(s: &Settings, long_edge: Option<usize>, crop: bool) -> String {
+    format!(
+        "{:?}|{}|{}|{}|{}|{}",
+        long_edge,
+        s.on("lens_vignetting"),
+        s.on("lens_distortion"),
+        s.on("lens_tca"),
+        s.framing.key(),
+        crop
+    )
+}
+
+/// Taste, after the pipeline's own work.
+fn finish(mut rgb: Image, settings: &Settings, window: Window, report: &mut Report) -> Image {
+    {
         // Taste, in the order the darkroom had it.
         if !settings.mixer.is_identity() {
             rgb = crate::mixer::apply(&rgb, &settings.mixer);
@@ -261,14 +393,17 @@ impl Development {
         report.add("lut", json!({"applied": lut_applied,
                                  "strength": kit::round_to(settings.lut, 3)}));
 
-        effects::vignette(&mut rgb, settings.vignette);
-        effects::grain(&mut rgb, settings.grain);
+        effects::vignette_in(&mut rgb, settings.vignette, window);
+        effects::grain_in(&mut rgb, settings.grain, window);
         report.add("effects", json!({
             "monochrome": kit::round_to(settings.monochrome, 3),
             "vignette": kit::round_to(settings.vignette, 3),
             "grain": kit::round_to(settings.grain, 3)}));
-        (rgb, report)
     }
+    rgb
+}
+
+impl Development {
 
     /// The same frame with every automatic correction switched off.
     pub fn baseline(&mut self, settings: &Settings, long_edge: Option<usize>) -> Image {
@@ -462,6 +597,38 @@ mod tests {
         let mut toned = plain.clone();
         toned.highlights = -0.8;
         assert_ne!(dev.baseline(&toned, Some(64)).d, a.d, "a stale before for the tone zones");
+    }
+
+    /// A piece developed on its own has to be the same pixels the whole frame
+    /// has there.
+    #[test]
+    fn a_region_is_the_same_pixels_as_the_whole() {
+        let mut img = Image::new(640, 420);
+        for (i, px) in img.px_mut().iter_mut().enumerate() {
+            let (x, y) = ((i % 640) as f32, (i / 640) as f32);
+            let texture = 0.04 * ((x * 0.37).sin() * (y * 0.23).cos());
+            *px = [0.05 + 0.3 * x / 640.0 + texture, 0.08 + 0.2 * y / 420.0 + texture,
+                   0.06 + 0.1 * (x + y) / 1060.0];
+        }
+        let mut dev = Development::from_frame("test", img, Meta::default(), Vec::new(), None);
+        let s = Settings::from_json(&json!({"clarity": 0.6, "denoise": 0.5, "vignette": 0.7,
+            "grain": 0.5, "filters": [{"kind": "linear", "a": [0.5, 0.0], "b": [0.5, 0.7],
+            "exposure": -0.8}]}));
+        let whole = dev.render_region(&s, (0.5, 0.5), (10_000, 10_000), None);
+        assert_eq!((whole.image.w, whole.image.h, whole.x, whole.y), (640, 420, 0, 0));
+        let piece = dev.render_region(&s, (0.7, 0.3), (160, 120), None);
+        assert_eq!((piece.full_w, piece.full_h), (640, 420));
+        let mut worst = 0f32;
+        for y in 0..piece.image.h {
+            for x in 0..piece.image.w {
+                for c in 0..3 {
+                    let a = piece.image.d[(y * piece.image.w + x) * 3 + c];
+                    let b = whole.image.d[((y + piece.y) * 640 + x + piece.x) * 3 + c];
+                    worst = worst.max((a - b).abs());
+                }
+            }
+        }
+        assert!(worst < 1.0 / 1024.0, "the piece is {worst} off the whole frame");
     }
 
     /// Each toggle reports what its own stage did, not a neighbour's.

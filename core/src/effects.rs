@@ -1,5 +1,6 @@
 //! The three things a curve cannot do.
 
+use crate::grade::Window;
 use kit::Image;
 
 /// The heaviest grain on offer, as a standard deviation in display-linear
@@ -74,14 +75,19 @@ fn radius_at(x: usize, y: usize, w: usize, h: usize) -> f32 {
 
 /// Darken toward the corners.
 pub fn vignette(img: &mut Image, amount: f32) {
+    vignette_in(img, amount, Window::whole(img));
+}
+
+/// `vignette` on a piece of a frame, placed where `window` says it sits.
+pub fn vignette_in(img: &mut Image, amount: f32, window: Window) {
     let a = amount.clamp(0.0, 1.0) * VIGNETTE_MAX;
     if a <= 0.0 {
         return;
     }
     for y in 0..img.h {
         for x in 0..img.w {
-            let falloff =
-                1.0 - a * kit::smoothstep(VIGNETTE_START, 1.0, radius_at(x, y, img.w, img.h));
+            let r = radius_at(x + window.x, y + window.y, window.w, window.h);
+            let falloff = 1.0 - a * kit::smoothstep(VIGNETTE_START, 1.0, r);
             let i = (y * img.w + x) * 3;
             for c in 0..3 {
                 img.d[i + c] *= falloff;
@@ -92,17 +98,22 @@ pub fn vignette(img: &mut Image, amount: f32) {
 
 /// Luminance grain, strongest in the midtones as on real film.
 pub fn grain(img: &mut Image, amount: f32) {
+    grain_in(img, amount, Window::whole(img));
+}
+
+/// `grain` on a piece of a frame: the same grains the whole frame has there.
+pub fn grain_in(img: &mut Image, amount: f32, window: Window) {
     let a = amount.clamp(0.0, 1.0) * GRAIN_MAX;
     if a <= 0.0 {
         return;
     }
     // Grains per pixel at this size.
-    let per_pixel = GRAIN_ACROSS / img.w.max(img.h).max(1) as f32;
+    let per_pixel = GRAIN_ACROSS / window.long_edge().max(1) as f32;
     let w = img.w;
     for (y, row) in img.px_mut().chunks_mut(w).enumerate() {
         for (x, px) in row.iter_mut().enumerate() {
             let luma = kit::luminance_px(px);
-            let n = grain_at(x, y, per_pixel) * a * 4.0 * luma * (1.0 - luma);
+            let n = grain_at(x + window.x, y + window.y, per_pixel) * a * 4.0 * luma * (1.0 - luma);
             for v in px.iter_mut() {
                 *v = (*v + n).clamp(0.0, 1.0);
             }

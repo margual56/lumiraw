@@ -275,6 +275,32 @@ pub extern "C" fn ar_render(settings_ptr: *const u8, settings_len: usize, long_e
     }
 }
 
+/// A piece of the picture at full size for the 100 % view.
+#[no_mangle]
+pub extern "C" fn ar_render_region(settings_ptr: *const u8, settings_len: usize, cx: f32, cy: f32,
+                                   w: i32, h: i32) -> i32 {
+    let edit = edit_at(settings_ptr, settings_len);
+    let out = with_photo(|photo| {
+        let mut cb = |f: f32, code: &str| progress(f, code);
+        photo.develop_region(&edit, (cx, cy), (w.max(1) as usize, h.max(1) as usize), Some(&mut cb))
+    });
+    match out {
+        Some(r) => {
+            store(&r.image);
+            set_json(json!({"x": r.x, "y": r.y, "width": r.image.w, "height": r.image.h,
+                            "full_width": r.full_w, "full_height": r.full_h}));
+            0
+        }
+        None => set_error("no image open", "no_session"),
+    }
+}
+
+/// The 100 % view has closed: let go of the full-size frame it was using.
+#[no_mangle]
+pub extern "C" fn ar_release_region() {
+    with_photo(|photo| photo.release_region());
+}
+
 /// A filmstrip thumbnail of a file, leaving the open photograph alone.
 #[no_mangle]
 pub extern "C" fn ar_thumbnail(ptr: *const u8, len: usize, long_edge: i32) -> i32 {

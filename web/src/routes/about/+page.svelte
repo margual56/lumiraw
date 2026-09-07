@@ -87,8 +87,8 @@
   <h2>Lo que todavía no hace</h2>
   <ul>
     <li>Todo se ejecuta en un solo núcleo del procesador, así que exportar a tamaño completo
-      un archivo de 26 MP tarda unos diez segundos en un portátil, y la vista al 100 % unos
-      ocho.</li>
+      un archivo de 26 MP tarda unos diez segundos en un portátil. La vista al 100 % tarda unos
+      tres en abrirse y uno o dos después de cada cambio.</li>
     <li>Tus ajustes se quedan en el navegador donde los hiciste. Todavía no hay forma de
       llevarlos a otro dispositivo ni de guardarlos en un archivo.</li>
     <li>Un RAW grande necesita mucha memoria, y puede que un móvil antiguo no tenga
@@ -184,7 +184,8 @@
   <h2>What it doesn't do yet</h2>
   <ul>
     <li>Everything runs on a single processor core, so a full-size export of a 26 MP file
-      takes about ten seconds on a laptop, and the 100 % view about eight.</li>
+      takes about ten seconds on a laptop. The 100 % view takes about three seconds to open,
+      and a second or two after each change.</li>
     <li>Your edits stay in the browser you made them in. There's no way yet to take them to
       another device or save them to a file.</li>
     <li>A large raw file needs a lot of memory, and an older phone may not have enough.</li>

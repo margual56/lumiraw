@@ -107,9 +107,9 @@ export const app = $state({
   wipe: { key: null, before: '', after: '' },
   ungraded: { key: null, image: '' },   // grade step's "before": everything but the grade
   output: { key: null, image: '' },     // download step, fully graded
-  // The full-resolution frame for the 100 % view, developed only while that
-  // view is open: { key, bitmap, width, height }.
-  full: { key: null, bitmap: null, width: 0, height: 0 },
+  // The piece of the picture the 100 % view is showing, at full resolution,
+  // while that view is open.
+  full: { key: null, bitmap: null, x: 0, y: 0, width: 0, height: 0, fullWidth: 0, fullHeight: 0 },
 
   // Every raw dropped together, for the filmstrip.
   roll: [],
@@ -180,5 +180,6 @@ export function resetForNewPhoto() {
   app.ungraded = { key: null, image: '' };
   app.output = { key: null, image: '' };
   app.full.bitmap?.close();
-  app.full = { key: null, bitmap: null, width: 0, height: 0 };
+  app.full = { key: null, bitmap: null, x: 0, y: 0, width: 0, height: 0,
+               fullWidth: 0, fullHeight: 0 };
 }

@@ -113,6 +113,12 @@ export const exportOnce = (body, onprogress) => call('export', body, { onprogres
 
 /** The picture at full resolution, as an ImageBitmap, for the 100 % view. */
 export const renderFull = (body) => call('full', body);
+/**
+ * A piece of the picture at full size, around `centre` (fractions of the framed
+ * picture), at most `width` by `height`.
+ */
+export const renderRegion = (body) => call('region', body);
+export const releaseRegion = () => call('releaseRegion');
 
 export async function compare(body) {
   const out = await call('compare', body);

@@ -129,6 +129,17 @@ impl Photo {
         Developed { image, report, toggles, crop }
     }
 
+    /// A piece of the picture at full size, for looking at 100 %.
+    pub fn develop_region(&mut self, edit: &Edit, centre: (f32, f32), size: (usize, usize),
+                          progress: Progress) -> crate::Region {
+        self.dev.render_region(edit, centre, size, progress)
+    }
+
+    /// Let go of the full-size frame `develop_region` keeps between calls.
+    pub fn release_region(&mut self) {
+        self.dev.release_region();
+    }
+
     /// The same photograph with every automatic correction switched off (the
     /// photographer's own choices kept), for a before/after comparison.
     pub fn before(&mut self, edit: &Edit, size: Size) -> Image {

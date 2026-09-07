@@ -98,6 +98,59 @@ pub const TOGGLES: [(&str, &str, &str, &str); 13] = [
     ("sharpen", "Sharpening", "Detail", "sharpening"),
 ];
 
+/// What the automatic stages decided for a frame.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Decisions {
+    /// The white balance gains `adapt` applied, before temperature and tint.
+    pub wb: Option<[f32; 3]>,
+    /// The whole exposure gain, the photographer's bias included.
+    pub exposure: f32,
+    /// The tone map's compression, and the base level it pivots on (log2).
+    pub tone: (f32, f32),
+    /// Black and white point, when levels were applied.
+    pub levels: Option<(f32, f32)>,
+    /// The contrast curve's amount and pivot.
+    pub contrast: (f32, f32),
+    /// The vibrance boost as applied, one when it was not.
+    pub vibrance: f32,
+}
+
+impl Default for Decisions {
+    fn default() -> Self {
+        Decisions { wb: None, exposure: 1.0, tone: (1.0, 0.0), levels: None,
+                    contrast: (0.0, 0.5), vibrance: 1.0 }
+    }
+}
+
+/// Where an image sits in the frame it belongs to.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Window {
+    /// Where the image's top-left pixel is in the frame.
+    pub x: usize,
+    pub y: usize,
+    /// The whole frame's size.
+    pub w: usize,
+    pub h: usize,
+}
+
+impl Window {
+    pub fn whole(img: &Image) -> Window {
+        Window { x: 0, y: 0, w: img.w, h: img.h }
+    }
+    pub fn long_edge(&self) -> usize {
+        self.w.max(self.h)
+    }
+    /// The frame as fractions of this image, for the stages that place
+    /// things in the frame (local filters): None when the image is all of it.
+    pub fn frame(&self, img: &Image) -> Option<Rect> {
+        if self.x == 0 && self.y == 0 && self.w == img.w && self.h == img.h {
+            return None;
+        }
+        let (iw, ih) = (img.w as f32, img.h as f32);
+        Some((-(self.x as f32) / iw, -(self.y as f32) / ih, self.w as f32 / iw, self.h as f32 / ih))
+    }
+}
+
 /// Everything the user chose.  `None` means "decide it automatically".
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
@@ -280,7 +333,16 @@ pub fn sample_rect(img: &Image, rect: Rect, frame: Option<Rect>) -> Option<Vec<[
 
 /// White balance, on the frame and on its measuring thumbnail alike.
 pub fn apply_white_balance(img: &mut Image, thumb: &mut Image, s: &Settings, p: &Preset,
-                           frame: Option<Rect>, report: &mut Report) {
+                           frame: Option<Rect>, d: &mut Decisions, frozen: bool,
+                           report: &mut Report) {
+    if frozen {
+        if let Some(gains) = d.wb {
+            adapt(img, gains);
+        }
+        apply_temp_tint(img, thumb, s, report);
+        return;
+    }
+    d.wb = None;
     if !s.on("white_balance") {
         report.skipped("white balance", "switched_off", json!({}));
         apply_temp_tint(img, thumb, s, report);
@@ -301,6 +363,7 @@ pub fn apply_white_balance(img: &mut Image, thumb: &mut Image, s: &Settings, p: 
         let gains = gains.map(|g| g / norm);
         report.add("white balance", json!({"applied": true, "source": "selection",
             "gains": gains.map(|g| round_to(g, 4)), "patch_px": patch.len()}));
+        d.wb = Some(gains);
         adapt(img, gains);
         adapt(thumb, gains);
         apply_temp_tint(img, thumb, s, report);
@@ -313,6 +376,7 @@ pub fn apply_white_balance(img: &mut Image, thumb: &mut Image, s: &Settings, p: 
     let applied = info.get("applied").and_then(|v| v.as_bool()).unwrap_or(false);
     report.add("white balance", info);
     if applied {
+        d.wb = Some(gains);
         adapt(img, gains);
         adapt(thumb, gains);
     }
@@ -353,12 +417,19 @@ pub fn adapt(img: &mut Image, gains: [f32; 3]) {
 }
 
 pub fn apply_exposure(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
-                      frame: Option<Rect>, report: &mut Report) -> f32 {
+                      frame: Option<Rect>, d: &mut Decisions, frozen: bool,
+                      report: &mut Report) -> f32 {
+    let gain = if frozen { d.exposure } else { decide_exposure(img, thumb, s, p, frame, report) };
+    d.exposure = gain;
+    img.scale(gain);
+    gain
+}
+
+fn decide_exposure(img: &Image, thumb: &Image, s: &Settings, p: &Preset, frame: Option<Rect>,
+                   report: &mut Report) -> f32 {
     if !s.on("exposure") {
         report.skipped("exposure", "switched_off", json!({}));
-        let gain = s.exposure_bias.exp2();
-        img.scale(gain);
-        return gain;
+        return s.exposure_bias.exp2();
     }
     if let Some(patch) = s.exposure_rect.and_then(|r| sample_rect(img, r, frame)) {
         // Geometric mean: a few bright specks in the selection should not
@@ -373,7 +444,6 @@ pub fn apply_exposure(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
         report.add("exposure", json!({"applied": true, "source": "selection",
             "patch_level": round_to(level, 5), "gain_ev": round_to(gain.log2(), 3),
             "bias_ev": round_to(s.exposure_bias, 2)}));
-        img.scale(gain);
         return gain;
     }
     let (mut gain, info) =
@@ -381,14 +451,19 @@ pub fn apply_exposure(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
     gain *= s.exposure_bias.exp2();
     report.add("exposure", with(info, json!({"source": "automatic",
                                               "bias_ev": round_to(s.exposure_bias, 2)})));
-    img.scale(gain);
     gain
 }
 
 /// Compress the scene's range on the low-frequency layer only.
 pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
+                            long_edge: usize, d: &mut Decisions, frozen: bool,
                             report: &mut Report) -> f32 {
-    let (factor, info) = analyze::auto_tone_compression(thumb, p.comfortable_stops, 0.45);
+    let (factor, info) = if frozen {
+        (d.tone.0, json!({}))
+    } else {
+        analyze::auto_tone_compression(thumb, p.comfortable_stops, 0.45)
+    };
+    d.tone.0 = factor;
     // Clarity is this same split between the broad light of the scene and its
     // fine structure, with the photographer setting how much of the structure
     // is kept.
@@ -409,17 +484,22 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
     for i in 0..y.d.len() {
         log_y.d[i] = kit::fast_log2(y.d[i].max(1e-5));
     }
-    let radius = ((img.w.max(img.h) as f32 / 45.0).round() as usize).max(8);
+    let radius = ((long_edge as f32 / 45.0).round() as usize).max(8);
     let base = kit::guided_filter(&log_y, &log_y, radius, 0.15, 4);
 
     // anchor = 55th percentile of the base layer, sampled every 4th pixel
-    let mut sample: Vec<f32> = Vec::with_capacity(base.d.len() / 16 + 1);
-    for yy in (0..base.h).step_by(4) {
-        for xx in (0..base.w).step_by(4) {
-            sample.push(base.d[yy * base.w + xx]);
+    let anchor = if frozen {
+        d.tone.1
+    } else {
+        let mut sample: Vec<f32> = Vec::with_capacity(base.d.len() / 16 + 1);
+        for yy in (0..base.h).step_by(4) {
+            for xx in (0..base.w).step_by(4) {
+                sample.push(base.d[yy * base.w + xx]);
+            }
         }
-    }
-    let anchor = kit::percentile(&sample, 55.0);
+        kit::percentile(&sample, 55.0)
+    };
+    d.tone.1 = anchor;
 
     for (i, px) in img.px_mut().iter_mut().enumerate() {
         let detail = log_y.d[i] - base.d[i];
@@ -533,6 +613,7 @@ fn denoise_skipped(on: bool, measured: f32) -> &'static str {
 /// Levels, contrast, vibrance, denoising and sharpening in Oklab.
 pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharpen_sigma: f32,
                         compression: f32, focus_sigma: f32, render_scale: f32,
+                        long_edge: usize, d: &mut Decisions, frozen: bool,
                         report: &mut Report, stats_rect: Option<Rect>) -> Image {
     let n = img.w * img.h;
     let Lab { l: mut lightness, mut a, mut b } = Lab::from_rgb(img);
@@ -547,26 +628,47 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     }
 
     // --- black/white point ------------------------------------------------
-    let (black, white, info) =
-        analyze::auto_levels(&measured(&lightness, stats_rect), p.levels_strength, 0.15);
-    let levels_applied = info.get("applied").and_then(|v| v.as_bool()).unwrap_or(false);
+    let levels = if frozen {
+        d.levels
+    } else {
+        let (black, white, info) =
+            analyze::auto_levels(&measured(&lightness, stats_rect), p.levels_strength, 0.15);
+        let levels_applied = info.get("applied").and_then(|v| v.as_bool()).unwrap_or(false);
+        if s.on("levels") && levels_applied {
+            report.add("levels", info);
+            Some((black, white))
+        } else {
+            report.skipped("levels", if !s.on("levels") { "switched_off" } else { "not_needed" },
+                           info);
+            None
+        }
+    };
+    d.levels = levels;
     let mut light_new = Plane::new(img.w, img.h);
-    if s.on("levels") && levels_applied {
-        report.add("levels", info);
+    if let Some((black, white)) = levels {
         let span = (white - black).max(1e-6);
         for i in 0..n {
             light_new.d[i] = ((lightness.d[i] - black) / span).clamp(0.0, 1.0);
         }
     } else {
-        report.skipped("levels", if !s.on("levels") { "switched_off" } else { "not_needed" }, info);
         light_new.d.copy_from_slice(&lightness.d);
     }
 
     // --- contrast ---------------------------------------------------------
-    let (amount, pivot, info) = analyze::auto_contrast(&measured(&light_new, stats_rect), 0.20,
-                                                       p.contrast_amount, compression);
+    let (amount, pivot) = if frozen {
+        d.contrast
+    } else {
+        let (amount, pivot, info) = analyze::auto_contrast(&measured(&light_new, stats_rect), 0.20,
+                                                           p.contrast_amount, compression);
+        if s.on("contrast") {
+            report.add("contrast", info);
+        } else {
+            report.skipped("contrast", "switched_off", info);
+        }
+        (amount, pivot)
+    };
+    d.contrast = (amount, pivot);
     if s.on("contrast") {
-        report.add("contrast", info);
         // One curve for the whole frame, so it is tabulated once rather than
         // evaluated with two `powf` per pixel.
         let table: Vec<f32> = (0..=CURVE_STEPS + 1)
@@ -577,8 +679,6 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
             let j = f as usize;
             *v = table[j] + (table[j + 1] - table[j]) * (f - j as f32);
         }
-    } else {
-        report.skipped("contrast", "switched_off", info);
     }
 
     // --- tone zones -------------------------------------------------------
@@ -612,7 +712,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     let auto_chroma = if p.denoise { ((noise - 0.18) / 0.5).clamp(0.0, 1.0) * 0.85 } else { 0.0 };
     let chroma_blend = with_user(auto_chroma, s.denoise, 0.95);
     if s.on("denoise_chroma") && chroma_blend > 0.01 {
-        let radius = ((img.w.max(img.h) as f32 / 350.0).round() as usize).max(3);
+        let radius = ((long_edge as f32 / 350.0).round() as usize).max(3);
         let blend = chroma_blend;
         let fa = kit::guided_filter(&light_new, &a, radius, 4e-4, 2);
         let fb = kit::guided_filter(&light_new, &b, radius, 4e-4, 2);
@@ -635,7 +735,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     let auto_luma = if p.denoise { ((noise - 0.30) / 0.6).clamp(0.0, 1.0) * 0.55 } else { 0.0 };
     let luma_blend = with_user(auto_luma, s.denoise, 0.85);
     if s.on("denoise_luma") && luma_blend > 0.01 {
-        let radius = ((img.w.max(img.h) as f32 / 900.0).round() as usize).max(2);
+        let radius = ((long_edge as f32 / 900.0).round() as usize).max(2);
         let blend = luma_blend;
         let fl = kit::guided_filter(&light_new, &light_new, radius, 2.5e-4, 2);
         for i in 0..n {
@@ -654,6 +754,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     for i in 0..n {
         chroma.d[i] = a.d[i].hypot(b.d[i]);
     }
+    let boost = if frozen { d.vibrance } else {
     let (mut boost, info) = analyze::auto_vibrance(
         &measured(&chroma, stats_rect),
         &measured(&light_new, stats_rect),
@@ -673,6 +774,9 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     } else {
         report.add("vibrance", info);
     }
+    boost
+    };
+    d.vibrance = boost;
     if (boost - 1.0).abs() > 0.001 {
         let skin = skin_hue();
         for i in 0..n {
@@ -787,15 +891,27 @@ pub struct ProcessArgs<'a> {
     /// The blur `analyze::focus_width` measured, in pixels of the *rendered*
     /// frame.
     pub focus_sigma: f32,
+    /// Where this image sits in the frame; the whole of it, except for a
+    /// piece developed on its own (`Development::render_region`).
+    pub window: Window,
+    /// Decisions to apply rather than make; see `Decisions`.
+    pub decided: Option<Decisions>,
     pub progress: Option<&'a mut dyn FnMut(f32, &str)>,
 }
 
-/// Linear scene-referred RGB -> display-referred linear sRGB in [0,1].
-pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut Report) -> Image {
+/// Linear scene-referred RGB -> display-referred linear sRGB in [0,1], with
+/// what was decided along the way.
+pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut Report)
+               -> (Image, Decisions) {
     let p = args.preset;
+    let frozen = args.decided.is_some();
+    let mut d = args.decided.unwrap_or_default();
+    let long_edge = args.window.long_edge();
     let mut img = src.clone();
+    // Where the frame is, for the stages that place things in it.
+    let frame = args.stats_rect.or(args.window.frame(&img));
     // Healing before anything is measured; see `local`.
-    crate::local::heal(&mut img, &settings.spots, args.stats_rect);
+    crate::local::heal(&mut img, &settings.spots, frame);
     report.add("healing", json!({"spots": settings.spots.len()}));
     let mut progress = args.progress;
     let mut mark = 0usize;
@@ -812,10 +928,12 @@ pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut
     step(&mut progress, &mut mark);
     // One thumbnail for every scene-linear measurement, carried through the
     // same white balance and exposure as the frame (see apply_white_balance).
-    let mut thumb = measure(&img, args.stats_rect);
-    apply_white_balance(&mut img, &mut thumb, settings, &p, args.stats_rect, report);
+    let mut thumb = if frozen { Image::new(1, 1) } else { measure(&img, args.stats_rect) };
+    apply_white_balance(&mut img, &mut thumb, settings, &p, args.stats_rect, &mut d, frozen,
+                        report);
     step(&mut progress, &mut mark);
-    let exposure_gain = apply_exposure(&mut img, &thumb, settings, &p, args.stats_rect, report);
+    let exposure_gain = apply_exposure(&mut img, &thumb, settings, &p, args.stats_rect, &mut d,
+                                       frozen, report);
     thumb.scale(exposure_gain);
     step(&mut progress, &mut mark);
 
@@ -825,18 +943,20 @@ pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut
     report.add("noise", info);
 
     step(&mut progress, &mut mark);
-    let compression = apply_local_tone_map(&mut img, &thumb, settings, &p, report);
+    let compression = apply_local_tone_map(&mut img, &thumb, settings, &p, long_edge, &mut d,
+                                           frozen, report);
     // Local filters on the light as it will be shown, before the shoulder
     // rolls it off; see `local` for why not earlier.
-    crate::local::apply_filters(&mut img, &settings.filters, args.stats_rect);
+    crate::local::apply_filters(&mut img, &settings.filters, frame);
     report.add("filters", json!({"count": settings.filters.len()}));
     step(&mut progress, &mut mark);
     filmic(&mut img);
     step(&mut progress, &mut mark);
     let out = apply_perceptual(&img, settings, &p, noise, args.sharpen_sigma, compression,
-                               args.focus_sigma, args.render_scale, report, args.stats_rect);
+                               args.focus_sigma, args.render_scale, long_edge, &mut d, frozen,
+                               report, args.stats_rect);
     step(&mut progress, &mut mark);
-    out
+    (out, d)
 }
 
 #[cfg(test)]
@@ -1026,7 +1146,8 @@ mod tests {
             s.clarity = clarity;
             let mut img = src.clone();
             let mut report = Report::new();
-            apply_local_tone_map(&mut img, &src.clone(), &s, &Preset::default(), &mut report);
+            apply_local_tone_map(&mut img, &src.clone(), &s, &Preset::default(), src.w.max(src.h),
+                                 &mut Decisions::default(), false, &mut report);
             fine_structure(&img)
         };
         let (soft, plain, crisp) = (run(-1.0), run(0.0), run(1.0));
@@ -1043,7 +1164,8 @@ mod tests {
             let mut s = Settings::default();
             s.denoise = denoise;
             let mut report = Report::new();
-            apply_perceptual(&src, &s, &Preset::default(), noise, 1.0, 1.0, 0.0, 1.0, &mut report, None);
+            apply_perceptual(&src, &s, &Preset::default(), noise, 1.0, 1.0, 0.0, 1.0,
+                             src.w.max(src.h), &mut Decisions::default(), false, &mut report, None);
             report.to_json()
         };
         let applied = |r: &Value, stage: &str| r[stage]["applied"].as_bool().unwrap_or(false);

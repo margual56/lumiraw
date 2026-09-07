@@ -267,6 +267,23 @@ async function full({ settings }) {
   return { bitmap, width: w, height: h, report: info.report ?? {}, [TRANSFER]: [bitmap] };
 }
 
+/** A piece of the picture at full size, for the 100 % view. */
+async function region({ settings, centre, width, height }) {
+  const rc = settingsPointer(settings, (sp, sl) =>
+    wasm.ar_render_region(sp, sl, centre[0], centre[1], width, height));
+  const info = readJson();
+  if (rc !== 0) fail(info);
+  const { w, h, pixels } = primary();
+  const bitmap = await createImageBitmap(new ImageData(new Uint8ClampedArray(pixels.buffer), w, h));
+  return { ...info, bitmap, [TRANSFER]: [bitmap] };
+}
+
+/** The 100 % view has closed; the module lets go of the full-size frame. */
+function releaseRegion() {
+  wasm.ar_release_region();
+  return {};
+}
+
 /** A filmstrip thumbnail from the file's embedded preview. The photograph
  *  being developed stays open; nothing in the session changes. */
 async function thumbnail({ buffer, size }) {
@@ -389,7 +406,8 @@ async function mergeFinish({ align, deghost }) {
   return ensureLenses(info);
 }
 
-const HANDLERS = { open, render, full, thumbnail, compare, looks, curves, lutLoad, lutClear,
+const HANDLERS = { open, render, full, region, releaseRegion, thumbnail, compare, looks, curves,
+                   lutLoad, lutClear,
                    export: exportImage,
                    mergeAdd, mergeRemove, mergeReset, mergeFinish, mergeCheck };
 

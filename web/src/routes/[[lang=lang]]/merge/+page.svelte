@@ -1,12 +1,11 @@
 <script>
   /** Exposure merge: several frames of one scene in, one wider negative out. */
   import { goto } from '$app/navigation';
-  import { base } from '$app/paths';
   import Progress from '$lib/components/Progress.svelte';
   import LocalePicker from '$lib/components/LocalePicker.svelte';
   import Meta from '$lib/components/Meta.svelte';
   import * as api from '$lib/api.js';
-  import { t, n, signed, shutter, loose } from '$lib/i18n.svelte.js';
+  import { t, n, signed, shutter, loose, localized } from '$lib/i18n.svelte.js';
   import { errorText, RAW_ACCEPT } from '$lib/format.js';
   import { NAME } from '$lib/brand.js';
   import { app, resetForNewPhoto, FRAME } from '$lib/state.svelte.js';
@@ -185,7 +184,7 @@
     app.info = info;
     app.step = FRAME;
     app.message = '';
-    goto(`${base}/`);
+    goto(localized('/'));
   }
 
   const percent = (value) => `${n(value * 100, value < 0.01 ? 2 : 1)} %`;
@@ -198,20 +197,21 @@
 
 <div class="shell">
   <header>
-    <a class="brand" href="{base}/">
+    <a class="brand" href={localized('/')}>
       {NAME}
       <span>
         <span class="tagline">{t('merge.title')}</span>
         {#if app.version}<span class="ver">v{app.version}</span>{/if}
       </span>
     </a>
-    <a class="back" href="{base}/">{t('merge.back')}</a>
+    <a class="back" href={localized('/')}>{t('merge.back')}</a>
     <LocalePicker />
   </header>
   <Progress />
 
   <main>
     <div class="mx-auto grid max-w-[880px] gap-4">
+      <h1 class="pagetitle">{t('merge.heading')}</h1>
       <p class="lead">{t('merge.lead')}</p>
 
       <details class="how">
@@ -418,8 +418,8 @@
 </div>
 
 <style lang="scss">
-  @use '../../styles/breakpoints' as *;
-  @use '../../styles/surfaces' as *;
+  @use '../../../styles/breakpoints' as *;
+  @use '../../../styles/surfaces' as *;
 
   /* The name is the way home, which is where anyone looks for it. */
   a.brand {

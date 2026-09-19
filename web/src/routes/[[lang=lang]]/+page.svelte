@@ -17,9 +17,8 @@
   import Download from '$lib/steps/Download.svelte';
 
   import LocalePicker from '$lib/components/LocalePicker.svelte';
-  import { base } from '$app/paths';
   import * as api from '$lib/api.js';
-  import { t, n } from '$lib/i18n.svelte.js';
+  import { t, n, localized, address, i18n } from '$lib/i18n.svelte.js';
   import { errorText } from '$lib/format.js';
   import { NAME, SITE } from '$lib/brand.js';
   import Meta from '$lib/components/Meta.svelte';
@@ -211,7 +210,8 @@
         '@context': 'https://schema.org',
         '@type': 'WebApplication',
         name: NAME,
-        url: `${SITE}/`,
+        url: SITE + address('/'),
+        inLanguage: i18n.locale,
         description: t('seo.home.description'),
         applicationCategory: 'MultimediaApplication',
         operatingSystem: 'Any',
@@ -252,13 +252,14 @@
           <span>{t('upload.straight')}</span>
         </label>
         <Dropzone onpick={pickMany} />
-        <a class="merge-link" href="{base}/merge">
+        <a class="merge-link" href={localized('/merge')}>
           <strong>{t('merge.link')}</strong>
           <span>{t('merge.linkHint')}</span>
         </a>
         <nav class="more">
-          <a href="{base}/about">{t('links.about')}</a>
-          <a href="{base}/cameras">{t('links.cameras')}</a>
+          <a href={localized('/guide')}>{t('links.guide')}</a>
+          <a href={localized('/about')}>{t('links.about')}</a>
+          <a href={localized('/cameras')}>{t('links.cameras')}</a>
         </nav>
       </div>
     {:else if app.step === FRAME}
@@ -312,8 +313,8 @@
 </div>
 
 <style lang="scss">
-  @use '../styles/breakpoints' as *;
-  @use '../styles/surfaces' as *;
+  @use '../../styles/breakpoints' as *;
+  @use '../../styles/surfaces' as *;
 
   /*
    * The tagline goes on a phone and the version stays, since the version is the

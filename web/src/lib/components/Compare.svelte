@@ -4,7 +4,11 @@
   import { t } from '$lib/i18n.svelte.js';
 
   let { before = '', after = '', busy = false,
-        beforeLabel = null, afterLabel = null } = $props();
+        beforeLabel = null, afterLabel = null,
+        // For pictures on a page rather than in the app: what each one shows,
+        // and whether it may wait until it is scrolled to.
+        beforeAlt = 'before', afterAlt = 'after', lazy = false,
+        width = null, height = null } = $props();
 
   let at = $state(0.5);
   let dragging = false;
@@ -42,8 +46,10 @@
   onpointerup={() => (dragging = false)}
   onpointercancel={() => (dragging = false)}
 >
-  <img class="before" src={before} alt="before" draggable="false" />
-  <img class="after" src={after} alt="after" draggable="false" />
+  <img class="before" src={before} alt={beforeAlt} draggable="false"
+       loading={lazy ? 'lazy' : undefined} {width} {height} />
+  <img class="after" src={after} alt={afterAlt} draggable="false"
+       loading={lazy ? 'lazy' : undefined} {width} {height} />
   <span class="tag left">{beforeLabel ?? t('compare.before')}</span>
   <span class="tag right">{afterLabel ?? t('compare.after')}</span>
   <div class="divider"><i></i></div>
@@ -54,7 +60,9 @@
 
   .compare {
     position: relative; border-radius: var(--radius-panel); overflow: hidden;
-    background: #000; user-select: none; touch-action: none; cursor: ew-resize;
+    /* Sideways drags move the divider; up and down still scroll the page, so
+       a finger that lands on the picture on a phone is not trapped there. */
+    background: #000; user-select: none; touch-action: pan-y; cursor: ew-resize;
     width: fit-content; max-width: 100%; margin: 0 auto;
     /* The wipe is driven by pointer events on the container, so the pictures
        themselves must stay out of the way of the gesture. */

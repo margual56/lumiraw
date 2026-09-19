@@ -1,5 +1,6 @@
 /** A small locale store. */
 
+import { base } from '$app/paths';
 import en from './locales/en.js';
 import es from './locales/es.js';
 
@@ -30,12 +31,36 @@ export function detectLocale() {
   return 'en';
 }
 
-export function setLocale(id) {
+/** The language a page is in, as its address says. */
+export function useLocale(id) {
   i18n.locale = known(id) ?? 'en';
+  if (typeof document !== 'undefined') document.documentElement.lang = i18n.locale;
+}
+
+/** A language picked by hand, remembered for the next visit. */
+export function setLocale(id) {
+  useLocale(id);
   try {
     localStorage.setItem(STORAGE_KEY, i18n.locale);
   } catch { /* private browsing */ }
-  if (typeof document !== 'undefined') document.documentElement.lang = i18n.locale;
+}
+
+/** Where `path` (as written for English: '/', '/about') lives in `locale`. */
+export function localized(path, locale = i18n.locale) {
+  const at = address(path, locale);
+  return base ? `${base}${at === '/' ? '' : at}` || '/' : at;
+}
+
+/** The same, from the site's root, for an absolute URL. */
+export function address(path, locale = i18n.locale) {
+  const prefix = locale === 'es' ? '/es' : '';
+  return `${prefix}${path === '/' ? '' : path}` || '/';
+}
+
+/** A page's address with its language taken off: the English form. */
+export function unlocalized(pathname) {
+  const rest = pathname.slice(base.length).replace(/^\/es(?=\/|$)/, '');
+  return rest.replace(/\/$/, '') || '/';
 }
 
 const dictionary = () =>

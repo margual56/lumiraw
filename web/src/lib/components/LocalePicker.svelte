@@ -1,5 +1,14 @@
 <script>
-  import { i18n, LOCALES, setLocale, t } from '$lib/i18n.svelte.js';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/state';
+  import { i18n, LOCALES, localized, setLocale, t, unlocalized } from '$lib/i18n.svelte.js';
+
+  /** Remember the choice, and go to the same page in that language. */
+  function choose(id) {
+    setLocale(id);
+    goto(localized(unlocalized(page.url.pathname), id) + page.url.search + page.url.hash,
+         { noScroll: true, keepFocus: true });
+  }
 </script>
 
 <label class="picker">
@@ -7,7 +16,7 @@
   <select
     value={i18n.locale}
     aria-label={t('locale.label')}
-    onchange={(event) => setLocale(event.currentTarget.value)}
+    onchange={(event) => choose(event.currentTarget.value)}
   >
     {#each LOCALES as locale}
       <option value={locale.id}>{locale.name}</option>

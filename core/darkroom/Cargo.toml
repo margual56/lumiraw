@@ -1,6 +1,6 @@
 [package]
 name = "darkroom"
-version = "0.9.10"
+version = "0.9.11"
 edition = "2021"
 description = "LumiRaw's API: open a raw, develop it, compare, export, merge a bracket."
 publish = false

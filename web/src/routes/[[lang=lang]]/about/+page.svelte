@@ -1,9 +1,29 @@
 <script>
-  import { base } from '$app/paths';
+  import Compare from '$lib/components/Compare.svelte';
   import DocPage from '$lib/components/DocPage.svelte';
   import Meta from '$lib/components/Meta.svelte';
-  import { i18n, t } from '$lib/i18n.svelte.js';
+  import { base } from '$app/paths';
+  import { i18n, localized, t } from '$lib/i18n.svelte.js';
+
+  // Rendered by tools/samples.py from photographs of our own: as recorded,
+  // and as LumiRaw develops them with nothing touched.
+  const SAMPLES = [
+    { name: 'lilies', w: 1400, h: 933 },
+    { name: 'stained-glass', w: 1400, h: 932 },
+    { name: 'carved-stone', w: 1400, h: 932 },
+  ];
+  const src = (name, tag) => `${base}/samples/${name}-${tag}.webp`;
 </script>
+
+{#snippet sample(name, before, after, caption)}
+  {@const s = SAMPLES.find((x) => x.name === name)}
+  <figure>
+    <Compare before={src(name, 'before')} after={src(name, 'after')} lazy
+             width={s.w} height={s.h} beforeAlt={before} afterAlt={after}
+             beforeLabel={t('samples.before')} afterLabel={t('samples.after')} />
+    <figcaption>{caption}</figcaption>
+  </figure>
+{/snippet}
 
 <Meta title={t('seo.about.title')} description={t('seo.about.description')} path="/about" />
 
@@ -42,7 +62,7 @@
       las detecta, y recorta.</li>
     <li><strong>Enfoque.</strong> Solo aparece cuando la foto sale blanda al medirla. Puede
       recuperar parte del desenfoque, no todo.</li>
-    <li><strong>Brillo.</strong> Exposición medida en toda la imagen o en la zona que
+    <li><strong>Luminosidad.</strong> Exposición medida en toda la imagen o en la zona que
       marques, y además sombras, medios tonos y luces.</li>
     <li><strong>Balance de blancos.</strong> Automático, o a partir de una zona que marques y
       que debería ser gris neutro.</li>
@@ -52,14 +72,14 @@
       motas de polvo.</li>
     <li><strong>Antes y después.</strong> Un deslizador sobre el resultado, con la lista de
       correcciones automáticas, que se pueden desactivar una a una.</li>
-    <li><strong>Gradación.</strong> Curvas, estilos, un mezclador de color, LUT 3D en
+    <li><strong>Color.</strong> Curvas, estilos, un mezclador de color, LUT 3D en
       formato .cube, grano y viñeteado.</li>
     <li><strong>Descarga.</strong> JPEG, PNG (8 o 16 bits), TIFF o WebP, a tamaño completo o
       más pequeña, hasta 1080 px para redes sociales. Varias fotos se pueden exportar juntas
       en un zip.</li>
   </ol>
   <p>
-    También hay una página para <a href="{base}/merge">fusionar exposiciones horquilladas</a>
+    También hay una página para <a href={localized('/merge')}>fusionar exposiciones horquilladas</a>
     en un solo RAW con más rango dinámico antes de revelarlo.
   </p>
   <p>
@@ -67,6 +87,21 @@
     base de datos de lensfun, que tiene calibraciones de 1294 objetivos. Se aplican cuando el
     objetivo que figura en el archivo está en ella.
   </p>
+
+  <h2>Con fotos de verdad</h2>
+  <p>
+    Tres fotos nuestras, tal como las grabó la cámara y tal como las revela LumiRaw sin tocar
+    nada. Arrastra el separador para compararlas.
+  </p>
+  {@render sample('lilies', 'Lirios rojos tal como los grabó la cámara, oscuros y apagados',
+    'Los mismos lirios revelados por LumiRaw, con más luz y color',
+    'Lirios con una Sony α6700 y el E 16-55mm F2.8 G. Subió la exposición 2,4 pasos, corrigió un balance de blancos que tiraba mucho a rojo y quitó el viñeteo, la distorsión y la aberración cromática del objetivo.')}
+  {@render sample('stained-glass', 'Una vidriera casi negra tal como la grabó la cámara',
+    'La misma vidriera revelada por LumiRaw, con los colores del cristal',
+    'Una vidriera a contraluz con una Sony α5000. La escena tenía 8,3 pasos de rango: la exposición subió 3,4 pasos, parte de ellos para rescatar lo que se habría quedado en negro, y el mapeo de tonos la metió en lo que puede mostrar una pantalla.')}
+  {@render sample('carved-stone', 'Una piedra tallada casi a oscuras tal como la grabó la cámara',
+    'La misma piedra revelada por LumiRaw, con la talla legible',
+    'Una piedra tallada a 16 mm con el objetivo del kit de la α5000. Además de 2 pasos de exposición, las esquinas recuperan 2,4 pasos de viñeteo del objetivo.')}
 
   <h2>Tus archivos</h2>
   <ul>
@@ -157,7 +192,7 @@
       zip.</li>
   </ol>
   <p>
-    There is also a page for <a href="{base}/merge">merging bracketed exposures</a> into a
+    There is also a page for <a href={localized('/merge')}>merging bracketed exposures</a> into a
     single raw frame with more dynamic range, before you develop it.
   </p>
   <p>
@@ -165,6 +200,21 @@
     database, which has calibrations for 1,294 lenses. They're applied when the lens recorded
     in the file is in it.
   </p>
+
+  <h2>On real photos</h2>
+  <p>
+    Three of our own photos, as the camera recorded them and as LumiRaw develops them with
+    nothing touched. Drag the divider to compare.
+  </p>
+  {@render sample('lilies', 'Red lilies as the camera recorded them, dark and flat',
+    'The same lilies developed by LumiRaw, brighter and in full colour',
+    'Lilies on a Sony α6700 with the E 16-55mm F2.8 G. Exposure went up 2.4 stops, a white balance leaning hard towards red was corrected, and the lens\'s vignetting, distortion and chromatic aberration were taken out.')}
+  {@render sample('stained-glass', 'A stained-glass window, almost black, as the camera recorded it',
+    'The same window developed by LumiRaw, with the colours of the glass',
+    'A stained-glass window against the light, on a Sony α5000. The scene spanned 8.3 stops: exposure went up 3.4, part of that to rescue what would otherwise have stayed black, and the tone mapping fitted it into what a screen can show.')}
+  {@render sample('carved-stone', 'A carved stone, nearly dark, as the camera recorded it',
+    'The same stone developed by LumiRaw, with the carving readable',
+    'A carved stone at 16 mm on the α5000\'s kit lens. Besides 2 stops of exposure, the corners get back 2.4 stops the lens lost to vignetting.')}
 
   <h2>Your files</h2>
   <ul>

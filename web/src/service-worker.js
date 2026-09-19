@@ -13,7 +13,7 @@ self.addEventListener('install', (event) => {
     // The code and the engine must all be there, or offline is a promise the
     // page cannot keep.
     await cache.addAll([...build.filter((f) => !onDemand(f)),
-                        ...files.filter((f) => !f.endsWith('_headers'))]);
+                        ...files.filter((f) => !f.endsWith('_headers') && !f.includes('/samples/'))]);
     // Pages are best effort, each on its own.
     await Promise.all(prerendered.flatMap((page) => [page, `${page.replace(/\/$/, '')}.html`])
       .map((url) => cache.add(url).catch(() => {})));

@@ -1,30 +1,30 @@
 <script>
   /** The frame around a page of reading: the same header as the tools, and a
    *  column of text narrow enough to follow. */
-  import { base } from '$app/paths';
   import { page } from '$app/state';
   import LocalePicker from '$lib/components/LocalePicker.svelte';
-  import { t } from '$lib/i18n.svelte.js';
+  import { localized, t, unlocalized } from '$lib/i18n.svelte.js';
   import { NAME } from '$lib/brand.js';
 
   let { children } = $props();
 
   const links = [
+    { href: '/guide', key: 'links.guide' },
     { href: '/about', key: 'links.about' },
     { href: '/cameras', key: 'links.cameras' },
   ];
-  const here = (href) => page.url.pathname.replace(/\/$/, '') === base + href;
+  const here = (href) => unlocalized(page.url.pathname) === href;
 </script>
 
 <div class="shell">
   <header>
-    <a class="brand" href="{base}/">
+    <a class="brand" href={localized('/')}>
       {NAME}
       <span><span class="tagline">{t('app.tagline')}</span></span>
     </a>
     <nav>
       {#each links as link}
-        <a href="{base}{link.href}" aria-current={here(link.href) ? 'page' : undefined}>
+        <a href={localized(link.href)} aria-current={here(link.href) ? 'page' : undefined}>
           {t(link.key)}
         </a>
       {/each}
@@ -36,7 +36,7 @@
     <article>
       {@render children()}
       <p class="open">
-        <a class="button" href="{base}/">{t('links.open')}</a>
+        <a class="button" href={localized('/')}>{t('links.open')}</a>
       </p>
     </article>
   </main>
@@ -85,6 +85,8 @@
       th { font-weight: 600; color: var(--color-muted); font-size: 12.5px; }
       td:nth-child(2) { font-variant-numeric: tabular-nums; }
       code { font-size: 0.92em; color: var(--color-ink); }
+      figure { margin: 18px 0 26px; }
+      figcaption { margin-top: 8px; font-size: 13.5px; color: var(--color-muted); }
     }
   }
 

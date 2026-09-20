@@ -1,6 +1,7 @@
 <script>
   import Compare from '$lib/components/Compare.svelte';
   import DocPage from '$lib/components/DocPage.svelte';
+  import SectionTitle from '$lib/components/SectionTitle.svelte';
   import Meta from '$lib/components/Meta.svelte';
   import { base } from '$app/paths';
   import { i18n, localized, t } from '$lib/i18n.svelte.js';
@@ -43,7 +44,7 @@
     sitio.
   </p>
 
-  <h2>Por qué</h2>
+  <SectionTitle id="why">Por qué</SectionTitle>
   <p>
     Un RAW guarda mucha más información que el JPEG que la cámara saca de él, pero
     aprovecharla suele pasar por instalar un programa grande y aprender a usarlo, o por
@@ -52,7 +53,7 @@
     que no estés de acuerdo.
   </p>
 
-  <h2>Qué hace con una foto</h2>
+  <SectionTitle id="what-it-does">Qué hace con una foto</SectionTitle>
   <p>
     Los pasos van en orden. Casi todos parten de un ajuste automático, medido sobre esa foto,
     que puedes dejar como está o cambiar:
@@ -88,7 +89,7 @@
     objetivo que figura en el archivo está en ella.
   </p>
 
-  <h2>Con fotos de verdad</h2>
+  <SectionTitle id="on-real-photos">Con fotos de verdad</SectionTitle>
   <p>
     Tres fotos nuestras, tal como las grabó la cámara y tal como las revela LumiRaw sin tocar
     nada. Arrastra el separador para compararlas.
@@ -103,7 +104,7 @@
     'La misma piedra revelada por LumiRaw, con la talla legible',
     'Una piedra tallada a 16 mm con el objetivo del kit de la α5000. Además de 2 pasos de exposición, las esquinas recuperan 2,4 pasos de viñeteo del objetivo.')}
 
-  <h2>Tus archivos</h2>
+  <SectionTitle id="your-files">Tus archivos</SectionTitle>
   <ul>
     <li>No se sube nada. Puedes comprobarlo en las herramientas de desarrollo del
       navegador: en la pestaña de red solo aparecen la página, sus scripts, el motor de
@@ -119,7 +120,7 @@
       antes de publicar una foto hecha en casa.</li>
   </ul>
 
-  <h2>Lo que todavía no hace</h2>
+  <SectionTitle id="not-yet">Lo que todavía no hace</SectionTitle>
   <ul>
     <li>Todo se ejecuta en un solo núcleo del procesador, así que exportar a tamaño completo
       un archivo de 26 MP tarda unos diez segundos en un portátil. La vista al 100 % tarda unos
@@ -133,7 +134,7 @@
       se han probado con datos sintéticos, no con fotos reales.</li>
   </ul>
 
-  <h2>Con qué está hecho</h2>
+  <SectionTitle id="built-on">Con qué está hecho</SectionTitle>
   <ul>
     <li><a href="https://github.com/dnglab/dnglab">rawler</a>, el decodificador de RAW del
       proyecto dnglab (LGPL-2.1).</li>
@@ -157,7 +158,7 @@
     anywhere.
   </p>
 
-  <h2>Why</h2>
+  <SectionTitle id="why">Why</SectionTitle>
   <p>
     A raw file holds far more than the JPEG the camera makes from it, but getting at it
     usually means installing a big program and learning it, or uploading your pictures to
@@ -165,7 +166,7 @@
     looks like what you saw, and be able to change any decision you disagree with.
   </p>
 
-  <h2>What it does with a photo</h2>
+  <SectionTitle id="what-it-does">What it does with a photo</SectionTitle>
   <p>
     The steps run in order. Most of them start from an automatic setting measured on that
     photo, which you can leave alone or change:
@@ -201,7 +202,7 @@
     in the file is in it.
   </p>
 
-  <h2>On real photos</h2>
+  <SectionTitle id="on-real-photos">On real photos</SectionTitle>
   <p>
     Three of our own photos, as the camera recorded them and as LumiRaw develops them with
     nothing touched. Drag the divider to compare.
@@ -216,7 +217,7 @@
     'The same stone developed by LumiRaw, with the carving readable',
     'A carved stone at 16 mm on the α5000\'s kit lens. Besides 2 stops of exposure, the corners get back 2.4 stops the lens lost to vignetting.')}
 
-  <h2>Your files</h2>
+  <SectionTitle id="your-files">Your files</SectionTitle>
   <ul>
     <li>Nothing is uploaded. You can check this in your browser's developer tools: the
       network tab shows the page, its scripts, the processing engine and the lens database,
@@ -231,7 +232,7 @@
       you post a photo taken at home.</li>
   </ul>
 
-  <h2>What it doesn't do yet</h2>
+  <SectionTitle id="not-yet">What it doesn't do yet</SectionTitle>
   <ul>
     <li>Everything runs on a single processor core, so a full-size export of a 26 MP file
       takes about ten seconds on a laptop. The 100 % view takes about three seconds to open,
@@ -244,7 +245,7 @@
       synthetic data, not on real photos.</li>
   </ul>
 
-  <h2>Built on</h2>
+  <SectionTitle id="built-on">Built on</SectionTitle>
   <ul>
     <li><a href="https://github.com/dnglab/dnglab">rawler</a>, the raw decoder from the
       dnglab project (LGPL-2.1).</li>

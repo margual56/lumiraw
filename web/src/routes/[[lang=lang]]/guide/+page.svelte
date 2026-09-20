@@ -1,6 +1,7 @@
 <script>
   import DocPage from '$lib/components/DocPage.svelte';
   import Meta from '$lib/components/Meta.svelte';
+  import SectionTitle from '$lib/components/SectionTitle.svelte';
   import { i18n, localized, t } from '$lib/i18n.svelte.js';
 </script>
 
@@ -16,7 +17,7 @@
     LumiRaw, sin instalar nada y sin subir el archivo a ningún servidor.
   </p>
 
-  <h2>1. Abre el archivo</h2>
+  <SectionTitle id="open">1. Abre el archivo</SectionTitle>
   <p>
     Arrastra el RAW a <a href={localized('/')}>la página</a>, o tócala en el móvil para
     elegirlo. Puedes abrir varios a la vez, o una carpeta entera: aparecen en una tira abajo
@@ -28,7 +29,7 @@
     en Descargar» antes de abrirlas y pasa al paso 4.
   </p>
 
-  <h2>2. Mira lo que se decidió solo</h2>
+  <SectionTitle id="automatic">2. Mira lo que se decidió solo</SectionTitle>
   <p>
     Al abrirla, la foto ya tiene aplicado un revelado automático: exposición, balance de
     blancos, contraste, reducción de ruido y corrección del objetivo si está en la base de
@@ -36,7 +37,7 @@
     como salió de la cámara, y la lista de cada corrección, que puedes desactivar una a una.
   </p>
 
-  <h2>3. Cambia lo que no te convenza</h2>
+  <SectionTitle id="adjust">3. Cambia lo que no te convenza</SectionTitle>
   <p>Los pasos van en orden y ninguno es obligatorio. Lo que más se suele tocar:</p>
   <ul>
     <li><strong>Encuadre</strong> para enderezar el horizonte o recortar.</li>
@@ -52,7 +53,7 @@
     archivo, siguen ahí.
   </p>
 
-  <h2>4. Descarga en el formato que necesites</h2>
+  <SectionTitle id="download">4. Descarga en el formato que necesites</SectionTitle>
   <table>
     <thead><tr><th>Para</th><th>Formato</th><th>Por qué</th></tr></thead>
     <tbody>
@@ -78,34 +79,34 @@
     cada una con sus propios ajustes.
   </p>
 
-  <h2>Antes de publicar</h2>
+  <SectionTitle id="before-posting">Antes de publicar</SectionTitle>
   <p>
     El archivo descargado conserva los metadatos de la cámara, incluida la posición GPS si la
     cámara la guardó. Si la foto es de tu casa, quizá no quieras compartir eso.
   </p>
 
-  <h2>Preguntas frecuentes</h2>
-  <h3>¿Es gratis?</h3>
+  <SectionTitle id="questions">Preguntas frecuentes</SectionTitle>
+  <SectionTitle id="is-it-free" level={3}>¿Es gratis?</SectionTitle>
   <p>Sí, sin cuenta y sin límite de fotos.</p>
-  <h3>¿Se suben mis fotos a algún servidor?</h3>
+  <SectionTitle id="uploads" level={3}>¿Se suben mis fotos a algún servidor?</SectionTitle>
   <p>
     No. Todo el revelado ocurre en tu navegador; lo puedes comprobar en la pestaña de red de
     las herramientas de desarrollo.
   </p>
-  <h3>¿Funciona sin conexión?</h3>
+  <SectionTitle id="offline" level={3}>¿Funciona sin conexión?</SectionTitle>
   <p>Sí, después de la primera visita. También se puede instalar como aplicación.</p>
-  <h3>Mi archivo no abre</h3>
+  <SectionTitle id="file-wont-open" level={3}>Mi archivo no abre</SectionTitle>
   <p>
     Si la cámara es más nueva que el decodificador, pásalo a DNG con el DNG Converter
     gratuito de Adobe y ábrelo de nuevo. La lista de <a href={localized('/cameras')}>cámaras
     compatibles</a> dice qué modelos se reconocen.
   </p>
-  <h3>¿Sirve para editar un JPEG?</h3>
+  <SectionTitle id="jpeg" level={3}>¿Sirve para editar un JPEG?</SectionTitle>
   <p>
     No: está hecho para archivos RAW, que guardan mucha más información que un JPEG. Un JPEG
     ya está revelado.
   </p>
-  <h3>¿Funciona en el móvil?</h3>
+  <SectionTitle id="phone" level={3}>¿Funciona en el móvil?</SectionTitle>
   <p>
     Sí, incluidos los DNG del iPhone (ProRAW) y de otros teléfonos. Un RAW grande necesita
     mucha memoria, así que en un móvil antiguo puede costarle.
@@ -119,7 +120,7 @@
     LumiRaw, without installing anything and without uploading the file anywhere.
   </p>
 
-  <h2>1. Open the file</h2>
+  <SectionTitle id="open">1. Open the file</SectionTitle>
   <p>
     Drop the raw file on <a href={localized('/')}>the page</a>, or tap it on a phone to choose
     one. You can open several at once, or a whole folder: they appear in a strip along the
@@ -131,7 +132,7 @@
     Download" before opening them and skip to step 4.
   </p>
 
-  <h2>2. See what was decided for you</h2>
+  <SectionTitle id="automatic">2. See what was decided for you</SectionTitle>
   <p>
     When it opens, the photo already has an automatic development applied: exposure, white
     balance, contrast, noise reduction, and lens correction if the lens is in the database.
@@ -139,7 +140,7 @@
     camera, and a list of every correction, each of which you can switch off.
   </p>
 
-  <h2>3. Change what you don't like</h2>
+  <SectionTitle id="adjust">3. Change what you don't like</SectionTitle>
   <p>The steps go in order and none of them is required. The ones people reach for most:</p>
   <ul>
     <li><strong>Framing</strong> to straighten the horizon or crop.</li>
@@ -155,7 +156,7 @@
     they're still there.
   </p>
 
-  <h2>4. Download in the format you need</h2>
+  <SectionTitle id="download">4. Download in the format you need</SectionTitle>
   <table>
     <thead><tr><th>For</th><th>Format</th><th>Why</th></tr></thead>
     <tbody>
@@ -181,34 +182,34 @@
     each with its own adjustments.
   </p>
 
-  <h2>Before you post it</h2>
+  <SectionTitle id="before-posting">Before you post it</SectionTitle>
   <p>
     The downloaded file keeps the camera's metadata, including the GPS position if the camera
     recorded one. If the photo was taken at home, you may not want to share that.
   </p>
 
-  <h2>Questions</h2>
-  <h3>Is it free?</h3>
+  <SectionTitle id="questions">Questions</SectionTitle>
+  <SectionTitle id="is-it-free" level={3}>Is it free?</SectionTitle>
   <p>Yes, with no account and no limit on the number of photos.</p>
-  <h3>Are my photos uploaded to a server?</h3>
+  <SectionTitle id="uploads" level={3}>Are my photos uploaded to a server?</SectionTitle>
   <p>
     No. All the developing happens in your browser; you can check in the network tab of your
     browser's developer tools.
   </p>
-  <h3>Does it work offline?</h3>
+  <SectionTitle id="offline" level={3}>Does it work offline?</SectionTitle>
   <p>Yes, after the first visit. It can also be installed as an app.</p>
-  <h3>My file won't open</h3>
+  <SectionTitle id="file-wont-open" level={3}>My file won't open</SectionTitle>
   <p>
     If the camera is newer than the decoder, convert the file to DNG with Adobe's free DNG
     Converter and open that. The list of <a href={localized('/cameras')}>supported cameras</a>
     says which models are recognised.
   </p>
-  <h3>Can it edit a JPEG?</h3>
+  <SectionTitle id="jpeg" level={3}>Can it edit a JPEG?</SectionTitle>
   <p>
     No: it's made for raw files, which hold far more than a JPEG does. A JPEG has already been
     developed.
   </p>
-  <h3>Does it work on a phone?</h3>
+  <SectionTitle id="phone" level={3}>Does it work on a phone?</SectionTitle>
   <p>
     Yes, including DNG files from iPhones (ProRAW) and other phones. A large raw file needs a
     lot of memory, so an older phone may struggle.

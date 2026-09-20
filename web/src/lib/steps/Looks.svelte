@@ -3,7 +3,7 @@
   import Viewer from '$lib/components/Viewer.svelte';
   import Compare from '$lib/components/Compare.svelte';
   import Slider from '$lib/components/Slider.svelte';
-  import CurvePlot from '$lib/components/CurvePlot.svelte';
+  import CurvePlot, { moves } from '$lib/components/CurvePlot.svelte';
   import CurveEditor from '$lib/components/CurveEditor.svelte';
   import CubeLoader from '$lib/components/CubeLoader.svelte';
   import ColourMixer from '$lib/components/ColourMixer.svelte';
@@ -52,7 +52,11 @@
     <h2>{t('grade.title')}</h2>
     <p class="lede">{@html t('grade.lede')}</p>
 
-    <CurvePlot curve={app.curve} />
+    <!-- An empty grid with only the diagonal in it reads as something that
+         failed to load; the plot appears once there is a curve to show. -->
+    {#if app.curve && ['rgb', 'r', 'g', 'b'].some((k) => moves(app.curve[k]))}
+      <CurvePlot curve={app.curve} />
+    {/if}
 
     <div class="list" role="radiogroup" aria-label={t('grade.title')}>
       {#each app.looks as look (look.id)}

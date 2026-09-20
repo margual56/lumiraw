@@ -273,9 +273,11 @@
 <!-- The picture itself ignores the pointer (it must not be dragged out of
      the page), so the double-click that opens the 100 % view is heard here. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="viewer" class:busy ondblclick={(e) => { if (!zoomed) zoomAt(e); }}>
+<div class="viewer" class:busy class:empty={!src}
+     style:aspect-ratio={!src && app.info ? `${app.info.width} / ${app.info.height}` : undefined}
+     ondblclick={(e) => { if (!zoomed) zoomAt(e); }}>
   <!-- The transform is a local preview of a change the server has not rendered yet. -->
-  <img bind:this={img} {src} alt="preview" draggable="false"
+  <img bind:this={img} {src} alt={t('viewer.alt')} draggable="false"
        style:transform={transform || undefined}
        onload={() => (geometry += 1)} />
   <canvas
@@ -322,6 +324,11 @@
     background: #000; min-height: 260px;
     display: flex; align-items: center; justify-content: center;
     img { @include fitted; @include undraggable; }
+    /*
+     * Before the first render there is no picture, and an image with no source
+     * draws the browser's broken-image icon.
+     */
+    &.empty { max-height: var(--fit); img { visibility: hidden; } }
     &.busy::after { @include developing; }
   }
   .inspect {

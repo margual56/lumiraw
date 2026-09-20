@@ -244,7 +244,6 @@
     {/if}
     {#if app.step === UPLOAD}
       <div class="intro">
-        <Privacy />
         <GradeCarry />
         <label class="straight">
           <input type="checkbox" checked={app.straight}
@@ -252,6 +251,7 @@
           <span>{t('upload.straight')}</span>
         </label>
         <Dropzone onpick={pickMany} />
+        <Privacy />
         <a class="merge-link" href={localized('/merge')}>
           <strong>{t('merge.link')}</strong>
           <span>{t('merge.linkHint')}</span>

@@ -1,3 +1,12 @@
+<script module>
+  /** Whether a table is the diagonal, to within a quarter of a code value. */
+  export function moves(table) {
+    if (!table?.length) return false;
+    const last = table.length - 1;
+    return table.some((v, i) => Math.abs(v - i / last) > 1 / 1020);
+  }
+</script>
+
 <script>
   /** The four curves, drawn from the tables the pipeline will evaluate. */
   let { curve = null, size = 220 } = $props();
@@ -8,13 +17,6 @@
     { key: 'g', colour: '#6fca8b', width: 1.4 },
     { key: 'b', colour: '#5a9be5', width: 1.4 },
   ];
-
-  /** Whether a table is the diagonal, to within a quarter of a code value. */
-  function moves(table) {
-    if (!table?.length) return false;
-    const last = table.length - 1;
-    return table.some((v, i) => Math.abs(v - i / last) > 1 / 1020);
-  }
 
   /** An SVG path through a table, in a box `size` on a side, y downwards. */
   function path(table) {

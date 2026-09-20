@@ -73,6 +73,53 @@ export function toggleDetail(detail) {
   }
 }
 
+/** 1, 2 or 3: a little, some, a lot, by where `value` falls against two
+ *  thresholds. */
+const degree = (value, some, lot) => (value < some ? 1 : value < lot ? 2 : 3);
+
+/** The same line in words a photographer would use, for the list itself. */
+export function toggleSummary(detail) {
+  if (!detail || !detail.code) return '';
+  const p = detail.params ?? {};
+  switch (detail.code) {
+    case 'white_balance': {
+      // The two axes the automatic balance itself works along (see
+      // `analyze::auto_white_balance`), in stops.
+      const [r, g, b] = (p.gains ?? [1, 1, 1]).map((x) => Math.log2(Math.max(x, 1e-4)));
+      const temp = (r - b) / 2;
+      const tint = (2 * g - r - b) / 3;
+      let text = Math.abs(temp) < 0.08
+        ? t('sum.wb.same')
+        : t(`sum.wb.${temp < 0 ? 'cooler' : 'warmer'}.${degree(Math.abs(temp), 0.25, 0.6)}`);
+      if (Math.abs(tint) >= 0.15) text += t(tint > 0 ? 'sum.wb.green' : 'sum.wb.magenta');
+      if (p.source === 'selection') text += t('sum.wb.selection');
+      if (p.extreme) text += t('sum.wb.extreme');
+      return text;
+    }
+    case 'tone_map':
+      return t(p.compression < 0.97 ? 'sum.tone_map.squeezed' : 'sum.tone_map.fits',
+               { stops: n(p.stops, 1) });
+    case 'levels': {
+      const wider = Math.round((1 / Math.max(p.white - p.black, 1e-3) - 1) * 100);
+      return wider < 2 ? t('sum.levels.full') : t('sum.levels.stretched', { pct: wider });
+    }
+    case 'contrast':
+      return t(`sum.contrast.${degree(p.amount, 0.12, 0.3)}`);
+    case 'vibrance': {
+      const richer = Math.round((p.boost - 1) * 100);
+      return richer < 2 ? t('sum.vibrance.same') : t('sum.vibrance.more', { pct: richer });
+    }
+    case 'denoise':
+      return t(`sum.denoise.${degree(p.blend, 0.25, 0.6)}`);
+    case 'refocus':
+      return t('sum.refocus', { blur: n(p.blur, 1) });
+    case 'sharpen':
+      return t(`sum.sharpen.${degree(p.amount, 0.3, 0.6)}`);
+    default:
+      return toggleDetail(detail);
+  }
+}
+
 /** The capture profile, as label/value pairs ready to render. */
 export function profileRows(profile) {
   if (!profile) return [];

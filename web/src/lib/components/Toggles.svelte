@@ -1,9 +1,17 @@
 <script>
   import { app } from '$lib/state.svelte.js';
   import { t } from '$lib/i18n.svelte.js';
-  import { toggleDetail } from '$lib/format.js';
+  import { toggleDetail, toggleSummary } from '$lib/format.js';
 
   const groups = $derived([...new Set(app.toggles.map((t) => t.group))]);
+
+  /** The measured numbers behind the plain line, on hover, when they say
+   *  more than it does. */
+  function exact(toggle) {
+    if (!toggle.available) return undefined;
+    const detail = toggleDetail(toggle.detail);
+    return detail && detail !== toggleSummary(toggle.detail) ? detail : undefined;
+  }
 
   function flip(toggle) {
     app.settings.enabled[toggle.id] = !toggle.enabled;
@@ -19,13 +27,14 @@
           class="chip"
           type="button"
           aria-pressed={toggle.enabled}
+          title={exact(toggle)}
           disabled={!toggle.available}
           onclick={() => flip(toggle)}
         >
           <span class="dot"></span>
           <span class="txt">
             <b>{t(`toggle.${toggle.id}`)}</b>
-            <span>{toggle.available ? toggleDetail(toggle.detail) : t('reason.unavailable')}</span>
+            <span>{toggle.available ? toggleSummary(toggle.detail) : t('reason.unavailable')}</span>
           </span>
         </button>
       {/each}

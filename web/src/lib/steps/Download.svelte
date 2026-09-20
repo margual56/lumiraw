@@ -8,14 +8,16 @@
   import { startExport, jobStatus, jobFile } from '$lib/api.js';
   import { exportRoll } from '$lib/roll.svelte.js';
 
-  let format = $state('png8');
+  let format = $state('jpeg');
   let quality = $state(92);
   let maxSize = $state('');
   let working = $state(false);
 
   const lossy = $derived(['jpeg', 'webp'].includes(format));
-  // One photograph, one file.
-  const summary = $derived(t('download.one', { name: lookLabel(app.settings.curves.look) }));
+  // The grade is the one thing on this step's picture that is easy to have
+  // forgotten, so it is named, when there is one.
+  const graded = $derived(app.settings.curves.look && app.settings.curves.look !== 'none'
+    ? t('download.graded', { name: lookLabel(app.settings.curves.look) }) : '');
 
   // 1080 is what Instagram and most feeds show a picture at; anything larger
   // is resized again on their side, and less kindly.
@@ -136,7 +138,7 @@
       </select>
     </div>
 
-    <p class="lede">{summary}</p>
+    {#if graded}<p class="lede">{graded}</p>{/if}
     <button class="go" onclick={download} disabled={working}>
       {working ? t('download.working') : t('download.button')}
     </button>

@@ -14,8 +14,11 @@
     const b = toggle?.enabled ? toggle.detail?.params?.blend : null;
     return typeof b === 'number' ? `${Math.round(b * 100)}%` : t('grade.off');
   };
-  const noiseNow = $derived(t('finish.denoise.now', {
-    colour: blend('denoise_chroma'), fine: blend('denoise_luma') }));
+  const noiseNow = $derived.by(() => {
+    const colour = blend('denoise_chroma'), fine = blend('denoise_luma');
+    return colour === t('grade.off') && fine === t('grade.off')
+      ? t('finish.denoise.none') : t('finish.denoise.now', { colour, fine });
+  });
 
   const offset = (v) => (v === 0 ? t('vibrance.auto') : signed(v));
 </script>

@@ -1,0 +1,7 @@
+# Cloudflare Pages reads this; it is not served.
+#
+# English lives at the root and Spanish under /es. /en is the address people
+# guess by symmetry, so it answers, permanently, with the same page at the
+# root: one address per page for search engines, not two copies of it.
+/en      /         301
+/en/*    /:splat   301

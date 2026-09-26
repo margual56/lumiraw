@@ -4,7 +4,9 @@ import { build, files, prerendered, version } from '$service-worker';
 
 const CACHE = `lumiraw-${version}`;
 const IMMUTABLE = new Set(build);
-const ALL = [...build, ...files.filter((f) => !f.endsWith('_headers')), ...prerendered];
+// `_headers` and `_redirects` are instructions to the host, which never serves them.
+const served = (f) => !/\/_[^/]*$/.test(f);
+const ALL = [...build, ...files.filter(served), ...prerendered];
 const onDemand = (path) => /\/(lens-[^/]*|lensfun-[^/]*)\.json$/.test(path);
 
 self.addEventListener('install', (event) => {
@@ -13,7 +15,7 @@ self.addEventListener('install', (event) => {
     // The code and the engine must all be there, or offline is a promise the
     // page cannot keep.
     await cache.addAll([...build.filter((f) => !onDemand(f)),
-                        ...files.filter((f) => !f.endsWith('_headers') && !f.includes('/samples/'))]);
+                        ...files.filter((f) => served(f) && !f.includes('/samples/'))]);
     // Pages are best effort, each on its own.
     await Promise.all(prerendered.flatMap((page) => [page, `${page.replace(/\/$/, '')}.html`])
       .map((url) => cache.add(url).catch(() => {})));

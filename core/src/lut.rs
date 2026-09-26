@@ -52,7 +52,8 @@ pub fn apply_current(img: &mut Image, strength: f32) -> bool {
     CURRENT.with(|c| match c.borrow().as_ref() {
         None => false,
         Some(lut) => {
-            lut.apply(img, s);
+            // In place.
+            lut.apply_to(img, s);
             true
         }
     })
@@ -146,6 +147,7 @@ impl Lut {
     }
 
     /// Apply to a display-linear image, blended by `strength`.
+    #[must_use = "the graded picture is returned, not written into the one passed in"]
     pub fn apply(&self, img: &Image, strength: f32) -> Image {
         let mut out = img.clone();
         self.apply_to(&mut out, strength);
@@ -306,5 +308,22 @@ mod tests {
         assert_eq!(lut.title, "with a domain");
         let out = lut.apply(&grey(0.4), 1.0);
         assert!((out.d[0] - 0.4).abs() < 2e-3, "the domain lines moved the picture");
+    }
+
+    /// The table in force has to change the picture it is handed, through the
+    /// entry point the pipeline actually calls.
+    #[test]
+    fn the_table_in_force_changes_the_picture() {
+        let flat = Lut::parse(&format!("LUT_3D_SIZE 2\n{}", "0.5 0.5 0.5\n".repeat(8))).unwrap();
+        set(Some(flat));
+        let mut img = grey(0.9);
+        assert!(apply_current(&mut img, 1.0), "a loaded table was not applied");
+        set(None);
+        let want = kit::srgb_decode_scalar(0.5);
+        assert!((img.d[0] - want).abs() < 1e-3,
+                "the picture came back {} rather than {want}: the table changed nothing", img.d[0]);
+        let mut untouched = grey(0.9);
+        assert!(!apply_current(&mut untouched, 1.0), "with no table there is nothing to apply");
+        assert_eq!(untouched.d[0], 0.9);
     }
 }

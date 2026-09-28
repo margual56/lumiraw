@@ -377,6 +377,12 @@ fn finish(mut rgb: Image, settings: &Settings, window: Window, report: &mut Repo
 
         effects::monochrome(&mut rgb, settings.monochrome);
 
+        // The named look sits under the photographer's own curves, the way a
+        // camera profile sits under every slider.
+        let look_applied = crate::lut::apply_named(&mut rgb, &settings.look, settings.look_strength);
+        report.add("look", json!({"applied": look_applied, "id": settings.look,
+                                  "strength": kit::round_to(settings.look_strength, 3)}));
+
         let counts = settings.curves.counts();
         report.add("curves", if settings.curves.is_identity() {
             json!({"applied": false})
@@ -411,6 +417,7 @@ impl Development {
         flat.enabled.clear();
         // The grade comes off the "before" for the same reason the look does.
         flat.curves = crate::curve::Stack::identity();
+        flat.look = String::new();
         for (key, ..) in TOGGLES.iter() {
             // Hold on to what the user asked for themselves, drop what was
             // decided for them.

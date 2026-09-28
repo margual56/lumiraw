@@ -16,8 +16,8 @@
   const lossy = $derived(['jpeg', 'webp'].includes(format));
   // The grade is the one thing on this step's picture that is easy to have
   // forgotten, so it is named, when there is one.
-  const graded = $derived(app.settings.curves.look && app.settings.curves.look !== 'none'
-    ? t('download.graded', { name: lookLabel(app.settings.curves.look) }) : '');
+  const graded = $derived(app.settings.look
+    ? t('download.graded', { name: lookLabel(app.settings.look) }) : '');
 
   // 1080 is what Instagram and most feeds show a picture at; anything larger
   // is resized again on their side, and less kindly.

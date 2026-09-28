@@ -4,15 +4,22 @@
 use crate::Edit;
 use serde_json::{json, Value};
 
-/// Every named grade with its control points.
+/// Every named look, for the list. The tables are not here: the page fetches
+/// one when it is first chosen and hands it in with `load_look`.
 pub fn looks() -> Value {
-    let points = |p: &[(f32, f32)]| {
-        p.iter().map(|(x, y)| json!([kit::round_to(*x, 4), kit::round_to(*y, 4)])).collect::<Vec<_>>()
-    };
     json!({"looks": autoraw_core::looks::LOOKS.iter().map(|l| json!({
         "id": l.id, "label": l.label, "description": l.description,
-        "points": {"rgb": points(l.rgb), "r": points(l.r), "g": points(l.g), "b": points(l.b)},
     })).collect::<Vec<_>>()})
+}
+
+/// Hold a named look's table, packed as `tools/looks.py` packs it. Refused
+/// for a name that is not a look, so nothing can be parked under one.
+pub fn load_look(id: &str, bytes: &[u8]) -> Result<(), String> {
+    let look = autoraw_core::looks::find(id).filter(|l| l.id != "none")
+        .ok_or_else(|| format!("there is no look called {id}"))?;
+    let lut = autoraw_core::lut::Lut::from_bytes(look.label, bytes)?;
+    autoraw_core::lut::set_named(look.id, lut);
+    Ok(())
 }
 
 /// The curves a settings object comes to, baked into tables as the pipeline

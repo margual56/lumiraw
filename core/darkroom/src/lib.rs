@@ -6,7 +6,7 @@ mod photo;
 pub mod wasm;
 
 pub use bracket::{finding_json, notes_json, Bracket, FrameInfo};
-pub use grades::{clear_cube, curves, load_cube, looks, CubeInfo};
+pub use grades::{clear_cube, curves, load_cube, load_look, looks, CubeInfo};
 pub use photo::{Developed, Encoded, Export, Exported, Photo, Size};
 
 pub use autoraw_core::grade::Settings as Edit;

@@ -2,6 +2,7 @@
 
 use kit::Image;
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 
 /// The largest cube this will read.
 pub const MAX_SIZE: usize = 64;
@@ -25,6 +26,36 @@ thread_local! {
     /// Bumped whenever the table in force changes, so a cached render can tell
     /// that the same settings would now come out differently.
     static GENERATION: Cell<u64> = const { Cell::new(0) };
+    /// The named looks' tables (see `looks.rs`), by id, as each has been
+    /// fetched.
+    static NAMED: RefCell<HashMap<String, Lut>> = RefCell::new(HashMap::new());
+}
+
+/// Hold a named look's table. Bumps the generation like `set`, so a render
+/// cached while the look was still on its way is not served again.
+pub fn set_named(id: &str, lut: Lut) {
+    NAMED.with(|n| n.borrow_mut().insert(id.to_string(), lut));
+    GENERATION.with(|g| g.set(g.get() + 1));
+}
+
+/// Whether a named look's table has arrived.
+pub fn has_named(id: &str) -> bool {
+    NAMED.with(|n| n.borrow().contains_key(id))
+}
+
+/// Apply a named look, if its table has arrived and any of it is wanted.
+pub fn apply_named(img: &mut Image, id: &str, strength: f32) -> bool {
+    let s = strength.clamp(0.0, 1.0);
+    if s <= 0.0 || id.is_empty() {
+        return false;
+    }
+    NAMED.with(|n| match n.borrow().get(id) {
+        None => false,
+        Some(lut) => {
+            lut.apply_to(img, s);
+            true
+        }
+    })
 }
 
 /// Hold this table as the one in force, or clear it.
@@ -60,6 +91,24 @@ pub fn apply_current(img: &mut Image, strength: f32) -> bool {
 }
 
 impl Lut {
+    /// A table packed as bytes: `size^3` triples of 0..255, red changing
+    /// fastest, the size being whatever cube the length makes.
+    pub fn from_bytes(title: &str, bytes: &[u8]) -> Result<Lut, String> {
+        let entries = bytes.len() / 3;
+        let size = (entries as f64).cbrt().round() as usize;
+        if bytes.len() % 3 != 0 || size * size * size != entries
+            || !(MIN_SIZE..=MAX_SIZE).contains(&size) {
+            return Err(format!("{title}: {} bytes is not a packed cube", bytes.len()));
+        }
+        Ok(Lut {
+            size,
+            title: title.to_string(),
+            min: [0.0; 3],
+            max: [1.0; 3],
+            data: bytes.iter().map(|b| *b as f32 / 255.0).collect(),
+        })
+    }
+
     /// Parse a `.cube` file.
     pub fn parse(text: &str) -> Result<Lut, String> {
         let mut size = 0usize;
@@ -325,5 +374,27 @@ mod tests {
         let mut untouched = grey(0.9);
         assert!(!apply_current(&mut untouched, 1.0), "with no table there is nothing to apply");
         assert_eq!(untouched.d[0], 0.9);
+    }
+
+    /// A packed look is read as the same table the text would be, and a
+    /// named look is applied by name and only by its own name.
+    #[test]
+    fn a_packed_look_applies_by_name() {
+        let mut bytes = Vec::new();
+        for _ in 0..8 {
+            bytes.extend_from_slice(&[128, 128, 128]);
+        }
+        let lut = Lut::from_bytes("flat", &bytes).unwrap();
+        assert_eq!(lut.size, 2);
+        assert!(Lut::from_bytes("short", &bytes[..20]).is_err(), "a length that is no cube");
+        set_named("flat-test", lut);
+        assert!(has_named("flat-test"));
+        let mut img = grey(0.9);
+        assert!(!apply_named(&mut img, "no-such-look", 1.0), "a look that never arrived");
+        assert!(!apply_named(&mut img, "flat-test", 0.0), "none of it asked for");
+        assert_eq!(img.d[0], 0.9);
+        assert!(apply_named(&mut img, "flat-test", 1.0));
+        let want = kit::srgb_decode_scalar(128.0 / 255.0);
+        assert!((img.d[0] - want).abs() < 1e-3, "came back {} rather than {want}", img.d[0]);
     }
 }

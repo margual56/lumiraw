@@ -19,6 +19,6 @@ export default {
   // The lens calibrations are split per mount so that only the one a photograph
   // needs is downloaded.
   build: {
-    assetsInlineLimit: (file) => (file.includes('/lib/wasm/lenses/') ? false : undefined),
+    assetsInlineLimit: (file) => (/\/lib\/wasm\/(lenses|looks)\//.test(file) ? false : undefined),
   },
 };

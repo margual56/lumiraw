@@ -73,8 +73,8 @@
       motas de polvo.</li>
     <li><strong>Antes y después.</strong> Un deslizador sobre el resultado, con la lista de
       correcciones automáticas, que se pueden desactivar una a una.</li>
-    <li><strong>Color.</strong> Curvas, estilos, un mezclador de color, LUT 3D en
-      formato .cube, grano y viñeteado.</li>
+    <li><strong>Color.</strong> Siete estilos de película y de color, y encima curvas, un
+      mezclador de color, LUT 3D en formato .cube, grano y viñeteado.</li>
     <li><strong>Descarga.</strong> JPEG, PNG (8 o 16 bits), TIFF o WebP, a tamaño completo o
       más pequeña, hasta 1080 px para redes sociales. Varias fotos se pueden exportar juntas
       en un zip.</li>
@@ -140,6 +140,9 @@
       proyecto dnglab (LGPL-2.1).</li>
     <li>La base de datos de calibraciones de <a href="https://lensfun.github.io/">lensfun</a>
       (CC BY-SA 3.0).</li>
+    <li>Los estilos del paso Color, adaptados de la colección
+      <a href="https://rawpedia.rawtherapee.com/Film_Simulation">Film Simulation</a> de
+      RawTherapee, de Pat David, Pavlov Dmitry y Michael Ezra (CC BY-SA 4.0).</li>
     <li>El espacio de color <a href="https://bottosson.github.io/posts/oklab/">Oklab</a> de
       Björn Ottosson, donde se hacen los ajustes de luminosidad, color y tono.</li>
     <li>Rust y WebAssembly para el motor, Svelte para la página.</li>
@@ -186,8 +189,8 @@
       spots.</li>
     <li><strong>Before and after.</strong> A slider over the result, with every automatic
       correction listed and each one can be switched off.</li>
-    <li><strong>Grade.</strong> Tone curves, looks, a colour mixer, 3D LUTs in .cube format,
-      grain and vignetting.</li>
+    <li><strong>Grade.</strong> Seven film and colour looks, with tone curves, a colour mixer,
+      3D LUTs in .cube format, grain and vignetting on top.</li>
     <li><strong>Download.</strong> JPEG, PNG (8 or 16-bit), TIFF or WebP, at full size or
       smaller, down to 1080 px for social media. Several photos can be exported together as a
       zip.</li>
@@ -251,6 +254,9 @@
       dnglab project (LGPL-2.1).</li>
     <li>The <a href="https://lensfun.github.io/">lensfun</a> database of lens calibrations
       (CC BY-SA 3.0).</li>
+    <li>The looks on the Grade step, adapted from RawTherapee's
+      <a href="https://rawpedia.rawtherapee.com/Film_Simulation">Film Simulation</a> collection
+      by Pat David, Pavlov Dmitry and Michael Ezra (CC BY-SA 4.0).</li>
     <li>Björn Ottosson's <a href="https://bottosson.github.io/posts/oklab/">Oklab</a> colour
       space, which is where the lightness, colour and hue adjustments happen.</li>
     <li>Rust and WebAssembly for the engine, Svelte for the page.</li>

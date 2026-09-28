@@ -34,7 +34,7 @@
     const sorted = [...next].sort((a, b) => a[0] - b[0]);
     sorted[0][0] = 0;
     sorted[sorted.length - 1][0] = 1;
-    app.settings.curves = { ...app.settings.curves, look: 'custom', [tab]: sorted };
+    app.settings.curves = { ...app.settings.curves, [tab]: sorted };
   }
 
   const clamp = (v) => Math.min(Math.max(v, 0), 1);
@@ -123,16 +123,16 @@
 
   function reset() {
     if (tab === 'regions') {
-      app.settings.curves = { ...app.settings.curves, look: 'custom', regions: {} };
+      app.settings.curves = { ...app.settings.curves, regions: {} };
       return;
     }
-    app.settings.curves = { ...app.settings.curves, look: 'custom', [tab]: [] };
+    app.settings.curves = { ...app.settings.curves, [tab]: [] };
   }
 
   const regionValue = (key) => app.settings.curves.regions?.[key] ?? 0;
   function setRegion(key, value) {
     const regions = { ...(app.settings.curves.regions ?? {}), [key]: value };
-    app.settings.curves = { ...app.settings.curves, look: 'custom', regions };
+    app.settings.curves = { ...app.settings.curves, regions };
   }
 </script>
 

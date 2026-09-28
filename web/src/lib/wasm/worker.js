@@ -12,6 +12,7 @@ const session = {
   frames: [],      // [{ name, buffer }] gathered for a merge
   merged: null,    // { align, deghost } when the photograph is a finished merge
   lut: null,       // the loaded .cube's bytes
+  looks: {},       // look id -> its table's bytes, as each was first asked for
 };
 
 import { stamp } from './stamp.js';
@@ -26,6 +27,32 @@ import camerasUrl from './lenses/cameras.json?url';
 // The lens calibrations come in pieces (see tools/split_lensfun.py).
 const LENS_FILES = import.meta.glob('./lenses/lens-*.json',
                                     { query: '?url', import: 'default', eager: true });
+
+// The named looks' tables, one small file each (see tools/looks.py), fetched
+// the first time a look is asked for rather than on every first visit.
+const LOOK_FILES = import.meta.glob('./looks/look-*.bin',
+                                    { query: '?url', import: 'default', eager: true });
+
+/** Make sure the look these settings ask for is in the module before they are developed. */
+async function ensureLook(settings) {
+  const id = settings?.look;
+  if (!id || session.looks[id]) return;
+  const url = LOOK_FILES[`./looks/look-${id}.bin`];
+  if (!url) return;
+  try {
+    const bytes = await fetchBytes(url);
+    loadLook(id, bytes);
+    session.looks[id] = bytes;
+  } catch {
+    // Not reachable now; asked again with the next request that wants it.
+  }
+}
+
+function loadLook(id, bytes) {
+  const rc = withString(id, (ip, il) =>
+    withBytes(new Uint8Array(bytes), (p, n) => wasm.ar_look_load(ip, il, p, n)));
+  if (rc !== 0) fail(readJson());
+}
 
 /** What this session has loaded, so a fresh module can be given it again. */
 const lenses = {
@@ -225,6 +252,7 @@ async function recover() {
   await ready;
   try {
     if (saved.lut) withBytes(new Uint8Array(saved.lut), (p, n) => wasm.ar_lut_load(p, n));
+    for (const [id, bytes] of Object.entries(saved.looks)) loadLook(id, bytes);
     if (saved.frames.length || saved.merged) await replayMerge();
     if (!saved.merged) await restorePhoto();
   } catch {
@@ -232,7 +260,7 @@ async function recover() {
     // start from nothing rather than trap on every request from here on.
     ready = init();
     await ready;
-    Object.assign(session, { photo: null, frames: [], merged: null, lut: null });
+    Object.assign(session, { photo: null, frames: [], merged: null, lut: null, looks: {} });
   }
 }
 
@@ -422,6 +450,7 @@ async function handle({ type, id, ...rest }) {
     const handler = HANDLERS[type];
     if (!handler) throw new Error(`unknown request: ${type}`);
     current = id;
+    await ensureLook(rest.settings);
     const data = await handler(rest);
     // A handler that returns something large marks what may be moved rather
     // than copied to the page.

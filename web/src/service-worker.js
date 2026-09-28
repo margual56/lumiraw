@@ -7,7 +7,7 @@ const IMMUTABLE = new Set(build);
 // `_headers` and `_redirects` are instructions to the host, which never serves them.
 const served = (f) => !/\/_[^/]*$/.test(f);
 const ALL = [...build, ...files.filter(served), ...prerendered];
-const onDemand = (path) => /\/(lens-[^/]*|lensfun-[^/]*)\.json$/.test(path);
+const onDemand = (path) => /\/(lens-[^/]*|lensfun-[^/]*)\.json$|\/look-[^/]*\.bin$/.test(path);
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {

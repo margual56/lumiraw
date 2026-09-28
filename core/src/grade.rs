@@ -187,6 +187,10 @@ pub struct Settings {
     pub mixer: crate::mixer::Mixer,
     /// How much of the loaded 3D table to apply, 0..1.
     pub lut: f32,
+    /// A named look (`looks.rs`), by id, and how much of it; empty for none.
+    /// Its table arrives separately, like the `.cube`'s, for the same reason.
+    pub look: String,
+    pub look_strength: f32,
     /// The three things a curve cannot do, each 0..1. See `effects.rs`.
     pub monochrome: f32,
     pub vignette: f32,
@@ -216,6 +220,8 @@ impl Default for Settings {
             curves: curve::Stack::identity(),
             mixer: crate::mixer::Mixer::default(),
             lut: 0.0,
+            look: String::new(),
+            look_strength: 1.0,
             monochrome: 0.0,
             vignette: 0.0,
             grain: 0.0,
@@ -259,6 +265,10 @@ impl Settings {
         s.curves = curve::Stack::from_json(obj.get("curves"));
         s.mixer = crate::mixer::Mixer::from_json(obj.get("mixer"));
         s.lut = f("lut").unwrap_or(0.0).clamp(0.0, 1.0);
+        s.look = obj.get("look").and_then(|x| x.as_str())
+            .filter(|id| *id != "none" && crate::looks::find(id).is_some())
+            .unwrap_or("").to_string();
+        s.look_strength = f("look_strength").unwrap_or(1.0).clamp(0.0, 1.0);
         s.monochrome = f("monochrome").unwrap_or(0.0).clamp(0.0, 1.0);
         s.vignette = f("vignette").unwrap_or(0.0).clamp(0.0, 1.0);
         s.grain = f("grain").unwrap_or(0.0).clamp(0.0, 1.0);

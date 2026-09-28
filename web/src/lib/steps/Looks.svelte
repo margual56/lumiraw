@@ -1,5 +1,5 @@
 <script>
-  /** The grade: one picture, one curve plot, and a short list of looks. */
+  /** The grade: one picture, a short list of looks, and the tools to go on from one. */
   import Viewer from '$lib/components/Viewer.svelte';
   import Compare from '$lib/components/Compare.svelte';
   import Slider from '$lib/components/Slider.svelte';
@@ -11,22 +11,14 @@
   import { t, n } from '$lib/i18n.svelte.js';
   import { lookLabel, lookDescription } from '$lib/format.js';
 
-  const curves = $derived(app.settings.curves);
-
   /** The picture with and without the grade, or the picture alone, which
    *  is where the 100 % view and the histogram are. */
   let wipe = $state(true);
 
-  /** Load a look's points into the settings, which is what applies it. */
+  /** A look is named, not copied in: its table stays in the worker, and the
+   *  curves below stay the photographer's own, drawn on top of it. */
   function choose(look) {
-    app.settings.curves = {
-      look: look.id,
-      strength: curves.strength ?? 1,
-      rgb: look.points.rgb.map((p) => [...p]),
-      r: look.points.r.map((p) => [...p]),
-      g: look.points.g.map((p) => [...p]),
-      b: look.points.b.map((p) => [...p]),
-    };
+    app.settings.look = look.id === 'none' ? '' : look.id;
   }
 
   const percent = (v) => `${Math.round(v * 100)}%`;
@@ -60,7 +52,7 @@
 
     <div class="list" role="radiogroup" aria-label={t('grade.title')}>
       {#each app.looks as look (look.id)}
-        <button type="button" role="radio" aria-checked={curves.look === look.id}
+        <button type="button" role="radio" aria-checked={(app.settings.look || 'none') === look.id}
                 onclick={() => choose(look)}>
           <b>{lookLabel(look.id, look.label)}</b>
           <span>{lookDescription(look.id, look.description)}</span>
@@ -68,8 +60,10 @@
       {/each}
     </div>
 
-    <Slider label={t('grade.strength')} bind:value={app.settings.curves.strength}
-            min={0} max={1} step={0.05} format={percent} />
+    {#if app.settings.look}
+      <Slider label={t('grade.strength')} bind:value={app.settings.look_strength}
+              min={0} max={1} step={0.05} format={percent} />
+    {/if}
 
     <CurveEditor />
 

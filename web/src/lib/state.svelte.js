@@ -30,8 +30,12 @@ export const defaultSettings = () => ({
   tint: 0,
   vibrance: 0,
   preset: 'natural',
-  // The grade.
-  curves: { look: 'none', strength: 1, rgb: [], r: [], g: [], b: [] },
+  // A named look (core/src/looks.rs), by id, and how much of it; '' for none.
+  // Its table is fetched by the worker the first time it is asked for.
+  look: '',
+  look_strength: 1,
+  // The photographer's own curves, drawn on top of the look.
+  curves: { strength: 1, rgb: [], r: [], g: [], b: [] },
   // Eight hue bands, each with a hue, a saturation and a lightness. Only the
   // bands that have been touched are here; the rest are absent and mean zero.
   mixer: {},
@@ -46,7 +50,7 @@ export const defaultSettings = () => ({
 });
 
 /** The part of the settings that is a grade rather than a correction. */
-export const GRADE_KEYS = ['preset', 'curves', 'mixer', 'lut', 'lut_id',
+export const GRADE_KEYS = ['preset', 'look', 'look_strength', 'curves', 'mixer', 'lut', 'lut_id',
                            'monochrome', 'vignette', 'grain'];
 
 /** Whether these settings carry any grade at all. */
@@ -144,7 +148,7 @@ export function usable(saved) {
 /** These settings with the grade step's own work taken off. */
 export function ungraded(settings) {
   const blank = defaultSettings();
-  return { ...$state.snapshot(settings), curves: blank.curves, mixer: blank.mixer,
+  return { ...$state.snapshot(settings), look: '', curves: blank.curves, mixer: blank.mixer,
            lut: 0, monochrome: 0, vignette: 0, grain: 0 };
 }
 

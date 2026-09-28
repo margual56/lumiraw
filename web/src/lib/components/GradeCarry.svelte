@@ -10,14 +10,12 @@
   const parts = $derived.by(() => {
     const out = [];
     if (s.preset && s.preset !== 'natural') out.push(t(`render.${s.preset}`));
-    const c = s.curves ?? {};
-    const points = ['rgb', 'r', 'g', 'b'].some((k) => (c[k] ?? []).length);
-    if (c.look && c.look !== 'none') {
-      const look = app.looks.find((l) => l.id === c.look);
-      out.push(lookLabel(c.look, look?.label ?? c.look));
-    } else if (points) {
-      out.push(t('carry.curve'));
+    if (s.look) {
+      const look = app.looks.find((l) => l.id === s.look);
+      out.push(lookLabel(s.look, look?.label ?? s.look));
     }
+    const c = s.curves ?? {};
+    if (['rgb', 'r', 'g', 'b'].some((k) => (c[k] ?? []).length)) out.push(t('carry.curve'));
     if (Object.keys(s.mixer ?? {}).length) out.push(t('mixer.title').toLowerCase());
     if (app.lut && s.lut > 0) out.push(app.lut.title || app.lut.name);
     if (s.monochrome > 0) out.push(`${t('grade.monochrome').toLowerCase()} ${percent(s.monochrome)}`);

@@ -1,5 +1,16 @@
 # Cloudflare Pages applies these to the static responses.
 #
+# The promise that a photograph never leaves the machine, enforced by the
+# browser rather than taken on trust: this page, its workers included, may
+# fetch, load and send to its own address and nowhere else. Anyone can read
+# this policy in the response headers. `'wasm-unsafe-eval'` is what compiling
+# the engine needs; `'unsafe-inline'` covers SvelteKit's inline start-up
+# script and the styles Svelte sets on elements, and lets nothing reach
+# another server. Links to other sites still open: following a link is the
+# reader's act, not the page's.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; media-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
+#
 # Only fingerprinted paths may be immutable. The wasm module and the lens
 # database are imported through the bundler precisely so they land here with a
 # content hash in the name; anything served from a fixed path must be allowed

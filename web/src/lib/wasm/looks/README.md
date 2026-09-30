@@ -1,15 +1,11 @@
-# The named looks' tables
+# Looks
 
-These files are adapted from the RawTherapee Film Simulation collection
-(version 2015-09-20) by Pat David, Pavlov Dmitry and Michael Ezra,
-https://rawtherapee.com/shared/HaldCLUT.zip, and are licensed like it under the
-Creative Commons Attribution-ShareAlike 4.0 International License,
-https://creativecommons.org/licenses/by-sa/4.0/.
+These tables are from RawTherapee's Film Simulation collection by Pat David,
+Pavlov Dmitry and Michael Ezra (https://rawtherapee.com/shared/HaldCLUT.zip),
+resampled to 33 points a side with `tools/looks.py`. Which file each look uses
+is in `core/src/looks.rs`.
 
-The change: each level-12 Hald CLUT was resampled to 33 points a side and packed
-as bytes by `tools/looks.py`. Which file each look comes from is in
-`core/src/looks.rs`. The film names are the authors' description of what each
-table approximates; LumiRaw neither uses them nor is affiliated with their
-owners.
-
-This licence covers these tables only, not the rest of LumiRaw.
+Like the original, they're licensed under CC BY-SA 4.0
+(https://creativecommons.org/licenses/by-sa/4.0/). That applies to these files
+only, not the rest of the project. The film names are just the authors'
+descriptions; lumiraw isn't affiliated with any of the brands.

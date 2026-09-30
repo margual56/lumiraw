@@ -2,7 +2,7 @@
 name = "kit"
 version = "0.1.0"
 edition = "2021"
-description = "The general-purpose half of LumiRaw's pipeline: image buffers, colour, fast maths, filters, reports."
+description = "Image, colour and maths helpers for lumiraw"
 publish = false
 
 [dependencies]

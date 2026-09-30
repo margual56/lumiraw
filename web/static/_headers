@@ -1,36 +1,17 @@
-# Cloudflare Pages applies these to the static responses.
-#
-# The promise that a photograph never leaves the machine, enforced by the
-# browser rather than taken on trust: this page, its workers included, may
-# fetch, load and send to its own address and nowhere else. Anyone can read
-# this policy in the response headers. `'wasm-unsafe-eval'` is what compiling
-# the engine needs; `'unsafe-inline'` covers SvelteKit's inline start-up
-# script and the styles Svelte sets on elements, and lets nothing reach
-# another server. Links to other sites still open: following a link is the
-# reader's act, not the page's.
+# Cloudflare Pages headers.
+
+# Nothing is fetched from other origins.
 /*
   Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; media-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
-#
-# Only fingerprinted paths may be immutable. The wasm module and the lens
-# database are imported through the bundler precisely so they land here with a
-# content hash in the name; anything served from a fixed path must be allowed
-# to go stale, or a deploy leaves browsers mixing old and new halves.
 
+# Hashed assets can be cached forever.
 /_app/immutable/*
   Cache-Control: public, max-age=31536000, immutable
 
-# The service worker decides what is fresh, so it must itself always be
-# fetched fresh, or a deploy would never reach a browser that installed it.
 /service-worker.js
   Cache-Control: no-cache
 
-# Fixed names whose contents nothing else depends on: a day out of date costs
-# at most a day-old icon or link preview, never a broken page.
-#
-# The HTML is deliberately not here. Each page names the hashed scripts of its
-# own deploy, and a deploy retires the previous one's files, so a page held
-# for a day could ask for scripts that no longer exist. Left to the Pages
-# default, it is revalidated on every load, which is a 304 when nothing changed.
+# Fixed names, cached for a day.
 /favicon.png
   Cache-Control: public, max-age=86400
 /apple-touch-icon.png

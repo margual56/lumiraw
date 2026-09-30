@@ -1,17 +1,9 @@
 #!/usr/bin/env python3
-"""Pack the named looks' tables from RawTherapee's Film Simulation collection.
+"""Resample RawTherapee's film simulation HaldCLUTs to 33^3 tables for the looks.
 
     python tools/looks.py HALDCLUT_DIR
 
-HALDCLUT_DIR is the unpacked https://rawtherapee.com/shared/HaldCLUT.zip
-(Pat David, Pavlov Dmitry and Michael Ezra; CC BY-SA 4.0). Which of its files
-each look is comes from core/src/looks.rs, the one place it is written down.
-
-Each table is a level-12 Hald image (144 points a side); it is sampled
-trilinearly at 33 points a side, which is the size .cube files are usually
-exported at and far finer than these smooth film curves need, and written as
-33^3 RGB bytes, red changing fastest, to web/src/lib/wasm/looks/look-ID.bin.
-The engine reads that back with `Lut::from_bytes`.
+HALDCLUT_DIR is https://rawtherapee.com/shared/HaldCLUT.zip, unpacked.
 """
 import re
 import sys

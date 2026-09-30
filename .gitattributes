@@ -1,5 +1,3 @@
-# The compiled pipeline is committed on purpose: the Cloudflare Pages build
-# image has no Rust toolchain, so the site has to build from this artefact.
-# Rebuild it with tools/build.sh whenever core/ changes.
+# Committed so the site builds without Rust. Rebuild with tools/build.sh.
 web/src/lib/wasm/darkroom.wasm binary
 web/src/lib/wasm/lensfun.json -diff

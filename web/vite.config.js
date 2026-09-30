@@ -13,11 +13,8 @@ function version() {
 export default {
   plugins: [tailwindcss(), sveltekit()],
   define: { __APP_VERSION__: JSON.stringify(version()) },
-  // The pipeline is a wasm module fetched at runtime, so there is no backend
-  // to proxy to any more: `npm run dev` is the whole application.
   worker: { format: 'es' },
-  // The lens calibrations are split per mount so that only the one a photograph
-  // needs is downloaded.
+  // Lens and look files are fetched on demand, never inlined.
   build: {
     assetsInlineLimit: (file) => (/\/lib\/wasm\/(lenses|looks)\//.test(file) ? false : undefined),
   },

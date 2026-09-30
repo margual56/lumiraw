@@ -2,12 +2,10 @@
 name = "darkroom"
 version = "1.0.0"
 edition = "2021"
-description = "LumiRaw's API: open a raw, develop it, compare, export, merge a bracket."
+description = "lumiraw API and wasm module"
 publish = false
 
 [lib]
-# The rlib is the API for Rust; the cdylib is the same API compiled to the
-# wasm module the web app loads (see src/wasm.rs).
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

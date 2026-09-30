@@ -15,16 +15,12 @@ const show = (r) => `[${r.map((v) => v.toFixed(4)).join(', ')}]`;
 const SQUARE = 6000 / (1 * 4000);     // 1:1 on a 3:2 frame
 const WIDE = 6000 / (1.77778 * 4000); // 16:9 on a 3:2 frame
 
-// --- the anchor stays put, which is the whole point -------------------------
+// --- the anchor stays put ---------------------------------------------------
 
-// Free-hand, dragged up and to the left: the pressed point is the box's own
-// bottom-right corner afterwards.
 check('a free drag keeps the pressed corner',
   near(drawn([0.8, 0.9], [0.3, 0.4], 0), [0.3, 0.4, 0.5, 0.5]));
 
-// The bug this replaces: with a ratio locked, the old code wrote the pointer's
-// y as the box's top and then derived the height downward from it, so the
-// pressed corner slid vertically the whole time you dragged.
+// With a ratio locked, the pressed corner used to slide while dragging.
 for (const [name, aspect] of [['a square', SQUARE], ['16:9', WIDE]]) {
   for (const [to, label] of [[[0.3, 0.4], 'up and left'], [[0.9, 0.2], 'up and right'],
                              [[0.1, 0.8], 'down and left'], [[0.95, 0.9], 'down and right']]) {
@@ -41,8 +37,7 @@ check('a locked drag comes out at the locked shape',
   Math.abs(drawn([0.5, 0.5], [0.9, 0.6], SQUARE)[3]
            / drawn([0.5, 0.5], [0.9, 0.6], SQUARE)[2] - SQUARE) < 1e-9);
 
-// A sideways drag under a lock must still open a box rather than a sliver,
-// otherwise the ratios in the dropdown are unusable with a flick of the wrist.
+// A sideways drag with a ratio locked should still give a box, not a sliver.
 check('a mostly sideways locked drag opens a box the width of the drag',
   Math.abs(drawn([0.1, 0.1], [0.6, 0.12], SQUARE)[2] - 0.5) < 1e-9);
 
@@ -93,7 +88,7 @@ check('a locked corner drag keeps the opposite corner and the shape',
            return Math.abs(r[0] + r[2] - 0.6) < 1e-9 && Math.abs(r[1] + r[3] - 0.7) < 1e-9
                   && Math.abs(r[3] / r[2] - SQUARE) < 1e-9; })());
 
-// --- sliding a selection, which is what could not be done at all -----------
+// --- moving a selection ----------------------------------------------------
 
 check('sliding keeps the size',
   near(moved(BOX, 0.1, -0.1), [0.3, 0.2, 0.4, 0.4]));

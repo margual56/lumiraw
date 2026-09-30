@@ -1,25 +1,8 @@
 #!/usr/bin/env python3
-"""Split the baked lens database into the pieces the web app loads.
+"""Split lensfun.json into cameras.json plus one lens file per mount.
 
     python tools/split_lensfun.py            write web/src/lib/wasm/lenses/
-    python tools/split_lensfun.py --check    fail if what is there is stale
-
-The whole database is 2.7 MB (about 0.37 MB compressed), a fifth of a first
-visit, and a photograph only ever needs one mount's lenses: a lens is looked
-up among those of its camera's mount (`Database::find_lens`). So the page
-loads the cameras alone, which also give the crop factor the noise and
-diffraction estimates need, and fetches a mount's lenses when a photograph
-says which it needs.
-
-    cameras.json         every camera, "mounts": [] (no lenses yet), and
-                         "chunks": which file holds each mount's lenses
-    lens-<mount>.json    one mount's lenses, in the whole database's order,
-                         with "mounts": [<mount>]
-
-A camera whose mount has no lenses of its own is looked up against every
-lens (that is `find_lens`'s fallback), so for those the page loads the whole
-lensfun.json instead, which stays where it is for that and for the native
-harnesses.
+    python tools/split_lensfun.py --check    fail if they're out of date
 """
 from __future__ import annotations
 

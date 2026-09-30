@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Bake the lensfun XML database into one compact JSON file.
-
-liblensfun needs glib and pcre2, which is a bad trade to drag through
-Emscripten for what is ultimately polynomial evaluation.  The *data* is the
-valuable part, so we take that and evaluate the models ourselves (see
-core/src/lensdb.rs).  Run this whenever the system database is updated:
+"""Convert the lensfun XML database to the JSON the pipeline reads.
 
     python tools/bake_lensfun.py /usr/share/lensfun/version_1 web/src/lib/wasm/lensfun.json
 """

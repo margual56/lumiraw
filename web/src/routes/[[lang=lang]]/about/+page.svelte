@@ -108,7 +108,8 @@
   <ul>
     <li>No se sube nada. Puedes comprobarlo en las herramientas de desarrollo del
       navegador: en la pestaña de red solo aparecen la página, sus scripts, el motor de
-      revelado y la base de datos de objetivos.</li>
+      revelado y la base de datos de objetivos. El código es público: <a href={localized('/source')}>así
+      funciona y aquí está</a>.</li>
     <li>La foto no se guarda en ningún sitio. No hay cuenta ni estadísticas de uso. Lo que sí
       se conserva, solo en tu navegador, son los ajustes que hiciste a cada archivo, para que
       al volver a abrirlo estén donde los dejaste. Borrar los datos del sitio en el navegador
@@ -224,7 +225,8 @@
   <ul>
     <li>Nothing is uploaded. You can check this in your browser's developer tools: the
       network tab shows the page, its scripts, the processing engine and the lens database,
-      and nothing else.</li>
+      and nothing else. The code is public: <a href={localized('/source')}>here's how it works
+      and where it is</a>.</li>
     <li>The photo isn't stored anywhere. There's no account and no analytics. What is kept,
       in your browser only, is the adjustments you made to each file, so opening it again
       brings them back. Clearing the site's data in your browser forgets them.</li>

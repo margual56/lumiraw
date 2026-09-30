@@ -12,6 +12,7 @@
     { href: '/guide', key: 'links.guide' },
     { href: '/about', key: 'links.about' },
     { href: '/cameras', key: 'links.cameras' },
+    { href: '/source', key: 'links.source' },
   ];
   const here = (href) => unlocalized(page.url.pathname) === href;
 </script>
@@ -53,7 +54,7 @@
       &:hover, &[aria-current] { color: var(--color-ink); }
     }
     @include phone {
-      order: 3; width: 100%; gap: 4px; font-size: 14px;
+      order: 3; width: 100%; gap: 4px; font-size: 14px; flex-wrap: wrap;
       a { padding: 8px 10px 6px 0; margin-right: 8px; }
     }
   }

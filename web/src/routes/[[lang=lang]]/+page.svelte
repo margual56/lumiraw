@@ -260,6 +260,7 @@
           <a href={localized('/guide')}>{t('links.guide')}</a>
           <a href={localized('/about')}>{t('links.about')}</a>
           <a href={localized('/cameras')}>{t('links.cameras')}</a>
+          <a href={localized('/source')}>{t('links.source')}</a>
         </nav>
       </div>
     {:else if app.step === FRAME}

@@ -1,7 +1,7 @@
 //! Several exposures of one scene, merged into one photograph with more range.
 
 use crate::{DecodeError, Finding, Lenses, MergeNotes, MergeOptions, Photo, Progress};
-use autoraw_core::merge::{self, Frame};
+use lumiraw_core::merge::{self, Frame};
 use serde_json::{json, Value};
 
 /// What was learned about a frame on adding it, for the interface's list.

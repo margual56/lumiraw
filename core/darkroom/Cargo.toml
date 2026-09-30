@@ -9,6 +9,6 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-autoraw-core = { path = ".." }
+lumiraw-core = { path = ".." }
 kit = { path = "../kit" }
 serde_json = "1"

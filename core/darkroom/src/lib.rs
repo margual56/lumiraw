@@ -9,10 +9,10 @@ pub use bracket::{finding_json, notes_json, Bracket, FrameInfo};
 pub use grades::{clear_cube, curves, load_cube, load_look, looks, CubeInfo};
 pub use photo::{Developed, Encoded, Export, Exported, Photo, Size};
 
-pub use autoraw_core::grade::Settings as Edit;
-pub use autoraw_core::develop::Region;
-pub use autoraw_core::merge::{Finding, Notes as MergeNotes, Options as MergeOptions};
-pub use autoraw_core::raw::DecodeError;
+pub use lumiraw_core::grade::Settings as Edit;
+pub use lumiraw_core::develop::Region;
+pub use lumiraw_core::merge::{Finding, Notes as MergeNotes, Options as MergeOptions};
+pub use lumiraw_core::raw::DecodeError;
 pub use kit::{Image, Report};
 
 /// A progress callback: the fraction done and a stage code the host names in
@@ -20,17 +20,17 @@ pub use kit::{Image, Report};
 pub type Progress<'a> = Option<&'a mut dyn FnMut(f32, &str)>;
 
 /// The build, as Cargo knows it, and as it signs every exported file.
-pub const VERSION: &str = autoraw_core::VERSION;
-pub const SOFTWARE: &str = autoraw_core::SOFTWARE;
+pub const VERSION: &str = lumiraw_core::VERSION;
+pub const SOFTWARE: &str = lumiraw_core::SOFTWARE;
 
 /// The lens calibrations (a baked copy of lensfun's database), parsed once and
 /// passed to every open, since vignetting, distortion and lateral CA are all
 /// read from it.
-pub struct Lenses(autoraw_core::lensdb::Database);
+pub struct Lenses(lumiraw_core::lensdb::Database);
 
 impl Lenses {
     pub fn parse(json: &[u8]) -> Result<Lenses, String> {
-        autoraw_core::lensdb::Database::parse(json).map(Lenses)
+        lumiraw_core::lensdb::Database::parse(json).map(Lenses)
     }
     /// How many lenses it knows.
     pub fn len(&self) -> usize {
@@ -47,18 +47,18 @@ pub fn open(name: &str, bytes: &[u8], lenses: Option<&Lenses>) -> Result<Photo, 
     if bytes.is_empty() {
         return Err(DecodeError::undecodable("empty file"));
     }
-    autoraw_core::develop::Development::open(name, bytes, lenses.map(|l| &l.0)).map(Photo::new)
+    lumiraw_core::develop::Development::open(name, bytes, lenses.map(|l| &l.0)).map(Photo::new)
 }
 
 /// A small picture of a raw file, from the JPEG the camera embedded in it,
 /// without developing anything. For filmstrips.
 pub fn thumbnail(bytes: &[u8], long_edge: usize) -> Result<Image, DecodeError> {
-    autoraw_core::decode::thumbnail(bytes, long_edge.max(16))
+    lumiraw_core::decode::thumbnail(bytes, long_edge.max(16))
 }
 
 /// The export formats, for a picker: `{id, label, ext, mime}` each.
 pub fn formats() -> serde_json::Value {
-    serde_json::json!(autoraw_core::output::FORMATS.iter()
+    serde_json::json!(lumiraw_core::output::FORMATS.iter()
         .map(|f| serde_json::json!({"id": f.id, "label": f.label, "ext": f.ext, "mime": f.mime}))
         .collect::<Vec<_>>())
 }
@@ -71,7 +71,7 @@ pub(crate) fn with_formats(description: serde_json::Value) -> serde_json::Value 
 
 /// Pixels for a canvas: 8-bit sRGB with opaque alpha.
 pub fn rgba8(img: &Image) -> Vec<u8> {
-    autoraw_core::output::rgba8(img)
+    lumiraw_core::output::rgba8(img)
 }
 
 #[cfg(test)]
@@ -115,9 +115,9 @@ mod tests {
         let first = load_cube(cube.as_bytes()).unwrap();
         assert_eq!(first.size, 2);
         assert!(load_cube(b"nonsense").is_err());
-        assert_eq!(autoraw_core::lut::describe().map(|d| d.0), Some(2));
+        assert_eq!(lumiraw_core::lut::describe().map(|d| d.0), Some(2));
         clear_cube();
-        assert!(autoraw_core::lut::describe().is_none());
+        assert!(lumiraw_core::lut::describe().is_none());
         assert_ne!(first.id, load_cube(format!("{cube}\n").as_bytes()).unwrap().id,
                    "a different file must give a different id");
         clear_cube();

@@ -1,5 +1,5 @@
 //! Decode-only statistics, for comparing against the Python (LibRaw) decoder.
-use autoraw_core::{decode, raw};
+use lumiraw_core::{decode, raw};
 
 fn main() {
     for path in std::env::args().skip(1) {

@@ -1,9 +1,9 @@
 //! One photograph, open for developing.
 
 use crate::{Edit, Image, Progress, Report};
-use autoraw_core::develop::Development;
-use autoraw_core::geometry::Rect;
-use autoraw_core::output;
+use lumiraw_core::develop::Development;
+use lumiraw_core::geometry::Rect;
+use lumiraw_core::output;
 use serde_json::Value;
 
 /// How big a development should be.
@@ -124,7 +124,7 @@ impl Photo {
     fn render(&mut self, edit: &Edit, size: Size, crop: bool, progress: Progress) -> Developed {
         let (image, report) = self.dev.render(edit, size.edge(), crop, progress);
         let toggles = self.dev.toggles(edit, &report);
-        let crop = autoraw_core::geometry::effective_crop(self.dev.width(), self.dev.height(),
+        let crop = lumiraw_core::geometry::effective_crop(self.dev.width(), self.dev.height(),
                                                           &edit.framing);
         Developed { image, report, toggles, crop }
     }
@@ -165,10 +165,10 @@ impl Photo {
         // When the photograph was taken, so that a bundle can date each member
         // by it rather than by the moment the zip was written.
         let captured = meta.iter()
-            .find(|e| e.tag == autoraw_core::exif::TAG_DATE_TIME_ORIGINAL)
-            .or_else(|| meta.iter().find(|e| e.tag == autoraw_core::exif::TAG_DATE_TIME))
+            .find(|e| e.tag == lumiraw_core::exif::TAG_DATE_TIME_ORIGINAL)
+            .or_else(|| meta.iter().find(|e| e.tag == lumiraw_core::exif::TAG_DATE_TIME))
             .and_then(|e| match &e.value {
-                autoraw_core::exif::Value::Ascii(s) => Some(s.trim_end_matches('\0').to_string()),
+                lumiraw_core::exif::Value::Ascii(s) => Some(s.trim_end_matches('\0').to_string()),
                 _ => None,
             });
         if let Some(cb) = progress.as_mut() {
@@ -189,12 +189,12 @@ impl Photo {
     }
 
     /// The camera's metadata as read from the file, as the export carries it.
-    pub fn exif(&self) -> &[autoraw_core::exif::Entry] {
+    pub fn exif(&self) -> &[lumiraw_core::exif::Entry] {
         &self.dev.exif
     }
 
-    pub(crate) fn from_merge(name: &str, image: Image, meta: autoraw_core::decode::Meta,
-                             exif: Vec<autoraw_core::exif::Entry>,
+    pub(crate) fn from_merge(name: &str, image: Image, meta: lumiraw_core::decode::Meta,
+                             exif: Vec<lumiraw_core::exif::Entry>,
                              lenses: Option<&crate::Lenses>) -> Photo {
         Photo::new(Development::from_frame(name, image, meta, exif, lenses.map(|l| &l.0)))
     }

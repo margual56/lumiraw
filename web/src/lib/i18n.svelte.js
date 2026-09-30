@@ -9,7 +9,7 @@ export const LOCALES = [
   { id: 'es', name: 'Español', dict: es },
 ];
 
-const STORAGE_KEY = 'autoraw.locale';
+const STORAGE_KEY = 'lumiraw.locale';
 
 export const i18n = $state({ locale: 'en' });
 

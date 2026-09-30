@@ -1,11 +1,8 @@
-# autoraw-core
+# lumiraw-core
 
 The raw processing pipeline. Plain Rust, nothing browser-specific in here;
 `darkroom/` wraps it for the web app and `kit/` has the generic helpers it
 uses.
-
-(The crate name is left over from autoraw, the Python version this started
-as a port of.)
 
 ## src/
 

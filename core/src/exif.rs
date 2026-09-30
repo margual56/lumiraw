@@ -272,7 +272,7 @@ mod tests {
                        Value::Ascii("2026:09:22 15:04:05".into())),
             Entry::new(Ifd::Gps, 0x0002, Value::Rational(vec![(40, 1), (25, 1), (0, 1)])),
         ];
-        let block = build(&entries, 4000, 3000, "autoraw 0.3.0", None);
+        let block = build(&entries, 4000, 3000, "lumiraw 0.3.0", None);
         let read = parse(&block);
 
         use exif::{In, Tag};
@@ -284,7 +284,7 @@ mod tests {
         assert_eq!(text(Tag::ExposureTime).as_deref(), Some("1/125"));
         assert_eq!(text(Tag::PhotographicSensitivity).as_deref(), Some("100"));
         assert_eq!(text(Tag::DateTimeOriginal).as_deref(), Some("2026-09-22 15:04:05"));
-        assert_eq!(text(Tag::Software).as_deref(), Some("\"autoraw 0.3.0\""));
+        assert_eq!(text(Tag::Software).as_deref(), Some("\"lumiraw 0.3.0\""));
 
         // Ours, not the original's: the export is upright and this size.
         assert_eq!(text(Tag::Orientation).as_deref(), Some("row 0 at top and column 0 at left"));
@@ -304,11 +304,11 @@ mod tests {
             Entry::new(Ifd::Primary, TAG_SOFTWARE, Value::Ascii("the camera".into())),
             Entry::new(Ifd::Exif, TAG_PIXEL_X, Value::Long(vec![5470])),
         ];
-        let read = parse(&build(&entries, 800, 600, "autoraw 0.3.0", None));
+        let read = parse(&build(&entries, 800, 600, "lumiraw 0.3.0", None));
         use exif::{In, Tag};
         let value = |tag: Tag| read.get_field(tag, In::PRIMARY).unwrap().display_value().to_string();
         assert_eq!(value(Tag::Orientation), "row 0 at top and column 0 at left");
-        assert_eq!(value(Tag::Software), "\"autoraw 0.3.0\"");
+        assert_eq!(value(Tag::Software), "\"lumiraw 0.3.0\"");
         assert_eq!(value(Tag::PixelXDimension), "800");
     }
 
@@ -316,7 +316,7 @@ mod tests {
     /// nothing at all must still produce a block a reader accepts.
     #[test]
     fn copes_with_nothing_to_copy() {
-        let block = build(&[], 10, 10, "autoraw", None);
+        let block = build(&[], 10, 10, "lumiraw", None);
         let read = parse(&block);
         use exif::{In, Tag};
         assert!(read.get_field(Tag::GPSLatitude, In::PRIMARY).is_none());

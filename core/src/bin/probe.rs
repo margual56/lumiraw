@@ -1,6 +1,6 @@
 //! Native harness: develop a raw the same way the wasm build will, and print
 //! what every stage decided.  Not part of the wasm build.
-use autoraw_core::{develop::Development, grade::Settings, lensdb::Database, output};
+use lumiraw_core::{develop::Development, grade::Settings, lensdb::Database, output};
 
 fn main() {
     let mut args = std::env::args().skip(1);

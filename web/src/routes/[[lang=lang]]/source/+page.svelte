@@ -125,6 +125,15 @@
     API está en {@render f('core/darkroom/src/bracket.rs')}.
   </p>
 
+  <SectionTitle id="culling">Elegir fotos</SectionTitle>
+  <p>
+    {@render f('core/critic/src/net.rs')} es MobileNet escrita a mano, sin librerías, y se compila
+    a un módulo wasm aparte que solo carga la página de selección. Las dos redes NIMA de idealo
+    (una estética, otra técnica) se convierten con {@render f('tools/bake-nima.mjs')} y se
+    descargan la primera vez que se usan. {@render f('web/src/lib/critic.js')} reparte las fotos
+    entre varios workers y {@render f('web/src/lib/cull.js')} agrupa las ráfagas y elige.
+  </p>
+
   <SectionTitle id="stored">Qué se guarda</SectionTitle>
   <ul>
     <li>En el <code>localStorage</code> del navegador: los ajustes de cada archivo, identificado
@@ -284,6 +293,15 @@
     threshold bitmaps), blends them so each area comes from the exposure that recorded it best,
     and takes out things that moved. The API for it is in
     {@render f('core/darkroom/src/bracket.rs')}.
+  </p>
+
+  <SectionTitle id="culling">Picking photos</SectionTitle>
+  <p>
+    {@render f('core/critic/src/net.rs')} is MobileNet written by hand, with no libraries, built
+    into a wasm module of its own that only the culling page loads. idealo's two NIMA networks
+    (one aesthetic, one technical) are converted by {@render f('tools/bake-nima.mjs')} and
+    downloaded the first time they're used. {@render f('web/src/lib/critic.js')} shares the photos
+    out between several workers, and {@render f('web/src/lib/cull.js')} groups bursts and picks.
   </p>
 
   <SectionTitle id="stored">What's stored</SectionTitle>

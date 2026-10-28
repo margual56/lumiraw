@@ -9,20 +9,25 @@ fi
 
 if command -v cargo >/dev/null && rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown; then
   # Target flags (simd128, the getrandom backend) live in .cargo/config.toml.
-  cargo build --release --manifest-path core/Cargo.toml -p darkroom --target wasm32-unknown-unknown
+  cargo build --release --manifest-path core/Cargo.toml -p darkroom -p critic --target wasm32-unknown-unknown
   cp core/target/wasm32-unknown-unknown/release/darkroom.wasm web/src/lib/wasm/darkroom.wasm
-  echo "rebuilt the wasm module from core/darkroom"
+  cp core/target/wasm32-unknown-unknown/release/critic.wasm web/src/lib/wasm/critic.wasm
+  echo "rebuilt the wasm modules from core/darkroom and core/critic"
 else
-  test -f web/src/lib/wasm/darkroom.wasm || {
-    echo "no Rust toolchain and no committed web/src/lib/wasm/darkroom.wasm" >&2
-    exit 1
-  }
-  echo "no Rust toolchain here, using the committed wasm module"
+  for module in darkroom critic; do
+    test -f "web/src/lib/wasm/$module.wasm" || {
+      echo "no Rust toolchain and no committed web/src/lib/wasm/$module.wasm" >&2
+      exit 1
+    }
+  done
+  echo "no Rust toolchain here, using the committed wasm modules"
 fi
 
 (cd web && npm ci --no-audit --no-fund && npm run build)
 
 printf '\n%-28s %s\n' "wasm module" "$(du -h web/src/lib/wasm/darkroom.wasm | cut -f1)"
+printf '%-28s %s\n' "scoring module" "$(du -h web/src/lib/wasm/critic.wasm | cut -f1)"
+printf '%-28s %s\n' "scoring weights" "$(du -ch web/src/lib/wasm/critic/*.bin | tail -1 | cut -f1)"
 printf '%-28s %s\n' "lens database" "$(du -h web/src/lib/wasm/lensfun.json | cut -f1)"
 printf '%-28s %s\n' "site total" "$(du -sh web/build | cut -f1)"
 echo

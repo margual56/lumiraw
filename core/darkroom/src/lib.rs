@@ -53,7 +53,20 @@ pub fn open(name: &str, bytes: &[u8], lenses: Option<&Lenses>) -> Result<Photo, 
 /// A small picture of a raw file, from the JPEG the camera embedded in it,
 /// without developing anything. For filmstrips.
 pub fn thumbnail(bytes: &[u8], long_edge: usize) -> Result<Image, DecodeError> {
-    lumiraw_core::decode::thumbnail(bytes, long_edge.max(16))
+    lumiraw_core::decode::thumbnail(bytes, long_edge.max(16), 0)
+}
+
+/// The same, from the larger embedded preview when the thumbnail falls well
+/// short of `long_edge`: for scoring, which needs more than 160 pixels.
+pub fn preview(bytes: &[u8], long_edge: usize) -> Result<Image, DecodeError> {
+    let long_edge = long_edge.max(16);
+    lumiraw_core::decode::thumbnail(bytes, long_edge, long_edge / 2)
+}
+
+/// When the file says it was taken, in seconds since 1970, or zero. Reads
+/// the EXIF of raws and of JPEG, PNG and WebP alike.
+pub fn captured(bytes: &[u8]) -> i64 {
+    lumiraw_core::decode::captured(bytes)
 }
 
 /// The export formats, for a picker: `{id, label, ext, mime}` each.

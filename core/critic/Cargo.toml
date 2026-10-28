@@ -1,0 +1,9 @@
+[package]
+name = "critic"
+version = "1.0.0"
+edition = "2021"
+description = "NIMA photo scoring for lumiraw, as its own wasm module"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]

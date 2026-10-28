@@ -81,7 +81,9 @@
   </ol>
   <p>
     También hay una página para <a href={localized('/merge')}>fusionar exposiciones horquilladas</a>
-    en un solo RAW con más rango dinámico antes de revelarlo.
+    en un solo RAW con más rango dinámico antes de revelarlo, y otra para
+    <a href={localized('/cull')}>elegir las mejores fotos de una sesión</a>: puntúa cada una con
+    dos redes neuronales pequeñas, agrupa las ráfagas y abre las elegidas para revelarlas.
   </p>
   <p>
     Las correcciones del objetivo (viñeteo, distorsión y aberración cromática) salen de la
@@ -198,7 +200,9 @@
   </ol>
   <p>
     There is also a page for <a href={localized('/merge')}>merging bracketed exposures</a> into a
-    single raw frame with more dynamic range, before you develop it.
+    single raw frame with more dynamic range, before you develop it, and one for
+    <a href={localized('/cull')}>picking the best photos from a shoot</a>: it scores each one
+    with two small neural networks, groups bursts and opens the picks for developing.
   </p>
   <p>
     Lens corrections (vignetting, distortion and chromatic aberration) come from the lensfun

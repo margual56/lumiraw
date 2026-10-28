@@ -14,7 +14,7 @@ export default {
     }),
     // The language picker isn't a link, so list the Spanish pages here.
     prerender: {
-      entries: ['*', '/es', '/es/about', '/es/cameras', '/es/merge', '/es/guide', '/es/source'],
+      entries: ['*', '/es', '/es/about', '/es/cameras', '/es/merge', '/es/cull', '/es/guide', '/es/source'],
     },
   },
 };

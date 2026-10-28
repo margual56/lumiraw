@@ -166,6 +166,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "critic"
+version = "1.0.0"
+
+[[package]]
 name = "crossbeam-deque"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"

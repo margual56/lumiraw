@@ -36,8 +36,8 @@ jobs:
           workspaces: core
           key: wasm
           cache-on-failure: true
-      - name: The module compiles for the browser
-        run: cargo check --profile ci --manifest-path core/Cargo.toml -p darkroom --target wasm32-unknown-unknown
+      - name: The modules compile for the browser
+        run: cargo check --profile ci --manifest-path core/Cargo.toml -p darkroom -p critic --target wasm32-unknown-unknown
 
   web:
     name: Site
@@ -67,6 +67,8 @@ jobs:
           node tools/check-crop.mjs
           node tools/check-webp.mjs
           node tools/check-histogram.mjs
+          node tools/check-critic.mjs
+          node tools/check-cull.mjs
 
   release:
     name: Versions agree
@@ -77,9 +79,13 @@ jobs:
         run: |
           core=$(grep -m1 '^version' core/Cargo.toml | cut -d'"' -f2)
           darkroom=$(grep -m1 '^version' core/darkroom/Cargo.toml | cut -d'"' -f2)
+          critic=$(grep -m1 '^version' core/critic/Cargo.toml | cut -d'"' -f2)
           web=$(node -p "require('./web/package.json').version")
-          echo "core $core, darkroom $darkroom, web $web"
+          echo "core $core, darkroom $darkroom, critic $critic, web $web"
           test "$core" = "$darkroom" || { echo "::error::darkroom is $darkroom, core is $core"; exit 1; }
+          test "$core" = "$critic" || { echo "::error::critic is $critic, core is $core"; exit 1; }
           test "$core" = "$web" || { echo "::error::web/package.json is $web, core is $core"; exit 1; }
           grep -aq "LumiRaw $core" web/src/lib/wasm/darkroom.wasm \
             || { echo "::error::web/src/lib/wasm/darkroom.wasm was not rebuilt for $core (run tools/build.sh)"; exit 1; }
+          grep -aq "LumiRaw $core" web/src/lib/wasm/critic.wasm \
+            || { echo "::error::web/src/lib/wasm/critic.wasm was not rebuilt for $core (run tools/build.sh)"; exit 1; }

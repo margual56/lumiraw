@@ -58,9 +58,10 @@ export const SHUTTERS = [
  * pixel, which the 500 rule predates, and is the one to trust on a modern
  * sensor at 100 % view.
  */
-export function starRules({ focal, crop, aperture, megapixels, aspect = 3 / 2 }) {
+export function starRules({ focal, crop, aperture, megapixels }) {
+  // The sensor's width, and the pixels across it on a 3:2 frame.
   const width = 36 / crop;
-  const pixels = Math.sqrt(megapixels * 1e6 * aspect);
+  const pixels = Math.sqrt(megapixels * 1e6 * 1.5);
   const pitch = (width / pixels) * 1000;
   return { rule500: 500 / (focal * crop), npf: (35 * aperture + 30 * pitch) / focal, pitch };
 }
@@ -89,7 +90,7 @@ const transit = (ds, m, l) => J2000 + ds + 0.0053 * Math.sin(m) - 0.0069 * Math.
 const approxTransit = (ht, lw, n) => J0 + (ht + lw) / (2 * Math.PI) + n;
 
 /** The angles of the sun, in degrees above the horizon, that the day turns on. */
-export const ANGLES = {
+const ANGLES = {
   // The top of the sun touching the horizon, refraction included.
   horizon: -0.833,
   // Golden light: the sun low but still up.
@@ -154,7 +155,6 @@ export function duration(seconds) {
   // Fractions while they are whole ones, as cameras write them; 0.3 s and
   // up in tenths.
   if (seconds < 0.29) return `1/${Math.round(1 / seconds)} s`;
-  if (seconds < 0.95) return `${Math.round(seconds * 10) / 10} s`;
   if (seconds < 60) return `${seconds < 10 ? Math.round(seconds * 10) / 10 : Math.round(seconds)} s`;
   const whole = Math.round(seconds);
   if (whole < 3600) {

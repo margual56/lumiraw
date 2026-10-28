@@ -11,6 +11,8 @@ const session = {
   photo: null,     // { name, buffer } of the file being developed
   frames: [],      // [{ name, buffer }] gathered for a merge
   merged: null,    // { align, deghost } when the photograph is a finished merge
+  stacked: null,   // { mode, align, files } when the photograph is a finished stack
+  gathering: null, // the same, for a stack still being gathered
   lut: null,       // the loaded .cube's bytes
   looks: {},       // look id -> its table's bytes, as each was first asked for
 };
@@ -221,6 +223,7 @@ async function open({ name, buffer }) {
   }
   session.photo = { name, buffer };
   session.merged = null;
+  session.stacked = null;
   return ensureLenses(info);
 }
 
@@ -228,6 +231,8 @@ async function open({ name, buffer }) {
 async function restorePhoto() {
   if (session.merged) {
     await replayMerge();
+  } else if (session.stacked) {
+    await replayStack(session.stacked);
   } else if (session.photo) {
     const bytes = new Uint8Array(session.photo.buffer);
     withBytes(bytes, (p, n) =>
@@ -246,6 +251,14 @@ async function replayMerge() {
   }
 }
 
+/** A stack is put back from its files, which are only references to what is
+ *  on disk, so keeping them costs nothing. */
+async function replayStack({ mode, align, files }) {
+  stackBegin({ mode, align });
+  for (const file of files) await stackAdd({ file });
+  await stackFinish();
+}
+
 /** A fresh module with the session put back into it. */
 async function recover() {
   const saved = { ...session, frames: [...session.frames] };
@@ -261,7 +274,8 @@ async function recover() {
     // start from nothing rather than trap on every request from here on.
     ready = init();
     await ready;
-    Object.assign(session, { photo: null, frames: [], merged: null, lut: null, looks: {} });
+    Object.assign(session, { photo: null, frames: [], merged: null, stacked: null,
+                             gathering: null, lut: null, looks: {} });
   }
 }
 
@@ -450,6 +464,50 @@ async function mergeFinish({ align, deghost }) {
   const info = readJson();
   if (rc !== 0) fail(info);
   session.merged = { align, deghost };
+  session.stacked = null;
+  session.photo = null;
+  return ensureLenses(info);
+}
+
+/** How a file says it was taken, from its first bytes, for a list of frames. */
+function exposure({ buffer }) {
+  withBytes(new Uint8Array(buffer), (p, n) => wasm.ar_exposure(p, n));
+  return readJson();
+}
+
+/** A stack is gathered frame by frame, each read here from its file and let go
+ *  once folded in, so the page never holds the frames' bytes. */
+function stackBegin({ mode, align }) {
+  const rc = withString(mode, (mp, ml) => wasm.ar_stack_begin(mp, ml, align ? 1 : 0));
+  if (rc !== 0) fail(readJson());
+  session.gathering = { mode, align, files: [] };
+  return {};
+}
+
+async function stackAdd({ file }) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const rc = withBytes(bytes, (p, n) =>
+    withString(file.name, (np, nl) => wasm.ar_stack_add(np, nl, p, n)));
+  const info = readJson();
+  if (rc !== 0) fail(info);
+  session.gathering?.files.push(file);
+  return info;
+}
+
+function stackReset() {
+  session.gathering = null;
+  wasm.ar_stack_reset();
+  return {};
+}
+
+/** Stack what was gathered; the result becomes the frame the wizard develops. */
+async function stackFinish() {
+  const rc = wasm.ar_stack_finish();
+  const info = readJson();
+  if (rc !== 0) fail(info);
+  session.stacked = session.gathering;
+  session.gathering = null;
+  session.merged = null;
   session.photo = null;
   return ensureLenses(info);
 }
@@ -458,7 +516,8 @@ const HANDLERS = { open, render, full, region, releaseRegion, thumbnail, preview
                    compare, looks, curves,
                    lutLoad, lutClear,
                    export: exportImage,
-                   mergeAdd, mergeRemove, mergeReset, mergeFinish, mergeCheck };
+                   mergeAdd, mergeRemove, mergeReset, mergeFinish, mergeCheck,
+                   exposure, stackBegin, stackAdd, stackReset, stackFinish };
 
 async function handle({ type, id, ...rest }) {
   try {
@@ -483,8 +542,8 @@ async function handle({ type, id, ...rest }) {
       // The module panicked and is unusable from here on; see `session`.
       await recover().catch(() => { ready = null; });
       const file = rest.name ?? session.photo?.name ?? '';
-      error.reason = type === 'open' || type === 'mergeAdd' ? 'undecodable' : 'crashed';
-      error.params = { file };
+      error.reason = ['open', 'mergeAdd', 'stackAdd'].includes(type) ? 'undecodable' : 'crashed';
+      error.params = { file: rest.file?.name ?? file };
     }
     postMessage({
       type: 'result', id, ok: false,

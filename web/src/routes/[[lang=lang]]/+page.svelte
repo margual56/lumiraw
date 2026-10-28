@@ -256,6 +256,10 @@
           <strong>{t('merge.link')}</strong>
           <span>{t('merge.linkHint')}</span>
         </a>
+        <a class="merge-link cull-link" href={localized('/cull')}>
+          <strong>{t('cull.link')}</strong>
+          <span>{t('cull.linkHint')}</span>
+        </a>
         <nav class="more">
           <a href={localized('/guide')}>{t('links.guide')}</a>
           <a href={localized('/about')}>{t('links.about')}</a>
@@ -391,4 +395,6 @@
     strong { font-size: 14px; font-weight: 600; color: var(--color-accent); }
     span { color: var(--color-muted); font-size: 13px; }
   }
+  /* The second of the two, close under the first. */
+  .cull-link { margin-top: 8px; }
 </style>

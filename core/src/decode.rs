@@ -108,15 +108,22 @@ fn develop_raw(raw: &raw::Raw, meta: Meta) -> Decoded {
 }
 
 /// A small picture of the file for a filmstrip, from the JPEG the camera
-/// embedded rather than from the raw data.
-pub fn thumbnail(bytes: &[u8], long_edge: usize) -> Result<Image, DecodeError> {
+/// embedded rather than from the raw data. The small thumbnail is used when
+/// its long edge is at least `smallest`; otherwise the larger preview, which
+/// takes longer to decode.
+pub fn thumbnail(bytes: &[u8], long_edge: usize, smallest: usize) -> Result<Image, DecodeError> {
     use rawler::decoders::RawDecodeParams;
     let source = rawler::rawsource::RawSource::new_from_slice(bytes);
     let decoder = rawler::get_decoder(&source)
         .map_err(|e| DecodeError::undecodable(e.to_string()))?;
     let params = RawDecodeParams::default();
-    let picture = decoder.thumbnail_image(&source, &params).ok().flatten()
-        .or_else(|| decoder.preview_image(&source, &params).ok().flatten())
+    let small = decoder.thumbnail_image(&source, &params).ok().flatten();
+    let enough = small.as_ref()
+        .is_some_and(|p| p.width().max(p.height()) as usize >= smallest);
+    let picture = if enough { small } else {
+        decoder.preview_image(&source, &params).ok().flatten().or(small)
+    };
+    let picture = picture
         .ok_or_else(|| DecodeError { code: "no_preview", message: "no embedded preview".into(),
                                      make: String::new(), model: String::new() })?
         .to_rgb8();
@@ -128,6 +135,12 @@ pub fn thumbnail(bytes: &[u8], long_edge: usize) -> Result<Image, DecodeError> {
     let small = kit::thumbnail(&img, long_edge);
     let meta = read_exif(bytes);
     Ok(orient(&small, Orientation::from_u16(meta.orientation)))
+}
+
+/// When a file says it was taken, in seconds, or zero. Any container the EXIF
+/// reader knows: raws, and JPEG, PNG and WebP too.
+pub fn captured(bytes: &[u8]) -> i64 {
+    read_exif(bytes).captured_s
 }
 
 /// The camera's XYZ matrix for the light this frame was taken in.

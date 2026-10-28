@@ -314,6 +314,29 @@ pub extern "C" fn ar_thumbnail(ptr: *const u8, len: usize, long_edge: i32) -> i3
     }
 }
 
+/// A picture of a raw file big enough to score, with when it was taken. The
+/// open photograph is left alone.
+#[no_mangle]
+pub extern "C" fn ar_preview(ptr: *const u8, len: usize, long_edge: i32) -> i32 {
+    let bytes = unsafe { slice(ptr, len) };
+    match crate::preview(bytes, long_edge.max(16) as usize) {
+        Ok(img) => {
+            store(&img);
+            set_json(json!({"width": img.w, "height": img.h,
+                            "captured_s": crate::captured(bytes)}));
+            0
+        }
+        Err(e) => set_error(&e.message, e.code),
+    }
+}
+
+/// When any file the EXIF reader knows says it was taken, or zero.
+#[no_mangle]
+pub extern "C" fn ar_captured(ptr: *const u8, len: usize) -> i32 {
+    set_json(json!({"captured_s": crate::captured(unsafe { slice(ptr, len) })}));
+    0
+}
+
 /// Before/after: the developed picture in the primary buffer, the same with
 /// every automatic correction off in the secondary one.
 #[no_mangle]

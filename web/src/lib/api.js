@@ -107,6 +107,22 @@ export async function thumbnail(file, size = 240) {
   return URL.createObjectURL(out.image);
 }
 
+/** A raw's embedded preview at about `size` pixels, as a JPEG blob, when it
+ *  was taken, and how it is exposed (see `histogram.measure`):
+ *  { image, width, height, captured_s, measures }. */
+export async function preview(file, size = 512) {
+  const buffer = await file.arrayBuffer();
+  return call('preview', { buffer, size }, {}, [buffer]);
+}
+
+/** When a JPEG, PNG or WebP says it was taken, in seconds, or zero. The EXIF
+ *  is near the start, so only that much goes to the module. */
+export async function captured(file) {
+  const buffer = await file.slice(0, 256 * 1024).arrayBuffer();
+  const out = await call('captured', { buffer }, {}, [buffer]);
+  return out.captured_s ?? 0;
+}
+
 /** One export, awaited: { blob, filename, captured }. For the batch, which
  *  reports its own progress per photograph. */
 export const exportOnce = (body, onprogress) => call('export', body, { onprogress });

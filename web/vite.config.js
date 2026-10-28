@@ -14,8 +14,8 @@ export default {
   plugins: [tailwindcss(), sveltekit()],
   define: { __APP_VERSION__: JSON.stringify(version()) },
   worker: { format: 'es' },
-  // Lens and look files are fetched on demand, never inlined.
+  // Lens, look and scoring files are fetched on demand, never inlined.
   build: {
-    assetsInlineLimit: (file) => (/\/lib\/wasm\/(lenses|looks)\//.test(file) ? false : undefined),
+    assetsInlineLimit: (file) => (/\/lib\/wasm\/(lenses|looks|critic)\//.test(file) ? false : undefined),
   },
 };

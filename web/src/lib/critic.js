@@ -7,11 +7,16 @@ import { RAW_ACCEPT } from './format.js';
 import criticUrl from './wasm/critic.wasm?url';
 import aestheticUrl from './wasm/critic/nima-aesthetic.bin?url';
 import technicalUrl from './wasm/critic/nima-technical.bin?url';
+import detectorUrl from './wasm/critic/face-detector.bin?url';
+import landmarksUrl from './wasm/critic/face-landmarks.bin?url';
 
 /** The side both networks were trained at. */
 const SIDE = 224;
 /** The long edge of the picture kept for the grid. */
 const SHOWN = 512;
+/** The long edge faces are looked for at: at 512 the eyes of anyone not
+ *  filling the frame are a few pixels across. */
+const FACES = 1024;
 
 const RAWS = RAW_ACCEPT.split(',');
 export const IMAGES = ['.jpg', '.jpeg', '.png', '.webp'];
@@ -76,8 +81,9 @@ export function ready(onprogress) {
       for (const [r, t] of seen.values()) { got += r; all += t || r; }
       if (all) onprogress?.(Math.min(1, got / all));
     };
-    const [wasm, aesthetic, technical] = await Promise.all([
+    const [wasm, aesthetic, technical, detector, landmarks] = await Promise.all([
       download(criticUrl), download(aestheticUrl, report('a')), download(technicalUrl, report('t')),
+      download(detectorUrl, report('d')), download(landmarksUrl, report('l')),
     ]);
     const module = await WebAssembly.compile(wasm);
     // One core is left for the page and the decoder.
@@ -87,7 +93,7 @@ export function ready(onprogress) {
       const worker = new Worker(new URL('./wasm/critic-worker.js', import.meta.url),
                                 { type: 'module' });
       worker.onmessage = receive;
-      await post(worker, 'init', { module, aesthetic, technical });
+      await post(worker, 'init', { module, aesthetic, technical, detector, landmarks });
       workers.push({ worker, busy: false });
     }
     return workers;
@@ -108,43 +114,64 @@ async function squash(source) {
   return ctx.getImageData(0, 0, SIDE, SIDE).data.buffer;
 }
 
+/** A bitmap or canvas drawn at most `edge` pixels long, on a canvas. */
+function drawn(bitmap, edge) {
+  const scale = Math.min(1, edge / Math.max(bitmap.width, bitmap.height));
+  const canvas = new OffscreenCanvas(Math.round(bitmap.width * scale),
+                                     Math.round(bitmap.height * scale));
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  return { canvas, ctx };
+}
+
 /**
  * Everything the scoring needs from a file: a picture for the grid (an
- * object URL the caller revokes), the pixels to judge, when it was taken, and
- * how it is exposed. Every picture is measured at the same size, so their
- * sharpness can be compared.
+ * object URL the caller revokes), the pixels to judge, a larger picture to
+ * look for faces in, when it was taken, and how it is exposed. Raws and
+ * images take the same path from their decoded pixels on, so every picture
+ * is measured the same way and at the same size, and their sharpness can be
+ * compared.
  */
 export async function prepare(file) {
+  let full;
+  let captured;
   if (isRaw(file.name)) {
-    const out = await api.preview(file, SHOWN);
-    return { thumb: URL.createObjectURL(out.image), pixels: await squash(out.image),
-             captured: out.captured_s || 0, measures: out.measures };
+    // The camera's own preview, as large as the faces want it.
+    const out = await api.preview(file, FACES);
+    const pixels = new Uint8ClampedArray(out.pixels);
+    full = await createImageBitmap(new ImageData(pixels, out.width, out.height));
+    captured = out.captured_s || 0;
+  } else {
+    // The browser decodes what it can show; orientation comes from the EXIF.
+    [full, captured] = await Promise.all([
+      createImageBitmap(file, { imageOrientation: 'from-image' }),
+      api.captured(file).catch(() => 0),
+    ]);
   }
-  // The browser decodes what it can show; orientation comes from the EXIF.
-  const full = await createImageBitmap(file, { imageOrientation: 'from-image' });
-  const scale = Math.min(1, SHOWN / Math.max(full.width, full.height));
-  const canvas = new OffscreenCanvas(Math.round(full.width * scale), Math.round(full.height * scale));
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(full, 0, 0, canvas.width, canvas.height);
+  const big = drawn(full, FACES);
   full.close();
+  const { canvas, ctx } = drawn(big.canvas, SHOWN);
   const measures = measure(ctx.getImageData(0, 0, canvas.width, canvas.height));
   const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
-  const [pixels, captured] = await Promise.all([squash(canvas), api.captured(file).catch(() => 0)]);
-  return { thumb: URL.createObjectURL(blob), pixels, captured, measures };
+  const face = { pixels: big.ctx.getImageData(0, 0, big.canvas.width, big.canvas.height).data.buffer,
+                 width: big.canvas.width, height: big.canvas.height };
+  return { thumb: URL.createObjectURL(blob), pixels: await squash(canvas), face, captured, measures };
 }
 
 /** Calls waiting for a worker to come free. */
 const waiting = [];
 
-/** Judge one picture's pixels, on whichever worker is free. */
-async function judge(pixels) {
+/** Judge one picture's pixels, and look for faces in the larger one, on
+ *  whichever worker is free. */
+async function judge(pixels, face) {
   const workers = await pool;
   let free = workers.find((w) => !w.busy);
   if (free) free.busy = true;
   // A worker handed over by the call before is still marked busy.
   else free = await new Promise((resolve) => waiting.push(resolve));
   try {
-    return await post(free.worker, 'score', { pixels, width: SIDE, height: SIDE }, [pixels]);
+    return await post(free.worker, 'score', { pixels, width: SIDE, height: SIDE, face },
+                      face ? [pixels, face.pixels] : [pixels]);
   } finally {
     const next = waiting.shift();
     if (next) next(free);
@@ -170,7 +197,7 @@ export async function scoreAll(files, { oneach, stopped = () => false }) {
       oneach(index, null, error);
       continue;
     }
-    const job = judge(prepared.pixels)
+    const job = judge(prepared.pixels, prepared.face)
       .then((score) => oneach(index, { ...score, ...prepared.measures, thumb: prepared.thumb,
                                        captured: prepared.captured }))
       .catch((error) => { URL.revokeObjectURL(prepared.thumb); oneach(index, null, error); })

@@ -13,6 +13,8 @@ export const DEFAULTS = Object.freeze({
   focus: 0.5,
   /** How much blown and crushed areas cost. */
   faults: 0.5,
+  /** How much shut eyes cost. */
+  eyes: 0.5,
   /** How much the picks are kept from looking like each other. */
   variety: 0.3,
   /** Seconds between frames that can still be one burst. */
@@ -36,8 +38,35 @@ export function exposurePenalty(item, faults) {
   return faults * Math.min(3, blown + black);
 }
 
-/** A photo's mark once its exposure faults are taken off. */
-export const scoreOf = (item, levers) => blend(item, levers.weight) - exposurePenalty(item, levers.faults);
+/**
+ * How shut a face's eyes are, 0 open to 1 shut, from how open the landmarks
+ * put each (height over width: about 0.25 open, under 0.08 shut, a smile's
+ * squint between), or null when the face was too small to tell.
+ */
+export function shut(face) {
+  if (!face?.eyes) return null;
+  const open = (face.eyes[0] + face.eyes[1]) / 2;
+  return Math.min(1, Math.max(0, (0.15 - open) / (0.15 - 0.08)));
+}
+
+/** The faces whose eyes count as shut. */
+export const blinking = (item) => (item.faces ?? []).filter((f) => (shut(f) ?? 0) >= 0.5).length;
+
+/**
+ * Marks lost to shut eyes, at full strength: three for a portrait with its
+ * eyes shut. In a group it is half the worst face and half the share of
+ * faces shut, so one blink costs more than nothing and a row of them more.
+ */
+export function eyesPenalty(item, eyes) {
+  const judged = (item.faces ?? []).map(shut).filter((v) => v != null);
+  if (!judged.length || eyes <= 0) return 0;
+  const worst = Math.max(...judged);
+  const mean = judged.reduce((a, b) => a + b, 0) / judged.length;
+  return eyes * 3 * (0.5 * worst + 0.5 * mean);
+}
+
+/** The sharpness of a photo's largest face, if one was measured. */
+export const faceSharpness = (item) => (item.faces ?? []).find((f) => f.sharpness > 0)?.sharpness ?? 0;
 
 /**
  * Within a burst, marks lost for being softer than its sharpest frame. The
@@ -45,9 +74,9 @@ export const scoreOf = (item, levers) => blend(item, levers.weight) - exposurePe
  * ratio's logarithm that counts: a quarter of the sharpest's variance (half
  * its detail) costs three marks at full strength, never more.
  */
-export function focusPenalty(item, sharpest, focus) {
+export function focusPenalty(sharpness, sharpest, focus) {
   if (!(sharpest > 0) || focus <= 0) return 0;
-  const ratio = Math.max(item.sharpness ?? 0, 1e-9) / sharpest;
+  const ratio = Math.max(sharpness ?? 0, 1e-9) / sharpest;
   return focus * Math.min(3, -1.5 * Math.log2(Math.min(1, ratio)));
 }
 
@@ -181,19 +210,28 @@ export function keepCount(total, { mode, value }) {
  * made, up to two marks at `variety` 1, so that five views of one scene do
  * not crowd out everything else.
  *
+ * Within a burst whose every frame shows a face, focus is judged on the
+ * largest face rather than the whole frame.
+ *
  * Returns the picked set; every group with its best frame first, picks first
  * in the order they were chosen and the rest best first; and each item's
- * marks: `score` (the mark less exposure faults), `focus` (what softness cost
- * it in its group) and `rank` (what it was ranked by in its group).
+ * marks: `score` (the mark less exposure faults and shut eyes), `eyes` (what
+ * shut eyes cost), `focus` (what softness cost it in its group) and `rank`
+ * (what it was ranked by in its group).
  */
-export function pick(groups, levers, keep, total, like = () => 0) {
+export function pick(groups, given, keep, total, like = () => 0) {
+  const levers = { ...DEFAULTS, ...given };
   const marks = new Map();
   const ranked = groups.map((group) => {
-    const sharpest = group.length > 1 ? Math.max(...group.map((it) => it.sharpness ?? 0)) : 0;
+    // Where every frame has a face, it is the face that has to be in focus.
+    const onFaces = group.length > 1 && group.every((it) => faceSharpness(it) > 0);
+    const sharp = onFaces ? faceSharpness : (it) => it.sharpness ?? 0;
+    const sharpest = group.length > 1 ? Math.max(...group.map(sharp)) : 0;
     for (const it of group) {
-      const score = scoreOf(it, levers);
-      const focus = group.length > 1 ? focusPenalty(it, sharpest, levers.focus) : 0;
-      marks.set(it, { score, focus, rank: score - focus });
+      const eyes = eyesPenalty(it, levers.eyes);
+      const score = blend(it, levers.weight) - exposurePenalty(it, levers.faults) - eyes;
+      const focus = group.length > 1 ? focusPenalty(sharp(it), sharpest, levers.focus) : 0;
+      marks.set(it, { score, eyes, focus, rank: score - focus });
     }
     return [...group].sort((a, b) => marks.get(b).rank - marks.get(a).rank);
   });
@@ -237,17 +275,17 @@ const field = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""
  *  sharpest (100). */
 export function toCsv({ groups, marks }, picked, levers, sharp = relativeSharpness(groups.flat())) {
   const lines = [['file', 'group', 'aesthetic', 'technical', 'blend', 'exposure_penalty',
-                  'focus_penalty', 'score', 'blown_pct', 'black_pct', 'brightness_pct',
-                  'sharpness', 'picked'].join(',')];
+                  'eyes_penalty', 'focus_penalty', 'score', 'blown_pct', 'black_pct',
+                  'brightness_pct', 'sharpness', 'faces', 'eyes_shut', 'picked'].join(',')];
   const pct = (v) => (v == null ? '' : (v * 100).toFixed(2));
   groups.forEach((group, n) => {
     for (const it of group) {
       const m = marks.get(it);
       lines.push([field(it.name), n + 1, it.aesthetic.toFixed(3), it.technical.toFixed(3),
                   blend(it, levers.weight).toFixed(3), exposurePenalty(it, levers.faults).toFixed(3),
-                  m.focus.toFixed(3), m.score.toFixed(3), pct(it.blown), pct(it.crushed),
-                  pct(it.brightness), (sharp.get(it) ?? 0).toFixed(1),
-                  picked.has(it) ? 1 : 0].join(','));
+                  m.eyes.toFixed(3), m.focus.toFixed(3), m.score.toFixed(3), pct(it.blown),
+                  pct(it.crushed), pct(it.brightness), (sharp.get(it) ?? 0).toFixed(1),
+                  (it.faces ?? []).length, blinking(it), picked.has(it) ? 1 : 0].join(','));
     }
   });
   return `${lines.join('\n')}\n`;

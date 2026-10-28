@@ -9,6 +9,10 @@ const decoder = new TextDecoder();
 // Slots in the module (see core/critic/src/wasm.rs).
 const AESTHETIC = 0;
 const TECHNICAL = 1;
+const DETECTOR = 0;
+const LANDMARKS = 1;
+/** What `cr_faces` writes per face. */
+const FACE_VALUES = 3;
 
 function text() {
   return decoder.decode(new Uint8Array(memory.buffer, wasm.cr_text_ptr(), wasm.cr_text_len()));
@@ -24,7 +28,7 @@ function withBytes(bytes, fn) {
   }
 }
 
-async function init({ module, aesthetic, technical }) {
+async function init({ module, aesthetic, technical, detector, landmarks }) {
   const instance = await WebAssembly.instantiate(module, {});
   wasm = instance.exports;
   memory = wasm.memory;
@@ -32,11 +36,31 @@ async function init({ module, aesthetic, technical }) {
     const rc = withBytes(new Uint8Array(buffer), (p, n) => wasm.cr_load(slot, p, n));
     if (rc !== 0) throw new Error(text());
   }
+  for (const [slot, buffer] of [[DETECTOR, detector], [LANDMARKS, landmarks]]) {
+    const rc = withBytes(new Uint8Array(buffer), (p, n) => wasm.cr_load_graph(slot, p, n));
+    if (rc !== 0) throw new Error(text());
+  }
   return {};
 }
 
-/** Both networks on one 224 by 224 RGBA picture. */
-function score({ pixels, width, height }) {
+/** The faces in a picture: how open each one's eyes are, and how sharp it is
+ *  (null where the face was too small to tell). */
+function faces({ pixels, width, height }) {
+  return withBytes(new Uint8Array(pixels), (ptr) => {
+    const count = wasm.cr_faces(ptr, width, height);
+    if (count < 0) throw new Error(text());
+    const out = new Float32Array(memory.buffer, wasm.cr_out_ptr(), wasm.cr_out_len());
+    return Array.from({ length: count }, (_, k) => {
+      const [right, left, sharpness] = out.subarray(k * FACE_VALUES, (k + 1) * FACE_VALUES);
+      return { eyes: right >= 0 ? [right, left] : null, sharpness: sharpness >= 0 ? sharpness : null };
+    });
+  });
+}
+
+/** Both networks on one 224 by 224 RGBA picture, and the faces in a larger
+ *  one when it comes along. */
+function score({ pixels, width, height, face }) {
+  const found = face ? faces(face) : [];
   return withBytes(new Uint8Array(pixels), (ptr) => {
     const run = (slot) => {
       if (wasm.cr_score(slot, ptr, width, height) !== 0) throw new Error(text());
@@ -49,7 +73,7 @@ function score({ pixels, width, height }) {
     // of, which is what tells two frames of a burst from two shots.
     const feature = a.slice(2);
     return { aesthetic: a[0], aesthetic_std: a[1], technical: t[0], technical_std: t[1],
-             feature, transfer: [feature.buffer] };
+             feature, faces: found, transfer: [feature.buffer] };
   });
 }
 

@@ -75,6 +75,11 @@
   const ordered = $derived([...ranking.groups]
     .sort((a, b) => blend(b[0], weight) - blend(a[0], weight)));
   const pickedCount = $derived(shown.filter(isPicked).length);
+  /** Picks the developer cannot take. */
+  const notRaw = $derived(shown.filter((it) => isPicked(it) && !it.raw).length);
+  const keepMax = $derived(keepMode === 'percent' ? 100 : Math.max(1, shown.length));
+  /** On a phone, whether the controls are unfolded. */
+  let tuning = $state(false);
   const failed = $derived(items.filter((it) => it.failed));
 
   const eta = $derived.by(() => {
@@ -260,61 +265,80 @@
       {/if}
 
       {#if shown.length}
-        <section class="panel controls">
-          <h2>{t('cull.controls')}</h2>
-          <div class="choices">
-            <div class="option">
-              <div class="row">
-                <strong>{t('cull.weight')}</strong>
-                <span class="value">{n(weight * 100, 0)} / {n((1 - weight) * 100, 0)}</span>
-              </div>
-              <input type="range" min="0" max="1" step="0.05" bind:value={weight} />
-              <div class="ends">
-                <span>{t('cull.weight.technical')}</span>
-                <span>{t('cull.weight.aesthetic')}</span>
-              </div>
-            </div>
-
-            <div class="option">
-              <div class="row"><strong>{t('cull.keep')}</strong></div>
-              <div class="keep">
-                <input type="number" min="1" max={keepMode === 'percent' ? 100 : shown.length}
-                       bind:value={keepValue} />
-                <select bind:value={keepMode}>
-                  <option value="count">{t('cull.keep.count')}</option>
-                  <option value="percent">{t('cull.keep.percent')}</option>
-                </select>
-              </div>
-            </div>
-
-            <!-- The labelled checkbox from app.scss. -->
-            <label class="check">
-              <input type="checkbox" bind:checked={bursts} />
-              <span>{t('cull.bursts')}<em>{t('cull.burstsHint')}</em></span>
-            </label>
-
-            <div class="option" class:off={!bursts}>
-              <div class="row"><strong>{t('cull.similarity')}</strong></div>
-              <input type="range" min="0.6" max="0.95" step="0.01" disabled={!bursts}
-                     bind:value={similarity} />
-              <div class="ends">
-                <span>{t('cull.similarity.loose')}</span>
-                <span>{t('cull.similarity.strict')}</span>
-              </div>
+        <!--
+          Everything that changes the picks, kept in view over the photos it
+          changes. On a phone only the tally and the actions stay; the
+          controls fold away behind "Adjust".
+        -->
+        <section class="toolbar" class:tuning>
+          <div class="head">
+            <p class="tally">
+              <strong>{pickedCount}</strong>
+              <span>{t('cull.tally', { total: shown.length, groups: groups.length })}</span>
+            </p>
+            <button class="ghost adjust" aria-expanded={tuning} onclick={() => (tuning = !tuning)}>
+              {t('cull.adjust')}
+            </button>
+            <div class="actions">
+              {#if !running}
+                <button class="ghost" onclick={clear}>{t('cull.again')}</button>
+              {/if}
+              <button class="ghost" onclick={csv} title={t('cull.csv')}>CSV</button>
+              <button class="develop" onclick={develop} disabled={running || app.busy}
+                      title={t('cull.developHint')}>{t('cull.develop')}</button>
             </div>
           </div>
 
-          <p class="summary">
-            {t('cull.summary', { picked: pickedCount, total: shown.length, groups: groups.length })}
-            <span>{t('cull.toggleHint')}</span>
-          </p>
-          <div class="flex flex-wrap gap-2.5">
-            <button onclick={develop} disabled={running || app.busy}>{t('cull.develop')}</button>
-            <button class="ghost" onclick={csv}>{t('cull.csv')}</button>
-            {#if !running}<button class="ghost" onclick={clear}>{t('cull.again')}</button>{/if}
+          <div class="tune">
+            <div class="ctl">
+              <span class="label" id="cull-weight">{t('cull.weight')}</span>
+              <div class="slide">
+                <span class="end">{t('cull.weight.technical')}</span>
+                <input type="range" min="0" max="1" step="0.05" bind:value={weight}
+                       aria-labelledby="cull-weight" />
+                <span class="end">{t('cull.weight.aesthetic')}</span>
+              </div>
+            </div>
+
+            <div class="ctl">
+              <span class="label" id="cull-keep">{t('cull.keep')}</span>
+              <div class="keep" role="group" aria-labelledby="cull-keep">
+                <div class="stepper">
+                  <button type="button" aria-label={t('cull.keep.less')}
+                          onclick={() => (keepValue = Math.max(1, keepValue - 1))}>−</button>
+                  <input type="number" min="1" max={keepMax} bind:value={keepValue}
+                         aria-labelledby="cull-keep" />
+                  <button type="button" aria-label={t('cull.keep.more')}
+                          onclick={() => (keepValue = Math.min(keepMax, keepValue + 1))}>+</button>
+                </div>
+                <div class="seg" role="radiogroup" aria-labelledby="cull-keep">
+                  <button type="button" role="radio" aria-checked={keepMode === 'count'}
+                          onclick={() => (keepMode = 'count')}>{t('cull.keep.count')}</button>
+                  <button type="button" role="radio" aria-checked={keepMode === 'percent'}
+                          onclick={() => (keepMode = 'percent')}>%</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="ctl">
+              <label class="switch" title={t('cull.burstsHint')}>
+                <input type="checkbox" role="switch" bind:checked={bursts} />
+                <span class="label">{t('cull.bursts')}</span>
+              </label>
+              <div class="slide" class:off={!bursts}>
+                <span class="end">{t('cull.similarity.loose')}</span>
+                <input type="range" min="0.6" max="0.95" step="0.01" disabled={!bursts}
+                       bind:value={similarity} aria-label={t('cull.similarity')} />
+                <span class="end">{t('cull.similarity.strict')}</span>
+              </div>
+            </div>
           </div>
-          <small class="hint">{t('cull.developHint')}</small>
         </section>
+
+        <p class="guide">
+          {t('cull.toggleHint')}
+          {#if notRaw > 0}<span class="warn">{t('cull.notRaw', { count: notRaw })}</span>{/if}
+        </p>
 
         <ul class="gallery">
           {#each ordered as group (group[0].uid)}
@@ -360,6 +384,7 @@
 <style lang="scss">
   @use '../../../styles/breakpoints' as *;
   @use '../../../styles/surfaces' as *;
+  @use '../../../styles/type' as *;
 
   /* The header as on the merge page: the name is the way home. */
   a.brand {
@@ -411,7 +436,6 @@
   .panel {
     @include surface;
     padding: 16px 18px;
-    h2 { margin: 0 0 12px; font-size: 15px; font-weight: 650; }
   }
 
   .status {
@@ -425,41 +449,137 @@
     div { height: 100%; background: var(--color-accent); transition: width .3s ease-out; }
   }
 
-  .choices {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 18px 36px; align-items: start;
-    @include phone { grid-template-columns: 1fr; }
-    /* The shared checkbox carries margins meant for a side panel. */
-    .check { margin: 0; }
+  /* -- the toolbar ------------------------------------------------------ */
+
+  .toolbar {
+    @include surface;
+    position: sticky; top: -22px; z-index: 4;
+    padding: 12px 16px 14px;
+    display: grid; gap: 12px;
+    box-shadow: 0 10px 24px -14px rgb(0 0 0 / 70%);
+    @include phone { top: -12px; padding: 10px 12px; gap: 10px; }
   }
 
-  .option {
-    display: grid; gap: 4px; align-content: start;
-    strong { font-size: 14px; font-weight: 600; }
-    &.off { opacity: .5; }
-    .row { display: flex; justify-content: space-between; align-items: baseline; }
-    .value { color: var(--color-muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
-    input[type='range'] { width: 100%; accent-color: var(--color-accent); }
-    .ends {
-      display: flex; justify-content: space-between;
-      color: var(--color-muted); font-size: 12px;
+  .head {
+    display: flex; align-items: center; gap: 12px;
+    @include phone { flex-wrap: wrap; gap: 8px; }
+  }
+  .tally {
+    margin: 0; display: flex; align-items: baseline; gap: 6px; min-width: 0;
+    font-size: 13.5px; color: var(--color-muted); font-variant-numeric: tabular-nums;
+    strong { font-size: 22px; font-weight: 650; color: var(--color-accent); line-height: 1; }
+  }
+  .actions {
+    margin-left: auto; display: flex; gap: 8px;
+    button { padding: 7px 14px; }
+    @include phone {
+      order: 3; width: 100%; margin-left: 0;
+      button { padding: 8px 12px; min-height: 40px; }
+      .develop { flex: 1; }
     }
   }
-  .keep {
-    display: flex; gap: 8px;
-    input, select {
-      min-height: 34px; padding: 4px 8px; border-radius: 8px; font: inherit; font-size: 14px;
-      background: var(--color-panel-2); color: var(--color-ink);
-      border: 1px solid var(--color-line);
-    }
-    input { width: 90px; font-variant-numeric: tabular-nums; }
-    select { width: auto; margin-top: 0; }
+  /* Phones only: the controls fold behind it. */
+  .adjust {
+    display: none; margin-left: auto; padding: 6px 12px; min-height: 36px; font-size: 13px;
+    &[aria-expanded='true'] { color: var(--color-ink); border-color: var(--color-accent); }
+    @include phone { display: inline-block; }
   }
 
-  .summary {
-    margin: 16px 0 12px; font-size: 14px;
-    span { margin-left: 6px; color: var(--color-muted); font-size: 13px; }
+  .tune {
+    display: grid; grid-template-columns: minmax(0, 1.3fr) auto minmax(0, 1.1fr);
+    gap: 0; padding-top: 12px; border-top: 1px solid var(--color-line);
+    @include narrow {
+      grid-template-columns: 1fr 1fr;
+      .ctl:first-child { grid-column: 1 / -1; border-bottom: 1px solid var(--color-line); }
+    }
+    @include phone {
+      display: none; grid-template-columns: 1fr;
+      .tuning & { display: grid; }
+      .ctl, .ctl:first-child { grid-column: auto; border-bottom: 1px solid var(--color-line); }
+      .ctl:last-child { border-bottom: 0; }
+    }
   }
-  .hint { display: block; margin-top: 10px; color: var(--color-muted); font-size: 12.5px; }
+  .ctl {
+    display: grid; gap: 6px; align-content: start; padding: 2px 18px 4px;
+    & + & { border-left: 1px solid var(--color-line); }
+    &:first-child { padding-left: 0; }
+    &:last-child { padding-right: 0; }
+    @include narrow {
+      padding: 8px 14px;
+      &:first-child { padding: 0 0 10px; border-left: 0; }
+      &:nth-child(2) { padding-left: 0; border-left: 0; }
+    }
+    @include phone {
+      padding: 10px 0 !important; border-left: 0 !important;
+    }
+  }
+  .label { @include section-label; }
+
+  .slide {
+    display: flex; align-items: center; gap: 10px;
+    &.off { opacity: .4; }
+    input[type='range'] { flex: 1; min-width: 60px; margin: 0; }
+    .end { font-size: 12px; color: var(--color-muted); white-space: nowrap; }
+  }
+
+  .keep { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .stepper, .seg {
+    display: inline-flex; border: 1px solid var(--color-line); border-radius: 8px;
+    overflow: hidden; background: var(--color-panel-2);
+    button {
+      padding: 0 11px; min-height: 32px; border-radius: 0; font-weight: 500;
+      background: transparent; color: var(--color-muted);
+      @include phone { min-height: 40px; padding: 0 14px; }
+      &:hover { color: var(--color-ink); filter: none; }
+    }
+  }
+  .stepper {
+    button { font-size: 16px; line-height: 1; }
+    input {
+      width: 52px; border: 0; border-inline: 1px solid var(--color-line); border-radius: 0;
+      background: transparent; color: var(--color-ink); text-align: center;
+      font: inherit; font-size: 14px; font-variant-numeric: tabular-nums;
+      appearance: textfield; -moz-appearance: textfield;
+      &::-webkit-inner-spin-button, &::-webkit-outer-spin-button { appearance: none; margin: 0; }
+    }
+  }
+  .seg button {
+    font-size: 12.5px;
+    & + button { border-left: 1px solid var(--color-line); }
+    &[aria-checked='true'] {
+      color: var(--color-accent-ink); background: var(--color-accent);
+    }
+  }
+
+  /* A switch rather than a checkbox: it turns a behaviour on. */
+  .switch {
+    display: flex; align-items: center; gap: 8px; cursor: pointer; width: fit-content;
+    input {
+      appearance: none; margin: 0; flex: 0 0 auto; cursor: pointer;
+      width: 28px; height: 16px; border-radius: 999px; position: relative;
+      background: var(--color-line); transition: background .15s;
+      &::before {
+        content: ''; position: absolute; top: 2px; left: 2px;
+        width: 12px; height: 12px; border-radius: 50%;
+        background: var(--color-ink); transition: transform .15s;
+      }
+      &:checked { background: var(--color-accent); }
+      &:checked::before { transform: translateX(12px); background: var(--color-accent-ink); }
+      &:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+      /* Big enough for a thumb. */
+      @include phone {
+        width: 40px; height: 24px;
+        &::before { top: 3px; left: 3px; width: 18px; height: 18px; }
+        &:checked::before { transform: translateX(16px); }
+      }
+    }
+    @include phone { min-height: 40px; }
+  }
+
+  .guide {
+    margin: -6px 2px 0; font-size: 12.5px; color: var(--color-muted);
+    .warn { margin-left: 8px; color: var(--color-accent); }
+  }
 
   button.small { padding: 4px 10px; min-height: 0; font-size: 12px; }
 

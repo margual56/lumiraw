@@ -16,6 +16,16 @@ python -m http.server -d web/build 8790
 Needs Node. Rebuilding the wasm module also needs Rust with the
 `wasm32-unknown-unknown` target; otherwise the committed one is used.
 
+## Releasing
+
+Nothing to do by hand. Once CI passes on main, the Release workflow bumps the
+version everywhere, rebuilds the wasm modules, commits that to main, tags it
+and publishes a GitHub release. The size of the bump comes from the commit or
+pull request titles since the last release: `feat:` is minor, `feat!:` (or a
+`BREAKING CHANGE:` line) is major, anything else is a patch. Pushes that only
+touch docs, CI config or `tools/` aren't released. "Run workflow" on the
+Release workflow forces one, with the size chosen there.
+
 ## Layout
 
 - `core/` - the pipeline

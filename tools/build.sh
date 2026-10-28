@@ -2,6 +2,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# --wasm: rebuild the two modules and stop, for a release, where the version
+# they carry has to change with everything else.
+if [[ "${1:-}" == "--wasm" ]]; then
+  cargo build --release --manifest-path core/Cargo.toml -p darkroom -p critic --target wasm32-unknown-unknown
+  cp core/target/wasm32-unknown-unknown/release/darkroom.wasm web/src/lib/wasm/darkroom.wasm
+  cp core/target/wasm32-unknown-unknown/release/critic.wasm web/src/lib/wasm/critic.wasm
+  exit 0
+fi
+
 if [[ "${1:-}" == "--db" ]]; then
   python tools/bake_lensfun.py /usr/share/lensfun/version_1 web/src/lib/wasm/lensfun.json
   python tools/split_lensfun.py

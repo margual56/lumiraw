@@ -3,7 +3,7 @@ import { SITE } from '$lib/brand.js';
 
 export const prerender = true;
 
-const PAGES = ['/', '/guide', '/about', '/cameras', '/merge', '/cull', '/source'];
+const PAGES = ['/', '/guide', '/about', '/cameras', '/merge', '/cull', '/calculators', '/source'];
 
 const address = (path, lang) =>
   SITE + (lang === 'es' ? '/es' : '') + (path === '/' ? (lang === 'es' ? '' : '/') : path);

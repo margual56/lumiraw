@@ -69,6 +69,7 @@ jobs:
           node tools/check-histogram.mjs
           node tools/check-critic.mjs
           node tools/check-cull.mjs
+          node tools/check-calc.mjs
 
   release:
     name: Versions agree

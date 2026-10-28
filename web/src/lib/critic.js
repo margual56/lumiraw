@@ -2,6 +2,7 @@
  *  few workers at once. */
 
 import * as api from './api.js';
+import { measure } from './histogram.js';
 import { RAW_ACCEPT } from './format.js';
 import criticUrl from './wasm/critic.wasm?url';
 import aestheticUrl from './wasm/critic/nima-aesthetic.bin?url';
@@ -109,23 +110,27 @@ async function squash(source) {
 
 /**
  * Everything the scoring needs from a file: a picture for the grid (an
- * object URL the caller revokes), the pixels to judge, and when it was taken.
+ * object URL the caller revokes), the pixels to judge, when it was taken, and
+ * how it is exposed. Every picture is measured at the same size, so their
+ * sharpness can be compared.
  */
 export async function prepare(file) {
   if (isRaw(file.name)) {
     const out = await api.preview(file, SHOWN);
     return { thumb: URL.createObjectURL(out.image), pixels: await squash(out.image),
-             captured: out.captured_s || 0 };
+             captured: out.captured_s || 0, measures: out.measures };
   }
   // The browser decodes what it can show; orientation comes from the EXIF.
   const full = await createImageBitmap(file, { imageOrientation: 'from-image' });
   const scale = Math.min(1, SHOWN / Math.max(full.width, full.height));
   const canvas = new OffscreenCanvas(Math.round(full.width * scale), Math.round(full.height * scale));
-  canvas.getContext('2d').drawImage(full, 0, 0, canvas.width, canvas.height);
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(full, 0, 0, canvas.width, canvas.height);
   full.close();
+  const measures = measure(ctx.getImageData(0, 0, canvas.width, canvas.height));
   const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
   const [pixels, captured] = await Promise.all([squash(canvas), api.captured(file).catch(() => 0)]);
-  return { thumb: URL.createObjectURL(blob), pixels, captured };
+  return { thumb: URL.createObjectURL(blob), pixels, captured, measures };
 }
 
 /** Calls waiting for a worker to come free. */
@@ -166,7 +171,7 @@ export async function scoreAll(files, { oneach, stopped = () => false }) {
       continue;
     }
     const job = judge(prepared.pixels)
-      .then((score) => oneach(index, { ...score, thumb: prepared.thumb,
+      .then((score) => oneach(index, { ...score, ...prepared.measures, thumb: prepared.thumb,
                                        captured: prepared.captured }))
       .catch((error) => { URL.revokeObjectURL(prepared.thumb); oneach(index, null, error); })
       .finally(() => inFlight.delete(job));

@@ -1,5 +1,5 @@
 /** Does the gallery ranking group bursts and pick the right frames? */
-import { blend, centred, groupBursts, keepCount, pick, toCsv } from '../web/src/lib/cull.js';
+import { blend, centred, groupBursts, keepCount, pick, relativeSharpness, toCsv } from '../web/src/lib/cull.js';
 
 let failures = 0;
 const check = (what, ok) => {
@@ -13,7 +13,8 @@ const DIM = 16;
 const feature = (scene, wobble = 0) => Float32Array.from({ length: DIM },
   (_, i) => 1 + (i === scene ? 5 : 0) + (i === (scene + 7) % DIM ? wobble : 0));
 const item = (name, scene, captured, aesthetic, technical, wobble = 0) =>
-  ({ name, captured, aesthetic, technical, feature: feature(scene, wobble) });
+  ({ name, captured, aesthetic, technical, feature: feature(scene, wobble),
+     blown: 0.002, crushed: 0.03, brightness: 0.45, sharpness: 100 + aesthetic * 10 });
 
 const gallery = [
   item('IMG_0010.CR3', 1, 1000, 5.0, 6.0),
@@ -58,6 +59,21 @@ check('the CSV has a header and a row per photograph', csv.length === gallery.le
 check('the CSV is best first', csv[1].startsWith('IMG_0014.CR3,'));
 check('names with commas are quoted',
   toCsv([[{ ...gallery[0], name: 'a, "b".jpg' }]], new Set(), 0.5).includes('"a, ""b"".jpg"'));
+
+const sharp = relativeSharpness(gallery);
+check('relative sharpness tops out at 100', Math.max(...sharp.values()) === 100);
+check('relative sharpness keeps the order',
+  sharp.get(gallery[3]) > sharp.get(gallery[0]) && sharp.get(gallery[0]) > sharp.get(gallery[5]));
+const crowd = Array.from({ length: 30 }, (_, i) => ({ ...gallery[0], sharpness: 100 + i }));
+const freak = [...crowd, { ...gallery[0], sharpness: 1e6 }];
+check('in a big gallery one freak does not flatten the rest',
+  relativeSharpness(freak).get(crowd[29]) === 100 && relativeSharpness(freak).get(crowd[0]) > 70);
+const header = csv[0].split(',');
+check('the CSV carries the exposure columns',
+  ['blown_pct', 'black_pct', 'brightness_pct', 'sharpness'].every((k) => header.includes(k)));
+const row = csv[1].split(',');
+check('exposure shares are percentages', row[header.indexOf('black_pct')] === '3.00'
+  && row[header.indexOf('blown_pct')] === '0.20');
 
 if (failures) {
   console.error(`\n${failures} check(s) failed`);

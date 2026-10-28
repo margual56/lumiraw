@@ -22,6 +22,49 @@ export function analyse(image) {
   return { r, g, b, l, blown: blown / n, crushed: crushed / n };
 }
 
+/**
+ * How a picture is exposed and how sharp it is, for judging it rather than
+ * drawing it: the share of pixels `blown` and `crushed` (0..1), the mean
+ * `brightness` (luminance, 0..1), and `sharpness`, the variance of the
+ * Laplacian. That is the usual focus measure; it is taken on a copy halved in
+ * each direction so that pixel noise does not pass for detail, and it only
+ * means anything compared with other pictures measured at the same size.
+ */
+export function measure(image) {
+  const { data, width, height } = image;
+  const { blown, crushed } = analyse(image);
+  const w = width >> 1, h = height >> 1;
+  const luma = new Float32Array(w * h);
+  let sum = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let v = 0;
+      for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+        const i = ((2 * y + dy) * width + 2 * x + dx) * 4;
+        v += 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+      }
+      luma[y * w + x] = v / 4;
+      sum += v / 4;
+    }
+  }
+  let n = 0, mean = 0, square = 0;
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      const lap = luma[i - 1] + luma[i + 1] + luma[i - w] + luma[i + w] - 4 * luma[i];
+      n++;
+      mean += lap;
+      square += lap * lap;
+    }
+  }
+  mean = n ? mean / n : 0;
+  return {
+    blown, crushed,
+    brightness: w * h ? sum / (w * h) / 255 : 0,
+    sharpness: n ? square / n - mean * mean : 0,
+  };
+}
+
 /** The clipping overlay: red where a channel is blown, blue where all three
  *  are black, transparent elsewhere. Same size as the picture read. */
 export function clipMask(image, out = new ImageData(image.width, image.height)) {

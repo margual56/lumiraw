@@ -1,6 +1,10 @@
 /** Ranking a scored gallery: bursts grouped, the best of each picked. Pure
  *  functions over plain objects, so `tools/check-cull.mjs` can run them. */
 
+/** A share of blown or black pixels worth pointing out. A few specular
+ *  highlights or a deep shadow stay under it; a burnt sky does not. */
+export const CLIPPED = 0.01;
+
 /** One mark from the two networks', `weight` of it the aesthetic one. */
 export const blend = (item, weight) => weight * item.aesthetic + (1 - weight) * item.technical;
 
@@ -26,6 +30,20 @@ export function centred(items) {
     out.set(it, v);
   }
   return out;
+}
+
+/**
+ * Each item's sharpness as a share of the gallery's sharpest, 0..100. The
+ * Laplacian's variance has no scale of its own, so it is only told against
+ * the other photographs. In a gallery of twenty or more the 95th percentile
+ * stands in for the top, so that one freak does not flatten the rest; in a
+ * smaller one there is no telling a freak from the sharpest.
+ */
+export function relativeSharpness(items) {
+  const values = items.map((it) => it.sharpness).filter((v) => v > 0).sort((a, b) => a - b);
+  const at = values.length >= 20 ? Math.floor((values.length - 1) * 0.95) : values.length - 1;
+  const top = values[at] || 1;
+  return new Map(items.map((it) => [it, Math.min(100, (100 * (it.sharpness || 0)) / top)]));
 }
 
 const dot = (a, b) => {
@@ -77,14 +95,18 @@ export function pick(groups, weight, keep, total) {
 
 const field = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
 
-/** The ranking as CSV, one row per photograph, best first. */
-export function toCsv(groups, picked, weight) {
+/** The ranking as CSV, one row per photograph, best first. Shares are
+ *  percentages; sharpness is against the gallery's sharpest (100). */
+export function toCsv(groups, picked, weight, sharp = relativeSharpness(groups.flat())) {
   const rows = groups.flatMap((g, n) => g.map((it) => ({ it, group: n + 1 })))
     .sort((a, b) => blend(b.it, weight) - blend(a.it, weight));
-  const lines = [['file', 'group', 'aesthetic', 'technical', 'score', 'picked'].join(',')];
+  const lines = [['file', 'group', 'aesthetic', 'technical', 'score', 'blown_pct', 'black_pct',
+                  'brightness_pct', 'sharpness', 'picked'].join(',')];
+  const pct = (v) => (v == null ? '' : (v * 100).toFixed(2));
   for (const { it, group } of rows) {
     lines.push([field(it.name), group, it.aesthetic.toFixed(3), it.technical.toFixed(3),
-                blend(it, weight).toFixed(3), picked.has(it) ? 1 : 0].join(','));
+                blend(it, weight).toFixed(3), pct(it.blown), pct(it.crushed), pct(it.brightness),
+                (sharp.get(it) ?? 0).toFixed(1), picked.has(it) ? 1 : 0].join(','));
   }
   return `${lines.join('\n')}\n`;
 }

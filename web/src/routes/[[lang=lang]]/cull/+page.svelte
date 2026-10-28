@@ -7,7 +7,7 @@
   import Meta from '$lib/components/Meta.svelte';
   import * as api from '$lib/api.js';
   import * as critic from '$lib/critic.js';
-  import { blend, centred, groupBursts, pick, toCsv } from '$lib/cull.js';
+  import { blend, centred, groupBursts, pick, relativeSharpness, toCsv, CLIPPED } from '$lib/cull.js';
   import { t, n, localized } from '$lib/i18n.svelte.js';
   import { errorText } from '$lib/format.js';
   import { NAME } from '$lib/brand.js';
@@ -69,6 +69,7 @@
     ? groupBursts(shown, { similarity, units })
     : shown.map((it) => [it]));
   const ranking = $derived(pick(groups, weight, { mode: keepMode, value: keepValue }, shown.length));
+  const sharp = $derived(relativeSharpness(shown));
   const isPicked = (it) => (overrides.has(it.uid) ? overrides.get(it.uid) : ranking.picked.has(it));
   /** Every group, its best frame first, the best groups first. */
   const ordered = $derived([...ranking.groups]
@@ -158,7 +159,7 @@
 
   function csv() {
     const picked = new Set(shown.filter(isPicked));
-    const blob = new Blob([toCsv(ranking.groups, picked, weight)], { type: 'text/csv' });
+    const blob = new Blob([toCsv(ranking.groups, picked, weight, sharp)], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `${NAME.toLowerCase()}-ranking.csv`;
@@ -180,6 +181,8 @@
   }
 
   const mark = (v) => n(v, 1);
+  /** A share as a percentage, with a decimal while it is small. */
+  const share = (v) => `${n((v ?? 0) * 100, v < 0.1 ? 1 : 0)} %`;
 </script>
 
 <Meta title={t('seo.cull.title')} description={t('seo.cull.description')} path="/cull" />
@@ -329,6 +332,16 @@
                                                { a: mark(it.aesthetic), t: mark(it.technical) })}>
                     {t('cull.marks', { a: mark(it.aesthetic), t: mark(it.technical) })}
                   </span>
+                </div>
+                <div class="measures" title={t('cull.measuresTitle',
+                                               { brightness: share(it.brightness) })}>
+                  <span class:warn={it.blown >= CLIPPED}>
+                    {t('cull.blown', { share: share(it.blown) })}
+                  </span>
+                  <span class:warn={it.crushed >= CLIPPED}>
+                    {t('cull.black', { share: share(it.crushed) })}
+                  </span>
+                  <span>{t('cull.sharp', { value: n(sharp.get(it) ?? 0, 0) })}</span>
                 </div>
                 {#if nth === 0 && group.length > 1}
                   <button class="ghost small more" onclick={() => unfold(it)}>
@@ -483,6 +496,14 @@
       color: var(--color-ink);
     }
     .marks { color: var(--color-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  }
+  /* How it is exposed and how sharp it is, under the marks; a share worth
+     a second look in the accent. */
+  .measures {
+    display: flex; flex-wrap: wrap; gap: 2px 10px; margin-top: -3px;
+    font-size: 11.5px; color: var(--color-muted); font-variant-numeric: tabular-nums;
+    cursor: help;
+    .warn { color: var(--color-accent); }
   }
   .more { justify-self: start; }
 </style>

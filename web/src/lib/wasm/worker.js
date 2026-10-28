@@ -17,6 +17,7 @@ const session = {
 
 import { stamp } from './stamp.js';
 import { withExif } from './webp.js';
+import { measure } from '../histogram.js';
 
 // Imported rather than fetched from a fixed path so the bundler fingerprints
 // them.
@@ -323,15 +324,17 @@ async function thumbnail({ buffer, size }) {
   return { image: await toBlob(pixels, w, h, 'image/jpeg', 0.85), width: w, height: h };
 }
 
-/** A picture of a raw big enough to score, and when it was taken. Like the
- *  thumbnail, it leaves the photograph being developed alone. */
+/** A picture of a raw big enough to score, when it was taken, and how it is
+ *  exposed, measured before the JPEG for the page can blur any of it. Like
+ *  the thumbnail, it leaves the photograph being developed alone. */
 async function preview({ buffer, size }) {
   const rc = withBytes(new Uint8Array(buffer), (p, n) => wasm.ar_preview(p, n, size ?? 512));
   const info = readJson();
   if (rc !== 0) fail(info);
   const { w, h, pixels } = primary();
   return { image: await toBlob(pixels, w, h, 'image/jpeg', 0.85), width: w, height: h,
-           captured_s: info.captured_s ?? 0 };
+           captured_s: info.captured_s ?? 0,
+           measures: measure({ data: pixels, width: w, height: h }) };
 }
 
 /** When any file the EXIF reader knows says it was taken. */

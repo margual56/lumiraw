@@ -3,7 +3,7 @@
    *  moment picked and handed to the developer as a roll. */
   import { goto } from '$app/navigation';
   import Progress from '$lib/components/Progress.svelte';
-  import LocalePicker from '$lib/components/LocalePicker.svelte';
+  import SiteHeader from '$lib/components/SiteHeader.svelte';
   import Meta from '$lib/components/Meta.svelte';
   import * as api from '$lib/api.js';
   import * as critic from '$lib/critic.js';
@@ -247,17 +247,7 @@
 <Meta title={t('seo.cull.title')} description={t('seo.cull.description')} path="/cull" />
 
 <div class="shell">
-  <header>
-    <a class="brand" href={localized('/')}>
-      {NAME}
-      <span>
-        <span class="tagline">{t('cull.title')}</span>
-        {#if app.version}<span class="ver">v{app.version}</span>{/if}
-      </span>
-    </a>
-    <a class="back" href={localized('/')}>{t('cull.back')}</a>
-    <LocalePicker />
-  </header>
+  <SiteHeader tagline={t('cull.title')} />
   <Progress />
 
   <main>
@@ -508,25 +498,7 @@
   @use '../../../styles/surfaces' as *;
   @use '../../../styles/type' as *;
 
-  /* The header as on the merge page: the name is the way home. */
-  a.brand {
-    color: inherit; text-decoration: none;
-    &:hover {
-      color: var(--color-accent);
-      .tagline, .ver { color: var(--color-muted); }
-    }
-  }
 
-  header {
-    .back {
-      margin-left: auto; color: var(--color-muted); text-decoration: none; font-size: 13px;
-      &:hover { color: var(--color-ink); }
-      @include phone {
-        order: 3; width: 100%; margin-left: 0; padding: 10px 0 4px; font-size: 14px;
-      }
-    }
-    :global(.picker) { margin-left: 0; @include phone { margin-left: auto; } }
-  }
 
   /* The words keep a reading width while the gallery under them is wide. */
   .intro { max-width: 880px; }

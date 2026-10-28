@@ -3,12 +3,11 @@
    *  stack (averaged, the median, the brightest, or the sharpest of each part). */
   import { goto } from '$app/navigation';
   import Progress from '$lib/components/Progress.svelte';
-  import LocalePicker from '$lib/components/LocalePicker.svelte';
+  import SiteHeader from '$lib/components/SiteHeader.svelte';
   import Meta from '$lib/components/Meta.svelte';
   import * as api from '$lib/api.js';
   import { t, n, signed, shutter, loose, localized } from '$lib/i18n.svelte.js';
   import { errorText, RAW_ACCEPT } from '$lib/format.js';
-  import { NAME } from '$lib/brand.js';
   import { app, resetForNewPhoto, FRAME } from '$lib/state.svelte.js';
 
   /** How the frames are combined. The exposure merge decodes each frame as it
@@ -308,17 +307,7 @@
 <Meta title={t('seo.merge.title')} description={t('seo.merge.description')} path="/merge" />
 
 <div class="shell">
-  <header>
-    <a class="brand" href={localized('/')}>
-      {NAME}
-      <span>
-        <span class="tagline">{t('merge.title')}</span>
-        {#if app.version}<span class="ver">v{app.version}</span>{/if}
-      </span>
-    </a>
-    <a class="back" href={localized('/')}>{t('merge.back')}</a>
-    <LocalePicker />
-  </header>
+  <SiteHeader tagline={t('merge.title')} />
   <Progress />
 
   <main>
@@ -593,28 +582,7 @@
   @use '../../../styles/breakpoints' as *;
   @use '../../../styles/surfaces' as *;
 
-  /* The name is the way home, which is where anyone looks for it. */
-  a.brand {
-    color: inherit; text-decoration: none;
-    &:hover {
-      color: var(--color-accent);
-      .tagline, .ver { color: var(--color-muted); }
-    }
-  }
 
-  header {
-    /* The way back and the language sit together at the right, so the header
-       reads as a name on one side and controls on the other. */
-    .back {
-      margin-left: auto; color: var(--color-muted); text-decoration: none; font-size: 13px;
-      &:hover { color: var(--color-ink); }
-      /* Its own row on a phone, under the name and the language, and tall enough to hit. */
-      @include phone {
-        order: 3; width: 100%; margin-left: 0; padding: 10px 0 4px; font-size: 14px;
-      }
-    }
-    :global(.picker) { margin-left: 0; @include phone { margin-left: auto; } }
-  }
 
   .lead { margin: 0; font-size: 15px; line-height: 1.6; color: var(--color-muted); }
 

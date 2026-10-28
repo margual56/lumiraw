@@ -59,8 +59,9 @@ export function address(path, locale = i18n.locale) {
 
 /** A page's address with its language taken off: the English form. */
 export function unlocalized(pathname) {
-  const rest = pathname.slice(base.length).replace(/^\/es(?=\/|$)/, '');
-  return rest.replace(/\/$/, '') || '/';
+  // A host that serves the prerendered files by name has /cull.html for /cull.
+  const page = pathname.slice(base.length).replace(/(\/index)?\.html$/, '');
+  return page.replace(/^\/es(?=\/|$)/, '').replace(/\/$/, '') || '/';
 }
 
 const dictionary = () =>

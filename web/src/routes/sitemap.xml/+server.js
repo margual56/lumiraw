@@ -1,9 +1,9 @@
 // Every page worth finding, in both languages, for search engines.
 import { SITE } from '$lib/brand.js';
+import { PAGES } from '$lib/pages.js';
 
 export const prerender = true;
 
-const PAGES = ['/', '/guide', '/about', '/cameras', '/merge', '/cull', '/calculators', '/source'];
 
 const address = (path, lang) =>
   SITE + (lang === 'es' ? '/es' : '') + (path === '/' ? (lang === 'es' ? '' : '/') : path);

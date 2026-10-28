@@ -5,31 +5,99 @@
  *  highlights or a deep shadow stay under it; a burnt sky does not. */
 export const CLIPPED = 0.01;
 
+/** Every lever, as the page starts. */
+export const DEFAULTS = Object.freeze({
+  /** How much of the mark is the aesthetic network's, the rest technical. */
+  weight: 0.6,
+  /** Within a burst, how much the sharpest frame is favoured. */
+  focus: 0.5,
+  /** How much blown and crushed areas cost. */
+  faults: 0.5,
+  /** How much the picks are kept from looking like each other. */
+  variety: 0.3,
+  /** Seconds between frames that can still be one burst. */
+  gap: 4,
+  /** How alike two frames must look to be one burst. */
+  similarity: 0.8,
+});
+
 /** One mark from the two networks', `weight` of it the aesthetic one. */
 export const blend = (item, weight) => weight * item.aesthetic + (1 - weight) * item.technical;
 
 /**
- * Every item's features with the gallery's mean taken away, at unit length.
- * The raw features are all positive and every pair of photographs looks
- * alike in them; what one frame has that the rest of the gallery does not is
- * what tells a burst apart.
+ * Marks lost to exposure faults, at full strength: a blown area costs more
+ * than a black one, since a night sky or a silhouette is often meant and a
+ * burnt sky seldom is. Small amounts are free, and no photo loses more than
+ * three marks.
  */
-export function centred(items) {
+export function exposurePenalty(item, faults) {
+  const blown = Math.max(0, (item.blown ?? 0) - 0.005) * 20;
+  const black = Math.max(0, (item.crushed ?? 0) - 0.05) * 4;
+  return faults * Math.min(3, blown + black);
+}
+
+/** A photo's mark once its exposure faults are taken off. */
+export const scoreOf = (item, levers) => blend(item, levers.weight) - exposurePenalty(item, levers.faults);
+
+/**
+ * Within a burst, marks lost for being softer than its sharpest frame. The
+ * Laplacian's variance goes with the square of the detail, so it is the
+ * ratio's logarithm that counts: a quarter of the sharpest's variance (half
+ * its detail) costs three marks at full strength, never more.
+ */
+export function focusPenalty(item, sharpest, focus) {
+  if (!(sharpest > 0) || focus <= 0) return 0;
+  const ratio = Math.max(item.sharpness ?? 0, 1e-9) / sharpest;
+  return focus * Math.min(3, -1.5 * Math.log2(Math.min(1, ratio)));
+}
+
+/**
+ * How alike two photos look: the cosine between their features once the
+ * gallery's mean is taken away. The raw features are all positive and every
+ * pair of photographs looks alike in them; what one frame has that the rest
+ * of the gallery does not is what tells a burst apart.
+ *
+ * Expanding the cosine leaves the dot product of the raw features as the
+ * only part that needs both photos, and that does not change as the gallery
+ * grows, so it is worked out once per pair and kept in `cache` (a WeakMap,
+ * shared between calls). Everything else is one pass over the gallery.
+ */
+export function likeness(items, cache = new WeakMap()) {
   const scored = items.filter((it) => it.feature);
-  if (!scored.length) return new Map();
+  if (!scored.length) return () => 0;
   const len = scored[0].feature.length;
-  const mean = new Float32Array(len);
-  for (const it of scored) for (let i = 0; i < len; i += 1) mean[i] += it.feature[i] / scored.length;
-  const out = new Map();
+  const mean = new Float64Array(len);
   for (const it of scored) {
-    const v = new Float32Array(len);
-    let norm = 0;
-    for (let i = 0; i < len; i += 1) { v[i] = it.feature[i] - mean[i]; norm += v[i] * v[i]; }
-    norm = Math.sqrt(norm) || 1;
-    for (let i = 0; i < len; i += 1) v[i] /= norm;
-    out.set(it, v);
+    const f = it.feature;
+    for (let i = 0; i < len; i += 1) mean[i] += f[i];
   }
-  return out;
+  for (let i = 0; i < len; i += 1) mean[i] /= scored.length;
+  let mm = 0;
+  for (let i = 0; i < len; i += 1) mm += mean[i] * mean[i];
+
+  const raw = (a, b) => {
+    let row = cache.get(a);
+    if (row?.has(b)) return row.get(b);
+    const other = cache.get(b);
+    if (other?.has(a)) return other.get(a);
+    let s = 0;
+    const fa = a.feature, fb = b.feature;
+    for (let i = 0; i < len; i += 1) s += fa[i] * fb[i];
+    if (!row) cache.set(a, (row = new Map()));
+    row.set(b, s);
+    return s;
+  };
+  const towardMean = new Map();
+  for (const it of scored) {
+    let s = 0;
+    for (let i = 0; i < len; i += 1) s += it.feature[i] * mean[i];
+    towardMean.set(it, s);
+  }
+  const norm = (it) => Math.sqrt(Math.max(1e-12, raw(it, it) - 2 * towardMean.get(it) + mm));
+  return (a, b) => {
+    if (!towardMean.has(a) || !towardMean.has(b)) return 0;
+    return (raw(a, b) - towardMean.get(a) - towardMean.get(b) + mm) / (norm(a) * norm(b));
+  };
 }
 
 /**
@@ -46,35 +114,57 @@ export function relativeSharpness(items) {
   return new Map(items.map((it) => [it, Math.min(100, (100 * (it.sharpness || 0)) / top)]));
 }
 
-const dot = (a, b) => {
-  let s = 0;
-  for (let i = 0; i < a.length; i += 1) s += a[i] * b[i];
-  return s;
-};
-
 /** Shooting order: by when, then by name as a camera numbers its files. */
 const byShot = (a, b) => (a.captured || 0) - (b.captured || 0)
   || a.name.localeCompare(b.name, undefined, { numeric: true });
 
+/** Photos without a time are all compared with each other up to this many;
+ *  past it, each only with its neighbours in name order. */
+const ALL_PAIRS = 600;
+const NEIGHBOURS = 40;
+
 /**
- * Bursts, in shooting order: a frame joins the one before it when it was
- * taken within `gap` seconds (when both say) and looks like it. Each group is
- * an array of items; a lone photograph is a group of one.
+ * Bursts, in shooting order. Two frames are one burst when they were taken
+ * within `gap` seconds of each other and look alike, and a burst is every
+ * frame joined to it that way, so a duplicate does not have to sit next to
+ * its twin. Photos that do not say when they were taken are matched on
+ * likeness alone. Each group is an array of items; a lone photo is a group
+ * of one.
  */
-export function groupBursts(items, { gap = 4, similarity = 0.8, units = centred(items) } = {}) {
-  const groups = [];
-  let last = null;
-  for (const it of [...items].filter((x) => units.has(x)).sort(byShot)) {
-    const timed = it.captured && last?.captured;
-    const close = !timed || Math.abs(it.captured - last.captured) <= gap;
-    if (last && close && dot(units.get(it), units.get(last)) >= similarity) {
-      groups[groups.length - 1].push(it);
-    } else {
-      groups.push([it]);
+export function groupBursts(items, { gap = DEFAULTS.gap, similarity = DEFAULTS.similarity,
+                                     like = likeness(items) } = {}) {
+  const sorted = items.filter((it) => it.feature).sort(byShot);
+  const parent = sorted.map((_, i) => i);
+  const find = (i) => {
+    while (parent[i] !== i) i = parent[i] = parent[parent[i]];
+    return i;
+  };
+  const join = (i, j) => {
+    if (like(sorted[i], sorted[j]) < similarity) return;
+    const [a, b] = [find(i), find(j)];
+    if (a !== b) parent[Math.max(a, b)] = Math.min(a, b);
+  };
+  const untimed = [];
+  const timed = [];
+  sorted.forEach((it, i) => (it.captured ? timed : untimed).push(i));
+  // Sorted by time, so each frame only looks forward until the gap is passed.
+  for (let k = 0; k < timed.length; k += 1) {
+    for (let l = k + 1; l < timed.length; l += 1) {
+      if (sorted[timed[l]].captured - sorted[timed[k]].captured > gap) break;
+      join(timed[k], timed[l]);
     }
-    last = it;
   }
-  return groups;
+  const reach = untimed.length <= ALL_PAIRS ? untimed.length : NEIGHBOURS;
+  for (let k = 0; k < untimed.length; k += 1) {
+    for (let l = k + 1; l < Math.min(untimed.length, k + 1 + reach); l += 1) join(untimed[k], untimed[l]);
+  }
+  const groups = new Map();
+  sorted.forEach((it, i) => {
+    const root = find(i);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(it);
+  });
+  return [...groups.values()];
 }
 
 /** How many photographs to keep: a count, or a share of all of them. */
@@ -84,29 +174,81 @@ export function keepCount(total, { mode, value }) {
 }
 
 /**
- * The picks: the best frame of each group, then the best of those. Returns
- * the set of picked items and each group's best frame first.
+ * The picks. Within each group the frames are ranked by their mark less
+ * what their exposure and (against the group's sharpest) their focus cost;
+ * the first of each leads it. Then the leaders are taken one at a time, best
+ * first, each one's mark lowered by how much it looks like a pick already
+ * made, up to two marks at `variety` 1, so that five views of one scene do
+ * not crowd out everything else.
+ *
+ * Returns the picked set; every group with its best frame first, picks first
+ * in the order they were chosen and the rest best first; and each item's
+ * marks: `score` (the mark less exposure faults), `focus` (what softness cost
+ * it in its group) and `rank` (what it was ranked by in its group).
  */
-export function pick(groups, weight, keep, total) {
-  const ranked = groups.map((g) => [...g].sort((a, b) => blend(b, weight) - blend(a, weight)));
-  const leaders = ranked.map((g) => g[0]).sort((a, b) => blend(b, weight) - blend(a, weight));
-  return { picked: new Set(leaders.slice(0, keepCount(total, keep))), groups: ranked };
+export function pick(groups, levers, keep, total, like = () => 0) {
+  const marks = new Map();
+  const ranked = groups.map((group) => {
+    const sharpest = group.length > 1 ? Math.max(...group.map((it) => it.sharpness ?? 0)) : 0;
+    for (const it of group) {
+      const score = scoreOf(it, levers);
+      const focus = group.length > 1 ? focusPenalty(it, sharpest, levers.focus) : 0;
+      marks.set(it, { score, focus, rank: score - focus });
+    }
+    return [...group].sort((a, b) => marks.get(b).rank - marks.get(a).rank);
+  });
+  const lead = (group) => marks.get(group[0]).score;
+  const pool = [...ranked].sort((a, b) => lead(b) - lead(a));
+  const count = Math.min(pool.length, keepCount(total, keep));
+
+  const chosen = [];
+  if (levers.variety > 0) {
+    // How like a pick each remaining leader is, updated as picks are made.
+    const closest = new Map(pool.map((g) => [g, 0]));
+    while (chosen.length < count) {
+      let best = null;
+      let bestValue = -Infinity;
+      for (const g of pool) {
+        if (!closest.has(g)) continue;
+        const value = lead(g) - 2 * levers.variety * closest.get(g);
+        if (value > bestValue) { best = g; bestValue = value; }
+      }
+      chosen.push(best);
+      closest.delete(best);
+      for (const [g, near] of closest) {
+        closest.set(g, Math.max(near, like(best[0], g[0])));
+      }
+    }
+  } else {
+    chosen.push(...pool.slice(0, count));
+  }
+  const taken = new Set(chosen);
+  return {
+    picked: new Set(chosen.map((g) => g[0])),
+    groups: [...chosen, ...pool.filter((g) => !taken.has(g))],
+    marks,
+  };
 }
 
 const field = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
 
-/** The ranking as CSV, one row per photograph, best first. Shares are
- *  percentages; sharpness is against the gallery's sharpest (100). */
-export function toCsv(groups, picked, weight, sharp = relativeSharpness(groups.flat())) {
-  const rows = groups.flatMap((g, n) => g.map((it) => ({ it, group: n + 1 })))
-    .sort((a, b) => blend(b.it, weight) - blend(a.it, weight));
-  const lines = [['file', 'group', 'aesthetic', 'technical', 'score', 'blown_pct', 'black_pct',
-                  'brightness_pct', 'sharpness', 'picked'].join(',')];
+/** The ranking as CSV, one row per photograph, in the order the page shows
+ *  them. Shares are percentages; sharpness is against the gallery's
+ *  sharpest (100). */
+export function toCsv({ groups, marks }, picked, levers, sharp = relativeSharpness(groups.flat())) {
+  const lines = [['file', 'group', 'aesthetic', 'technical', 'blend', 'exposure_penalty',
+                  'focus_penalty', 'score', 'blown_pct', 'black_pct', 'brightness_pct',
+                  'sharpness', 'picked'].join(',')];
   const pct = (v) => (v == null ? '' : (v * 100).toFixed(2));
-  for (const { it, group } of rows) {
-    lines.push([field(it.name), group, it.aesthetic.toFixed(3), it.technical.toFixed(3),
-                blend(it, weight).toFixed(3), pct(it.blown), pct(it.crushed), pct(it.brightness),
-                (sharp.get(it) ?? 0).toFixed(1), picked.has(it) ? 1 : 0].join(','));
-  }
+  groups.forEach((group, n) => {
+    for (const it of group) {
+      const m = marks.get(it);
+      lines.push([field(it.name), n + 1, it.aesthetic.toFixed(3), it.technical.toFixed(3),
+                  blend(it, levers.weight).toFixed(3), exposurePenalty(it, levers.faults).toFixed(3),
+                  m.focus.toFixed(3), m.score.toFixed(3), pct(it.blown), pct(it.crushed),
+                  pct(it.brightness), (sharp.get(it) ?? 0).toFixed(1),
+                  picked.has(it) ? 1 : 0].join(','));
+    }
+  });
   return `${lines.join('\n')}\n`;
 }

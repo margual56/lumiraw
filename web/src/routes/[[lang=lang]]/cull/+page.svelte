@@ -7,7 +7,9 @@
   import Meta from '$lib/components/Meta.svelte';
   import * as api from '$lib/api.js';
   import * as critic from '$lib/critic.js';
-  import { blend, centred, groupBursts, pick, relativeSharpness, toCsv, CLIPPED } from '$lib/cull.js';
+  import {
+    DEFAULTS, blend, exposurePenalty, groupBursts, likeness, pick, relativeSharpness, toCsv, CLIPPED,
+  } from '$lib/cull.js';
   import { t, n, localized } from '$lib/i18n.svelte.js';
   import { errorText } from '$lib/format.js';
   import { NAME } from '$lib/brand.js';
@@ -24,11 +26,44 @@
    *  second while scoring, since grouping compares every pair of neighbours. */
   let shown = $state.raw([]);
 
-  let weight = $state(0.6);
-  let keepMode = $state('percent');
-  let keepValue = $state(10);
-  let bursts = $state(true);
-  let similarity = $state(0.8);
+  /** Every lever, remembered in this browser between visits. */
+  const STORE = 'lumiraw.cull';
+  const saved = (() => {
+    try {
+      return JSON.parse(localStorage.getItem(STORE)) ?? {};
+    } catch {
+      return {};
+    }
+  })();
+  const initial = { ...DEFAULTS, keepMode: 'percent', keepValue: 10, bursts: true, ...saved };
+  let weight = $state(initial.weight);
+  let focus = $state(initial.focus);
+  let faults = $state(initial.faults);
+  let variety = $state(initial.variety);
+  let gap = $state(initial.gap);
+  let keepMode = $state(initial.keepMode);
+  let keepValue = $state(initial.keepValue);
+  let bursts = $state(initial.bursts);
+  let similarity = $state(initial.similarity);
+  /** The levers past the first three, folded away until asked for. */
+  let refining = $state(false);
+
+  const levers = $derived({ weight, focus, faults, variety });
+  $effect(() => {
+    const all = { weight, focus, faults, variety, gap, similarity, keepMode, keepValue, bursts };
+    try {
+      localStorage.setItem(STORE, JSON.stringify(all));
+    } catch {
+      // Private window or storage refused: the levers just are not remembered.
+    }
+  });
+
+  function defaults() {
+    ({ weight, focus, faults, variety, gap, similarity } = DEFAULTS);
+    keepMode = 'percent';
+    keepValue = 10;
+    bursts = true;
+  }
   /** Picks changed by hand: uid -> picked. */
   let overrides = $state.raw(new Map());
   /** Groups opened to show every frame, by their leader's uid. */
@@ -64,16 +99,20 @@
     if (!timer) timer = setTimeout(refresh, 400);
   }
 
-  const units = $derived(centred(shown));
+  /** Dot products between pairs of photos, kept while they last: they do
+   *  not change as the gallery grows or the levers move. */
+  const pairs = new WeakMap();
+  const like = $derived(likeness(shown, pairs));
   const groups = $derived(bursts
-    ? groupBursts(shown, { similarity, units })
+    ? groupBursts(shown, { gap, similarity, like })
     : shown.map((it) => [it]));
-  const ranking = $derived(pick(groups, weight, { mode: keepMode, value: keepValue }, shown.length));
+  const ranking = $derived(pick(groups, levers, { mode: keepMode, value: keepValue },
+                                shown.length, like));
   const sharp = $derived(relativeSharpness(shown));
   const isPicked = (it) => (overrides.has(it.uid) ? overrides.get(it.uid) : ranking.picked.has(it));
-  /** Every group, its best frame first, the best groups first. */
-  const ordered = $derived([...ranking.groups]
-    .sort((a, b) => blend(b[0], weight) - blend(a[0], weight)));
+  /** Every group, its best frame first: the picks in the order they were
+   *  made, then the rest, best first. */
+  const ordered = $derived(ranking.groups);
   const pickedCount = $derived(shown.filter(isPicked).length);
   /** Picks the developer cannot take. */
   const notRaw = $derived(shown.filter((it) => isPicked(it) && !it.raw).length);
@@ -164,7 +203,7 @@
 
   function csv() {
     const picked = new Set(shown.filter(isPicked));
-    const blob = new Blob([toCsv(ranking.groups, picked, weight, sharp)], { type: 'text/csv' });
+    const blob = new Blob([toCsv(ranking, picked, levers, sharp)], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `${NAME.toLowerCase()}-ranking.csv`;
@@ -186,6 +225,18 @@
   }
 
   const mark = (v) => n(v, 1);
+  /** How a photo's mark was made up, for its badge's tooltip. */
+  function why(it) {
+    const m = ranking.marks.get(it);
+    if (!m) return '';
+    const parts = [t('cull.why.blend', { value: mark(blend(it, weight)) })];
+    const exposure = exposurePenalty(it, faults);
+    if (exposure >= 0.05) parts.push(t('cull.why.exposure', { value: mark(exposure) }));
+    if (m.focus >= 0.05) parts.push(t('cull.why.focus', { value: mark(m.focus) }));
+    return parts.join(' · ');
+  }
+  /** A lever's strength in words: off, or a percentage. */
+  const strength = (v) => (v <= 0 ? t('cull.off') : `${n(v * 100, 0)} %`);
   /** A share as a percentage, with a decimal while it is small. */
   const share = (v) => `${n((v ?? 0) * 100, v < 0.1 ? 1 : 0)} %`;
 </script>
@@ -333,6 +384,57 @@
               </div>
             </div>
           </div>
+
+          <div class="more">
+            <button type="button" class="linkish" aria-expanded={refining}
+                    onclick={() => (refining = !refining)}>
+              {t('cull.moreLevers')}<span class="caret" aria-hidden="true">▾</span>
+            </button>
+            {#if refining}
+              <button type="button" class="linkish" onclick={defaults}>{t('cull.defaults')}</button>
+            {/if}
+          </div>
+
+          {#if refining}
+            <div class="tune refine">
+              <div class="ctl">
+                <div class="row">
+                  <span class="label" id="cull-focus">{t('cull.focus')}</span>
+                  <output>{strength(focus)}</output>
+                </div>
+                <input type="range" min="0" max="1" step="0.05" bind:value={focus}
+                       aria-labelledby="cull-focus" />
+                <small>{t('cull.focusHint')}</small>
+              </div>
+              <div class="ctl">
+                <div class="row">
+                  <span class="label" id="cull-faults">{t('cull.faults')}</span>
+                  <output>{strength(faults)}</output>
+                </div>
+                <input type="range" min="0" max="1" step="0.05" bind:value={faults}
+                       aria-labelledby="cull-faults" />
+                <small>{t('cull.faultsHint')}</small>
+              </div>
+              <div class="ctl">
+                <div class="row">
+                  <span class="label" id="cull-variety">{t('cull.variety')}</span>
+                  <output>{strength(variety)}</output>
+                </div>
+                <input type="range" min="0" max="1" step="0.05" bind:value={variety}
+                       aria-labelledby="cull-variety" />
+                <small>{t('cull.varietyHint')}</small>
+              </div>
+              <div class="ctl" class:off={!bursts}>
+                <div class="row">
+                  <span class="label" id="cull-gap">{t('cull.gap')}</span>
+                  <output>{t('cull.seconds', { value: gap })}</output>
+                </div>
+                <input type="range" min="1" max="30" step="1" bind:value={gap} disabled={!bursts}
+                       aria-labelledby="cull-gap" />
+                <small>{t('cull.gapHint')}</small>
+              </div>
+            </div>
+          {/if}
         </section>
 
         <p class="guide">
@@ -347,7 +449,7 @@
               <li class:picked={isPicked(it)} class:follower={nth > 0}>
                 <button class="photo" onclick={() => toggle(it)} title={it.name}>
                   <img src={it.thumb} alt={it.name} loading="lazy" />
-                  <span class="score">{mark(blend(it, weight))}</span>
+                  <span class="score" title={why(it)}>{mark(ranking.marks.get(it)?.score ?? blend(it, weight))}</span>
                   {#if isPicked(it)}<span class="tick">{t('cull.picked')}</span>{/if}
                 </button>
                 <div class="caption">
@@ -514,6 +616,46 @@
     }
   }
   .label { @include section-label; }
+
+  /* The levers past the first three, behind a quiet link. */
+  .more {
+    display: flex; justify-content: space-between; gap: 12px; margin-top: -4px;
+    @include phone {
+      display: none;
+      .tuning & { display: flex; }
+    }
+  }
+  .linkish {
+    background: none; border: 0; padding: 2px 0; min-height: 0; font-weight: 500;
+    font-size: 12.5px; color: var(--color-accent);
+    @include phone { padding: 8px 0; font-size: 13.5px; }
+    &:hover { filter: none; text-decoration: underline; }
+    .caret { display: inline-block; margin-left: 4px; transition: transform .15s; }
+    &[aria-expanded='true'] .caret { transform: rotate(180deg); }
+  }
+  .refine {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    .ctl { padding-bottom: 0; }
+    .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+    output { font-size: 12px; color: var(--color-ink); font-variant-numeric: tabular-nums; }
+    input[type='range'] { margin: 2px 0; }
+    small { font-size: 11.5px; line-height: 1.4; color: var(--color-muted); }
+    .off { opacity: .4; }
+    @include narrow {
+      grid-template-columns: 1fr 1fr;
+      .ctl:first-child { grid-column: auto; border-bottom: 0; padding: 8px 14px 8px 0; }
+      .ctl:nth-child(2) { padding-left: 14px; border-left: 1px solid var(--color-line); }
+      .ctl:nth-child(3) { padding-left: 0; border-left: 0; }
+    }
+    @include phone {
+      grid-template-columns: 1fr;
+      .ctl, .ctl:first-child, .ctl:nth-child(2), .ctl:nth-child(3) {
+        padding: 10px 0 !important; border-left: 0 !important;
+        border-bottom: 1px solid var(--color-line);
+      }
+      .ctl:last-child { border-bottom: 0; }
+    }
+  }
 
   .slide {
     display: flex; align-items: center; gap: 10px;

@@ -2,11 +2,9 @@
   /** The photographer's arithmetic, one calculator at a time, worked out as
    *  the numbers are typed: depth of field, ND filters, sharp stars, and the
    *  golden and blue hours. */
-  import LocalePicker from '$lib/components/LocalePicker.svelte';
+  import SiteHeader from '$lib/components/SiteHeader.svelte';
   import Meta from '$lib/components/Meta.svelte';
-  import { t, n, localized, i18n } from '$lib/i18n.svelte.js';
-  import { NAME } from '$lib/brand.js';
-  import { app } from '$lib/state.svelte.js';
+  import { t, n, i18n } from '$lib/i18n.svelte.js';
   import {
     SENSORS, FILTERS, SHUTTERS, confusion, depthOfField, duration, lightOfDay, ndShutter, starRules,
   } from '$lib/calc.js';
@@ -184,17 +182,7 @@
 <Meta title={t('seo.calc.title')} description={t('seo.calc.description')} path="/calculators" />
 
 <div class="shell">
-  <header>
-    <a class="brand" href={localized('/')}>
-      {NAME}
-      <span>
-        <span class="tagline">{t('calc.title')}</span>
-        {#if app.version}<span class="ver">v{app.version}</span>{/if}
-      </span>
-    </a>
-    <a class="back" href={localized('/')}>{t('calc.back')}</a>
-    <LocalePicker />
-  </header>
+  <SiteHeader tagline={t('calc.title')} />
 
   <main>
     <div class="page">
@@ -367,25 +355,7 @@
   @use '../../../styles/breakpoints' as *;
   @use '../../../styles/surfaces' as *;
 
-  /* The header as on the merge page: the name is the way home. */
-  a.brand {
-    color: inherit; text-decoration: none;
-    &:hover {
-      color: var(--color-accent);
-      .tagline, .ver { color: var(--color-muted); }
-    }
-  }
 
-  header {
-    .back {
-      margin-left: auto; color: var(--color-muted); text-decoration: none; font-size: 13px;
-      &:hover { color: var(--color-ink); }
-      @include phone {
-        order: 3; width: 100%; margin-left: 0; padding: 10px 0 4px; font-size: 14px;
-      }
-    }
-    :global(.picker) { margin-left: 0; @include phone { margin-left: auto; } }
-  }
 
   .page { display: grid; gap: 18px; max-width: 760px; margin: 0 auto; }
   .lead { margin: 0; font-size: 15px; line-height: 1.6; color: var(--color-muted); }

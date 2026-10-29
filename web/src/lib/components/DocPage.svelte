@@ -1,37 +1,14 @@
 <script>
   /** The frame around a page of reading: the same header as the tools, and a
    *  column of text narrow enough to follow. */
-  import { page } from '$app/state';
-  import LocalePicker from '$lib/components/LocalePicker.svelte';
-  import { localized, t, unlocalized } from '$lib/i18n.svelte.js';
-  import { NAME } from '$lib/brand.js';
+  import SiteHeader from '$lib/components/SiteHeader.svelte';
+  import { localized, t } from '$lib/i18n.svelte.js';
 
   let { children } = $props();
-
-  const links = [
-    { href: '/guide', key: 'links.guide' },
-    { href: '/about', key: 'links.about' },
-    { href: '/cameras', key: 'links.cameras' },
-    { href: '/source', key: 'links.source' },
-  ];
-  const here = (href) => unlocalized(page.url.pathname) === href;
 </script>
 
 <div class="shell">
-  <header>
-    <a class="brand" href={localized('/')}>
-      {NAME}
-      <span><span class="tagline">{t('app.tagline')}</span></span>
-    </a>
-    <nav>
-      {#each links as link}
-        <a href={localized(link.href)} aria-current={here(link.href) ? 'page' : undefined}>
-          {t(link.key)}
-        </a>
-      {/each}
-    </nav>
-    <LocalePicker />
-  </header>
+  <SiteHeader tagline={t('app.tagline')} />
 
   <main>
     <article>
@@ -45,19 +22,6 @@
 
 <style lang="scss">
   @use '../../styles/breakpoints' as *;
-
-  header .brand { color: var(--color-ink); text-decoration: none; }
-  nav {
-    display: flex; gap: 18px; font-size: 13px;
-    a {
-      color: var(--color-muted); text-decoration: none;
-      &:hover, &[aria-current] { color: var(--color-ink); }
-    }
-    @include phone {
-      order: 3; width: 100%; gap: 4px; font-size: 14px; flex-wrap: wrap;
-      a { padding: 8px 10px 6px 0; margin-right: 8px; }
-    }
-  }
 
   article {
     max-width: 68ch; margin: 8px auto 48px;

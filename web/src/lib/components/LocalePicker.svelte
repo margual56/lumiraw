@@ -25,7 +25,6 @@
 </label>
 
 <style lang="scss">
-  .picker { margin-left: auto; }
   select {
     width: auto; margin: 0; padding: 5px 8px; font-size: 12px;
     color: var(--color-muted); background: var(--color-panel-2);

@@ -1,5 +1,6 @@
 import adapter from '@sveltejs/adapter-static';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
+import { PAGES } from './src/lib/pages.js';
 
 /** Everything runs in the browser, so the build is a plain static site. */
 export default {
@@ -14,7 +15,7 @@ export default {
     }),
     // The language picker isn't a link, so list the Spanish pages here.
     prerender: {
-      entries: ['*', '/es', '/es/about', '/es/cameras', '/es/merge', '/es/cull', '/es/calculators', '/es/guide', '/es/source'],
+      entries: ['*', ...PAGES.map((path) => (path === '/' ? '/es' : `/es${path}`))],
     },
   },
 };

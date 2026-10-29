@@ -16,7 +16,8 @@
   import Looks from '$lib/steps/Looks.svelte';
   import Download from '$lib/steps/Download.svelte';
 
-  import LocalePicker from '$lib/components/LocalePicker.svelte';
+  import SiteHeader from '$lib/components/SiteHeader.svelte';
+  import { READING } from '$lib/pages.js';
   import * as api from '$lib/api.js';
   import { t, n, localized, address, i18n } from '$lib/i18n.svelte.js';
   import { errorText } from '$lib/format.js';
@@ -220,17 +221,9 @@
       }} />
 
 <div class="shell">
-  <header>
-    <h1 class="brand">
-      {NAME}
-      <span>
-        <span class="tagline">{t('app.tagline')}</span>
-        {#if app.version}<span class="ver">v{app.version}</span>{/if}
-      </span>
-    </h1>
+  <SiteHeader tagline={t('app.tagline')} home compact>
     <Stepper onstep={go} />
-    <LocalePicker />
-  </header>
+  </SiteHeader>
   <Progress />
 
   <main>
@@ -265,10 +258,9 @@
           <span>{t('calc.linkHint')}</span>
         </a>
         <nav class="more">
-          <a href={localized('/guide')}>{t('links.guide')}</a>
-          <a href={localized('/about')}>{t('links.about')}</a>
-          <a href={localized('/cameras')}>{t('links.cameras')}</a>
-          <a href={localized('/source')}>{t('links.source')}</a>
+          {#each READING as link (link.path)}
+            <a href={localized(link.path)}>{t(link.key)}</a>
+          {/each}
         </nav>
       </div>
     {:else if app.step === FRAME}
@@ -324,14 +316,6 @@
 <style lang="scss">
   @use '../../styles/breakpoints' as *;
   @use '../../styles/surfaces' as *;
-
-  /*
-   * The tagline goes on a phone and the version stays, since the version is the
-   * half worth the screen space.
-   */
-  @include phone {
-    .tagline { display: none; }
-  }
 
   /*
    * The privacy notice sits above the drop zone, which then takes whatever

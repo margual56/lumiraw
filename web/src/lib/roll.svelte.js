@@ -75,7 +75,7 @@ export async function openFile(file, { roll = null, index = 0 } = {}) {
   const leaving = app.rollAt;
   const kept = leaving >= 0 && app.id ? $state.snapshot(app.settings) : null;
   try {
-    const info = await api.upload(file);
+    let info = await api.upload(file);
     if (roll) {
       newRoll(roll);
     } else if (leaving >= 0 && app.roll[leaving]) {
@@ -91,6 +91,11 @@ export async function openFile(file, { roll = null, index = 0 } = {}) {
     else if (saved) app.settings = saved;
     app.fileKey = fileKey(file);
     app.restored = !!saved;
+    // Remembered with deep noise reduction on: open it again that way.
+    if (app.settings.deep_denoise) {
+      app.busyKey = 'busy.denoise';
+      info = { ...info, ...(await api.upload(file, { deep: true })), id: info.id };
+    }
     app.id = info.id;
     app.info = info;
     app.rollAt = roll ? 0 : index;
@@ -101,6 +106,37 @@ export async function openFile(file, { roll = null, index = 0 } = {}) {
   } catch (err) {
     app.message = errorText(err);
     if (!roll && app.roll[index]) app.roll[index].failed = true;
+  } finally {
+    opening = false;
+    app.busy = false;
+    app.busyKey = '';
+    app.progress = null;
+  }
+}
+
+/**
+ * Open the photograph being developed again, with deep noise reduction or
+ * without, keeping everything else about it. The previews are dropped, since
+ * every one of them came from the frame as it was.
+ */
+export async function setDeepDenoise(on) {
+  const file = app.roll[app.rollAt]?.file;
+  if (!file || opening) return;
+  opening = true;
+  app.busy = true;
+  app.busyKey = on ? 'busy.denoise' : 'busy.decode';
+  app.busyParams = {};
+  try {
+    const info = await api.upload(file, { deep: on });
+    app.info = { ...info, id: app.id, original_name: app.info?.original_name ?? info.original_name };
+    app.settings.deep_denoise = on;
+    app.preview = { key: null, image: '' };
+    app.frame = { key: null, image: '', angle: 0 };
+    app.wipe = { key: null, before: '', after: '' };
+    app.ungraded = { key: null, image: '' };
+    app.output = { key: null, image: '' };
+  } catch (err) {
+    app.message = errorText(err);
   } finally {
     opening = false;
     app.busy = false;
@@ -143,7 +179,7 @@ export async function exportRoll({ format, quality, max_size, onstatus }) {
     for (const [n, { item }] of chosen.entries()) {
       onstatus?.(t('roll.exporting', { n: n + 1, total: chosen.length, name: item.name }), n / chosen.length);
       try {
-        await api.upload(item.file);
+        await api.upload(item.file, { deep: settings[n].deep_denoise });
         const out = await api.exportOnce({
           settings: settings[n], format, quality, max_size,
           original_name: item.name,
@@ -159,7 +195,7 @@ export async function exportRoll({ format, quality, max_size, onstatus }) {
     // Put back the photograph that was being developed. The page's own id is
     // kept: its previews and history still describe this same file.
     const item = app.roll[current];
-    if (item) await api.upload(item.file).catch(() => {});
+    if (item) await api.upload(item.file, { deep: app.settings.deep_denoise }).catch(() => {});
   }
   if (!files.length) throw new Error(failed.join('\n') || t('roll.nothing'));
   // Two exports of one stem (a raw and its DNG, say) must not overwrite

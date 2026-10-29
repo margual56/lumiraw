@@ -24,3 +24,24 @@ operators and half-float weights unchanged.
 
 They're licensed under the Apache License 2.0
 (https://www.apache.org/licenses/LICENSE-2.0), Copyright Google LLC.
+
+The developer also loads `face-detector.bin`, to read what skin looks like on a
+photograph's faces.
+
+# Segmenter
+
+`segmenter.bin` is MediaPipe's DeepLab v3 image segmenter (`deeplab_v3.tflite`,
+https://storage.googleapis.com/mediapipe-models/image_segmenter/deeplab_v3/float32/1/deeplab_v3.tflite),
+which labels a 257 × 257 picture with PASCAL VOC's 21 classes; the developer's
+"Subject" filters follow whatever it does not call background. Converted with
+`tools/bake-segmenter.mjs`, the weights narrowed to half floats. Apache License
+2.0, Copyright Google LLC.
+
+# Raw denoiser
+
+`denoiser.bin` is PMRID, from Wang et al., "Practical Deep Raw Image Denoising
+on Mobile Devices", ECCV 2020 (https://github.com/megvii-research/PMRID,
+`models/torch_pretrained.ckp`). Converted with `tools/bake-denoiser.mjs`, which
+reads the PyTorch checkpoint and lays the network out for 256 × 256 tiles of a
+packed Bayer mosaic, the weights narrowed to half floats. Apache License 2.0,
+Copyright Megvii Inc.

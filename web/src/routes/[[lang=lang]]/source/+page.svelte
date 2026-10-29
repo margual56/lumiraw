@@ -134,6 +134,16 @@
     entre varios workers y {@render f('web/src/lib/cull.js')} agrupa las ráfagas y elige.
   </p>
 
+  <SectionTitle id="networks">Redes en el revelador</SectionTitle>
+  <p>
+    El revelador ejecuta tres redes pequeñas mediante {@render f('core/critic/src/graph.rs')}, cada
+    una descargada la primera vez que hace falta: el detector de caras de MediaPipe, para leer los
+    tonos de piel ({@render f('core/src/skin.rs')}); DeepLab v3 de MediaPipe, para los filtros de
+    «Sujeto» ({@render f('core/src/masks.rs')}, que también encuentra el cielo sin red); y PMRID de
+    Megvii, que limpia el mosaico raw antes que nada cuando la reducción de ruido profunda está
+    activada ({@render f('core/src/denoise.rs')}, preparada por {@render f('tools/bake-denoiser.mjs')}).
+  </p>
+
   <SectionTitle id="stored">Qué se guarda</SectionTitle>
   <ul>
     <li>En el <code>localStorage</code> del navegador: los ajustes de cada archivo, identificado
@@ -302,6 +312,16 @@
     (one aesthetic, one technical) are converted by {@render f('tools/bake-nima.mjs')} and
     downloaded the first time they're used. {@render f('web/src/lib/critic.js')} shares the photos
     out between several workers, and {@render f('web/src/lib/cull.js')} groups bursts and picks.
+  </p>
+
+  <SectionTitle id="networks">Networks in the developer</SectionTitle>
+  <p>
+    The developer runs three small networks through {@render f('core/critic/src/graph.rs')}, each
+    downloaded the first time it's needed: MediaPipe's face detector, to read skin tones
+    ({@render f('core/src/skin.rs')}); MediaPipe's DeepLab v3, for "Subject" filters
+    ({@render f('core/src/masks.rs')}, which also finds the sky without a network); and Megvii's
+    PMRID, which cleans the raw mosaic before anything else when deep noise reduction is on
+    ({@render f('core/src/denoise.rs')}, baked by {@render f('tools/bake-denoiser.mjs')}).
   </p>
 
   <SectionTitle id="stored">What's stored</SectionTitle>

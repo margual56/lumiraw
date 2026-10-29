@@ -53,7 +53,7 @@ async function ensureLook(settings) {
 
 // The networks the developer runs (see core/darkroom/src/models.rs), fetched
 // the first time something needs one. They share the culling page's files.
-const MODEL_FILES = import.meta.glob('./critic/face-detector.bin',
+const MODEL_FILES = import.meta.glob('./critic/{face-detector,segmenter,denoiser}.bin',
                                      { query: '?url', import: 'default', eager: true });
 
 async function ensureModel(name) {
@@ -228,11 +228,16 @@ function encodedBytes() {
 
 // -- operations ------------------------------------------------------------
 
-async function open({ name, buffer }) {
+/** The open call for a photograph: with deep noise reduction on its mosaic,
+ *  or without. */
+const opener = (deep) => (deep ? wasm.ar_open_denoised : wasm.ar_open);
+
+async function open({ name, buffer, deep = false }) {
+  if (deep) await ensureModel('denoiser');
   wasm.ar_close();
   const bytes = new Uint8Array(buffer);
   const ptr = copyIn(bytes);
-  const rc = withString(name, (np, nl) => wasm.ar_open(np, nl, ptr, bytes.length));
+  const rc = withString(name, (np, nl) => opener(deep)(np, nl, ptr, bytes.length));
   wasm.ar_free(ptr, bytes.length);
   const info = readJson();
   if (rc !== 0) {
@@ -241,7 +246,7 @@ async function open({ name, buffer }) {
     await restorePhoto();
     fail(info);
   }
-  session.photo = { name, buffer };
+  session.photo = { name, buffer, deep };
   session.merged = null;
   session.stacked = null;
   return ensureLenses(info);
@@ -256,7 +261,7 @@ async function restorePhoto() {
   } else if (session.photo) {
     const bytes = new Uint8Array(session.photo.buffer);
     withBytes(bytes, (p, n) =>
-      withString(session.photo.name, (np, nl) => wasm.ar_open(np, nl, p, n)));
+      withString(session.photo.name, (np, nl) => opener(session.photo.deep)(np, nl, p, n)));
   }
 }
 
@@ -398,6 +403,24 @@ function match({ settings, pixels, width, height }) {
   const info = readJson();
   if (rc !== 0) fail(info);
   return info.wheels;
+}
+
+/** The segmenter, before any settings with a filter that follows the subject
+ *  are developed. Without it that filter does nothing, rather than failing. */
+async function ensureMasks(settings) {
+  if (!settings?.filters?.some((f) => f.kind === 'subject')) return;
+  await ensureModel('segmenter').catch(() => {});
+}
+
+/** A sky or subject mask as the filters see it: grey RGBA over the framed picture. */
+async function mask({ settings, kind }) {
+  if (kind === 'subject') await ensureModel('segmenter');
+  const rc = settingsPointer(settings, (sp, sl) =>
+    withString(kind, (kp, kl) => wasm.ar_mask(sp, sl, kp, kl)));
+  const info = readJson();
+  if (rc !== 0) fail(info);
+  const { w, h, pixels } = primary();
+  return { width: w, height: h, pixels: pixels.buffer, [TRANSFER]: [pixels.buffer] };
 }
 
 /** What skin looks like on the open photograph's faces. */
@@ -551,7 +574,7 @@ async function stackFinish() {
 }
 
 const HANDLERS = { open, render, full, region, releaseRegion, thumbnail, preview, captured,
-                   compare, looks, curves, match, skin,
+                   compare, looks, curves, match, skin, mask,
                    lutLoad, lutClear,
                    export: exportImage,
                    mergeAdd, mergeRemove, mergeReset, mergeFinish, mergeCheck,
@@ -569,6 +592,7 @@ async function handle({ type, id, ...rest }) {
     if (!handler) throw new Error(`unknown request: ${type}`);
     current = id;
     await ensureLook(rest.settings);
+    await ensureMasks(rest.settings);
     const data = await handler(rest);
     // A handler that returns something large marks what may be moved rather
     // than copied to the page.

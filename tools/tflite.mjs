@@ -1,9 +1,9 @@
 /** Just enough of a TFLite reader for the baking scripts: the model's
  *  flatbuffer (schema v3) read into plain objects, without dependencies. */
 
-/** The operators the face models use; anything else comes out as `op<n>`. */
+/** The operators the baked models use; anything else comes out as `op<n>`. */
 const OPS = {
-  0: 'ADD', 2: 'CONCATENATION', 3: 'CONV_2D', 4: 'DEPTHWISE_CONV_2D', 6: 'DEQUANTIZE',
+  0: 'ADD', 1: 'AVERAGE_POOL_2D', 2: 'CONCATENATION', 5: 'DEPTH_TO_SPACE', 3: 'CONV_2D', 4: 'DEPTHWISE_CONV_2D', 6: 'DEQUANTIZE',
   14: 'LOGISTIC', 17: 'MAX_POOL_2D', 19: 'RELU', 22: 'RESHAPE', 23: 'RESIZE_BILINEAR', 34: 'PAD',
   54: 'PRELU',
 };
@@ -61,7 +61,7 @@ class Table {
   }
 }
 
-/** Options tables as plain objects, for the operators the face models use.
+/** Options tables as plain objects, for the operators the baked models use.
  *  `same` is TensorFlow's padding flag, 1 for "same" and 0 for "valid". */
 function options(op, t) {
   if (!t) return {};
@@ -75,12 +75,15 @@ function options(op, t) {
       return { same, stride: [t.scalar(1, 'i32'), t.scalar(2, 'i32')], multiplier: t.scalar(3, 'i32'),
                activation: act(4), dilation: [t.scalar(5, 'i32', 1), t.scalar(6, 'i32', 1)] };
     case 'MAX_POOL_2D':
+    case 'AVERAGE_POOL_2D':
       return { same, stride: [t.scalar(1, 'i32'), t.scalar(2, 'i32')],
                filter: [t.scalar(3, 'i32'), t.scalar(4, 'i32')], activation: act(5) };
     case 'ADD':
       return { activation: act(0) };
     case 'CONCATENATION':
       return { axis: t.scalar(0, 'i32'), activation: act(1) };
+    case 'DEPTH_TO_SPACE':
+      return { block: t.scalar(0, 'i32') };
     case 'RESIZE_BILINEAR':
       return { alignCorners: Boolean(t.scalar(2, 'u8')), halfPixel: Boolean(t.scalar(3, 'u8')) };
     default:

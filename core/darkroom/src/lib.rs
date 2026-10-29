@@ -2,7 +2,6 @@
 
 mod bracket;
 mod grades;
-pub mod models;
 mod photo;
 pub mod stack;
 pub mod wasm;
@@ -11,6 +10,7 @@ pub use bracket::{finding_json, notes_json, Bracket, FrameInfo};
 pub use grades::{clear_cube, curves, load_cube, load_look, looks, CubeInfo};
 pub use photo::{Developed, Encoded, Export, Exported, Photo, Size};
 pub use stack::{Stack, StackMode};
+pub use lumiraw_core::models;
 
 pub use lumiraw_core::grade::Settings as Edit;
 pub use lumiraw_core::develop::Region;
@@ -51,6 +51,24 @@ pub fn open(name: &str, bytes: &[u8], lenses: Option<&Lenses>) -> Result<Photo, 
         return Err(DecodeError::undecodable("empty file"));
     }
     lumiraw_core::develop::Development::open(name, bytes, lenses.map(|l| &l.0)).map(Photo::new)
+}
+
+/// `open`, with deep noise reduction on the raw mosaic first (the `denoiser`
+/// network has to be loaded; see `models`). Slow: tens of seconds for a full
+/// frame, told through `progress` as a fraction.
+pub fn open_denoised(name: &str, bytes: &[u8], lenses: Option<&Lenses>,
+                     progress: &mut dyn FnMut(f32)) -> Result<Photo, DecodeError> {
+    if bytes.is_empty() {
+        return Err(DecodeError::undecodable("empty file"));
+    }
+    let opened = models::with("denoiser", |net| {
+        let denoiser = lumiraw_core::decode::Denoiser { net, progress };
+        lumiraw_core::develop::Development::open_with(name, bytes, lenses.map(|l| &l.0), Some(denoiser))
+    });
+    match opened {
+        Ok(dev) => dev.map(Photo::new),
+        Err(why) => Err(DecodeError::undecodable(why)),
+    }
 }
 
 /// A small picture of a raw file, from the JPEG the camera embedded in it,

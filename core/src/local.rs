@@ -13,6 +13,9 @@ pub enum Shape {
     /// Full strength inside the ellipse, fading out over `feather` of its
     /// radius beyond it; or the other way round, with `invert`.
     Radial { centre: (f32, f32), radius: (f32, f32), feather: f32, invert: bool },
+    /// Wherever the sky or the subject is (see `masks`); or, with `invert`,
+    /// wherever it is not.
+    Mask { kind: crate::masks::Kind, invert: bool },
 }
 
 /// One filter: where it reaches and what it does there.
@@ -60,7 +63,10 @@ pub fn filters_from_json(v: Option<&Value>) -> Vec<Filter> {
                     invert: f.get("invert").and_then(|x| x.as_bool()).unwrap_or(false),
                 }
             }
-            _ => return None,
+            code => Shape::Mask {
+                kind: crate::masks::Kind::from_code(code)?,
+                invert: f.get("invert").and_then(|x| x.as_bool()).unwrap_or(false),
+            },
         };
         Some(Filter {
             shape,
@@ -109,23 +115,54 @@ fn weight(shape: &Shape, u: f32, v: f32, aspect: f32) -> f32 {
             let inside = 1.0 - kit::smoothstep(1.0, 1.0 + feather.max(0.02), d);
             if *invert { 1.0 - inside } else { inside }
         }
+        // Read from the refined mask by the caller.
+        Shape::Mask { .. } => 0.0,
+    }
+}
+
+impl Filter {
+    /// The mask this filter follows, if it follows one.
+    pub fn mask(&self) -> Option<crate::masks::Kind> {
+        match self.shape {
+            Shape::Mask { kind, .. } => Some(kind),
+            _ => None,
+        }
     }
 }
 
 /// The filters, applied to a display-referred frame (see the module notes).
-pub fn apply_filters(img: &mut Image, filters: &[Filter], frame: Option<Rect>) {
+/// A filter following a mask that `masks` does not have does nothing.
+pub fn apply_filters(img: &mut Image, filters: &[Filter], frame: Option<Rect>,
+                     masks: &crate::masks::Masks) {
     if filters.is_empty() {
         return;
     }
     let (fx, fy, fw, fh) = frame_px(img, frame);
     let aspect = fw / fh.max(1.0);
+    // Each mask refined against this picture once, however many filters use it.
+    let mut refined: Vec<(crate::masks::Kind, Option<kit::Plane>)> = Vec::new();
+    for kind in filters.iter().filter_map(Filter::mask) {
+        if !refined.iter().any(|(k, _)| *k == kind) {
+            let plane = masks.get(kind).map(|m| crate::masks::refine(m, img, (fx, fy, fw, fh)));
+            refined.push((kind, plane));
+        }
+    }
     for y in 0..img.h {
         let v = (y as f32 + 0.5 - fy) / fh;
         for x in 0..img.w {
             let u = (x as f32 + 0.5 - fx) / fw;
             let i = (y * img.w + x) * 3;
             for f in filters {
-                let k = weight(&f.shape, u, v, aspect);
+                let k = match f.shape {
+                    Shape::Mask { kind, invert } => {
+                        match refined.iter().find(|(k, _)| *k == kind).and_then(|(_, p)| p.as_ref()) {
+                            Some(p) if invert => 1.0 - p.d[y * img.w + x],
+                            Some(p) => p.d[y * img.w + x],
+                            None => 0.0,
+                        }
+                    }
+                    _ => weight(&f.shape, u, v, aspect),
+                };
                 if k <= 1e-4 {
                     continue;
                 }
@@ -287,7 +324,7 @@ mod tests {
         let mut img = flat(100, 100, 0.4);
         let f = Filter { shape: Shape::Linear { a: (0.5, 0.0), b: (0.5, 0.5) },
                          exposure: -1.0, temperature: 0.0, saturation: 0.0 };
-        apply_filters(&mut img, &[f], None);
+        apply_filters(&mut img, &[f], None, &Default::default());
         assert!((at(&img, 50, 0)[0] - 0.2).abs() < 0.01, "top: {:?}", at(&img, 50, 0));
         assert!((at(&img, 50, 80)[0] - 0.4).abs() < 1e-5, "bottom moved: {:?}", at(&img, 50, 80));
         let mid = at(&img, 50, 25)[0];
@@ -302,9 +339,9 @@ mod tests {
                                                 feather: 0.1, invert: false },
                          exposure: 1.0, temperature: 0.0, saturation: 0.0 };
         let mut cropped = flat(50, 50, 0.3);
-        apply_filters(&mut cropped, &[f.clone()], None);
+        apply_filters(&mut cropped, &[f.clone()], None, &Default::default());
         let mut canvas = flat(100, 100, 0.3);
-        apply_filters(&mut canvas, &[f], Some((0.5, 0.5, 0.5, 0.5)));
+        apply_filters(&mut canvas, &[f], Some((0.5, 0.5, 0.5, 0.5)), &Default::default());
         assert_eq!(at(&cropped, 25, 25), at(&canvas, 75, 75));
         assert_eq!(at(&canvas, 25, 25), [0.3; 3], "the filter reached outside the frame");
     }
@@ -315,7 +352,7 @@ mod tests {
         let f = Filter { shape: Shape::Radial { centre: (0.5, 0.5), radius: (0.2, 0.2),
                                                 feather: 0.3, invert: true },
                          exposure: -1.0, temperature: 0.0, saturation: 0.0 };
-        apply_filters(&mut img, &[f], None);
+        apply_filters(&mut img, &[f], None, &Default::default());
         assert_eq!(at(&img, 40, 40), [0.5; 3]);
         assert!(at(&img, 1, 1)[0] < 0.3);
     }

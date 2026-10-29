@@ -198,6 +198,19 @@ impl Photo {
         self.dev.match_colour(edit, &reference).to_json()
     }
 
+    /// Where a filter following the sky or the subject would reach, as a grey
+    /// picture over the framed photograph (white is all the way); `None` when
+    /// that mask cannot be found (the subject before the segmenter is loaded).
+    pub fn mask(&mut self, edit: &Edit, kind: &str) -> Option<Image> {
+        let kind = lumiraw_core::masks::Kind::from_code(kind)?;
+        let plane = self.dev.mask(edit, kind)?;
+        let mut img = Image::new(plane.w, plane.h);
+        for (px, v) in img.px_mut().iter_mut().zip(&plane.d) {
+            *px = [*v; 3];
+        }
+        Some(img)
+    }
+
     /// What skin looks like on this photograph's faces, for the settings'
     /// `skin`: `{hue, chroma, faces}`, or `{faces: 0}` when there are none.
     pub fn skin(&mut self, edit: &Edit) -> Result<Value, String> {

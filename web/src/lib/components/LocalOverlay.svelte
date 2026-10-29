@@ -123,7 +123,7 @@
                 onpointerdown={(e) => begin(e, 'filters', i, 'a')} />
         <circle class="handle hollow" cx={f.b[0] * W} cy={f.b[1] * H} r="6"
                 onpointerdown={(e) => begin(e, 'filters', i, 'b')} />
-      {:else}
+      {:else if f.kind === 'radial'}
         <ellipse class="edge" cx={f.centre[0] * W} cy={f.centre[1] * H}
                  rx={f.radius[0] * W} ry={f.radius[1] * H} />
         <ellipse class="edge dashed" cx={f.centre[0] * W} cy={f.centre[1] * H}

@@ -9,7 +9,7 @@ const served = (f) => !/\/_[^/]*$/.test(f);
 const ALL = [...build, ...files.filter(served), ...prerendered];
 // The scoring and face networks too: 16 MB that only the gallery page ever wants.
 const onDemand = (path) =>
-  /\/(lens-[^/]*|lensfun-[^/]*)\.json$|\/(look|nima|face)-[^/]*\.bin$/.test(path);
+  /\/(lens-[^/]*|lensfun-[^/]*)\.json$|\/((look|nima|face)-[^/]*|segmenter|denoiser)\.bin$/.test(path);
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {

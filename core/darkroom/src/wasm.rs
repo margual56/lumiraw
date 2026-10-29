@@ -250,6 +250,26 @@ pub extern "C" fn ar_open(name_ptr: *const u8, name_len: usize, ptr: *const u8, 
     }
 }
 
+/// Open a raw file with deep noise reduction on its mosaic; see
+/// `crate::open_denoised`.
+#[no_mangle]
+pub extern "C" fn ar_open_denoised(name_ptr: *const u8, name_len: usize, ptr: *const u8,
+                                   len: usize) -> i32 {
+    let name = text_at(name_ptr, name_len);
+    progress(0.02, "denoise");
+    let mut told = |f: f32| progress(0.02 + 0.93 * f, "denoise");
+    match LENSES.with(|l| crate::open_denoised(&name, unsafe { slice(ptr, len) }, l.borrow().as_ref(),
+                                                &mut told)) {
+        Ok(photo) => {
+            set_json(describe(&photo));
+            PHOTO.with(|p| *p.borrow_mut() = Some(photo));
+            progress(1.0, "done");
+            0
+        }
+        Err(e) => set_decode_error(&name, e),
+    }
+}
+
 /// Develop; `long_edge <= 0` means every pixel, `crop = 0` the whole framing
 /// canvas.
 #[no_mangle]
@@ -591,6 +611,24 @@ pub extern "C" fn ar_model_load(name_ptr: *const u8, name_len: usize,
             0
         }
         Err(why) => set_error(&why, "bad_model"),
+    }
+}
+
+/// The sky or subject mask (`kind`) for these settings' framing, in the pixel
+/// buffer as grey: white where a filter following it reaches all the way.
+#[no_mangle]
+pub extern "C" fn ar_mask(settings_ptr: *const u8, settings_len: usize,
+                          kind_ptr: *const u8, kind_len: usize) -> i32 {
+    let edit = edit_at(settings_ptr, settings_len);
+    let kind = text_at(kind_ptr, kind_len);
+    match with_photo(|photo| photo.mask(&edit, &kind)) {
+        Some(Some(img)) => {
+            store(&img);
+            set_json(json!({"width": img.w, "height": img.h}));
+            0
+        }
+        Some(None) => set_error("that mask cannot be found", "no_mask"),
+        None => set_error("no image open", "no_session"),
     }
 }
 

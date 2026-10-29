@@ -17,7 +17,7 @@
   import Download from '$lib/steps/Download.svelte';
 
   import SiteHeader from '$lib/components/SiteHeader.svelte';
-  import { READING } from '$lib/pages.js';
+  import { ELSEWHERE, READING } from '$lib/pages.js';
   import * as api from '$lib/api.js';
   import { t, n, localized, address, i18n } from '$lib/i18n.svelte.js';
   import { errorText } from '$lib/format.js';
@@ -272,6 +272,9 @@
         <nav class="more">
           {#each READING as link (link.path)}
             <a href={localized(link.path)}>{t(link.key)}</a>
+          {/each}
+          {#each ELSEWHERE as link (link.key)}
+            <a href={link.href[i18n.locale] ?? link.href.en}>{t(link.key)}</a>
           {/each}
         </nav>
       </div>

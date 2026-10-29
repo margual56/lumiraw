@@ -34,6 +34,7 @@ export default {
   'merge.heading': 'Combinar varias tomas de una escena',
   'links.cameras': 'Cámaras compatibles',
   'links.source': 'Código fuente',
+  'links.blog': 'Guías y fotos',
   'seo.source.title': 'Cómo funciona LumiRaw, y su código fuente',
   'seo.source.description': 'Dónde está cada parte de LumiRaw en su código público, desde abrir un RAW hasta descargar el resultado, qué se guarda y cómo comprobar que no se sube nada.',
   'links.open': 'Abrir un RAW',

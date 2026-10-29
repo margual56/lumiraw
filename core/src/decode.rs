@@ -143,6 +143,12 @@ pub fn captured(bytes: &[u8]) -> i64 {
     read_exif(bytes).captured_s
 }
 
+/// What a file says about how it was taken, without decoding it: enough to
+/// list it. Any container the EXIF reader knows.
+pub fn metadata(bytes: &[u8]) -> Meta {
+    read_exif(bytes)
+}
+
 /// The camera's XYZ matrix for the light this frame was taken in.
 pub fn scene_matrix(matrices: &[(f32, Mat3)], wb: &[f32; 3]) -> Mat3 {
     match scene_temperature(matrices, wb) {

@@ -1,5 +1,6 @@
 <script>
-  /** Exposure merge: several frames of one scene in, one wider negative out. */
+  /** Several frames of one scene in, one picture out: an exposure merge, or a
+   *  stack (averaged, the median, the brightest, or the sharpest of each part). */
   import { goto } from '$app/navigation';
   import Progress from '$lib/components/Progress.svelte';
   import LocalePicker from '$lib/components/LocalePicker.svelte';
@@ -10,7 +11,15 @@
   import { NAME } from '$lib/brand.js';
   import { app, resetForNewPhoto, FRAME } from '$lib/state.svelte.js';
 
-  /** One entry per frame the module is holding, in the order it holds them. */
+  /** How the frames are combined. The exposure merge decodes each frame as it
+   *  is added, to check the bracket early; a stack only reads its metadata
+   *  until it is run, and then reads each file once. */
+  const MODES = ['hdr', 'mean', 'median', 'lighten', 'focus'];
+  let mode = $state('hdr');
+  const stacking = $derived(mode !== 'hdr');
+
+  /** One entry per frame, in the order it was added. In the exposure merge
+   *  the module holds them in this same order. */
   let frames = $state([]);
   let align = $state(true);
   // Automatic by default: the merge can measure how much of the scene actually
@@ -31,16 +40,54 @@
 
   $effect(() => {
     api.ready().catch(() => {});
+    // A link can ask for a mode: /merge?mode=focus.
+    const asked = new URLSearchParams(location.search).get('mode');
+    if (MODES.includes(asked)) {
+      mode = asked;
+      align = asked !== 'lighten';
+    }
     // Arriving here with frames left over from a previous visit would merge
     // pictures the page is not showing.
     api.mergeReset().catch(() => {});
-    return () => { api.mergeReset().catch(() => {}); };
+    api.stackReset().catch(() => {});
+    return () => {
+      api.mergeReset().catch(() => {});
+      api.stackReset().catch(() => {});
+    };
   });
+
+  /** Change how the frames are combined, keeping the frames. The exposure
+   *  merge needs them decoded, a stack does not until it runs. */
+  async function choose(next) {
+    if (next === mode || app.busy) return;
+    const was = mode;
+    mode = next;
+    // Lining up star trails would chase the stars, so it starts off there.
+    align = next !== 'lighten';
+    error = '';
+    if (result && !result.stack) result = null;
+    if (next === 'hdr' && frames.length) {
+      result = null;
+      const files = frames;
+      frames = [];
+      await api.mergeReset().catch(() => {});
+      await decodeAll(files);
+    } else if (was === 'hdr') {
+      await api.mergeReset().catch(() => {});
+      findings = [];
+    }
+  }
 
   // The frames are sorted by how much light they caught, which is the order
   // anyone thinks of a bracket in, and the middle one is the reference the
   // merge puts the others on.
-  const ordered = $derived([...frames].sort((a, b) => a.exposure - b.exposure));
+  // A stack is listed in the order it was shot instead, and its middle frame
+  // is the reference: lined up with it, focus breathing and drift are half
+  // what they would be from either end.
+  const byExposure = (a, b) => a.exposure - b.exposure;
+  const byShot = (a, b) => (a.captured_s || 0) - (b.captured_s || 0)
+    || a.name.localeCompare(b.name, undefined, { numeric: true });
+  const ordered = $derived([...frames].sort(stacking ? byShot : byExposure));
   const reference = $derived(ordered.length ? ordered[Math.floor(ordered.length / 2)] : null);
   const range = $derived(ordered.length > 1
     ? Math.log2(ordered[ordered.length - 1].exposure / ordered[0].exposure)
@@ -94,17 +141,36 @@
     error = '';
     if (result) {
       // The last merge is finished and its frames are gone; anything dropped
-      // now is the start of a new bracket, not an addition to that one.
+      // now is the start of a new bracket, not an addition to that one. A
+      // stack's frames are still here, and the new ones join them.
+      if (!result.stack) await api.mergeReset().catch(() => {});
       result = null;
-      await api.mergeReset().catch(() => {});
     }
-    for (const file of Array.from(files ?? [])) {
+    const list = Array.from(files ?? []);
+    if (input) input.value = '';
+    if (stacking) {
+      for (const file of list) {
+        try {
+          const info = await api.exposure(file);
+          frames = [...frames, { ...info, name: file.name, file, uid: ++uid }];
+        } catch {
+          frames = [...frames, { name: file.name, file, uid: ++uid }];
+        }
+      }
+      return;
+    }
+    await decodeAll(list.map((file) => ({ file })));
+  }
+
+  /** Decode frames into the exposure merge, one at a time. */
+  async function decodeAll(entries) {
+    for (const { file } of entries) {
       app.busy = true;
       app.busyKey = 'busy.mergeAdd';
       app.busyParams = { file: file.name };
       try {
         const info = await api.mergeAdd(file);
-        frames = [...frames, { ...info, file: file.name, uid: ++uid }];
+        frames = [...frames, { ...info, file, uid: ++uid }];
         await check();
       } catch (err) {
         error = errorText(err);
@@ -114,15 +180,14 @@
         app.progress = null;
       }
     }
-    if (input) input.value = '';
   }
 
   async function remove(index) {
     error = '';
     result = null;
-    await api.mergeRemove(index).catch(() => {});
+    if (!stacking) await api.mergeRemove(index).catch(() => {});
     frames = frames.filter((_, i) => i !== index);
-    await check();
+    if (!stacking) await check();
   }
 
   /** Keep one of the brackets that were found, and merge it. */
@@ -142,11 +207,50 @@
     error = '';
     result = null;
     await api.mergeReset().catch(() => {});
+    await api.stackReset().catch(() => {});
     frames = [];
     findings = [];
   }
 
-  async function run() {
+  function run() {
+    return stacking ? runStack() : runMerge();
+  }
+
+  /** The reference goes in first, since the module lines everything up with
+   *  the first frame and keeps its metadata; the rest follow in shooting order. */
+  async function runStack() {
+    error = '';
+    result = null;
+    const feed = [reference, ...ordered.filter((f) => f !== reference)];
+    app.busy = true;
+    app.busyKey = 'busy.stack';
+    app.busyParams = {};
+    try {
+      await api.stackBegin(mode, align);
+      for (const [k, frame] of feed.entries()) {
+        app.progress = { fraction: k / (feed.length + 1), code: 'stack_frame',
+                         params: { n: k + 1, total: feed.length, file: frame.name } };
+        await api.stackAdd(frame.file);
+      }
+      app.progress = { fraction: feed.length / (feed.length + 1), code: 'stacking' };
+      const info = await api.stackFinish();
+      const names = (f) => f.frames.map((i) => feed[i]?.name).filter(Boolean).join(', ');
+      result = {
+        ...info,
+        referenceName: feed[0].name,
+        findings: (info.stack?.findings ?? []).map((f) => ({ ...f, names: names(f) })),
+      };
+    } catch (err) {
+      error = errorText(err);
+      await api.stackReset().catch(() => {});
+    } finally {
+      app.busy = false;
+      app.busyKey = '';
+      app.progress = null;
+    }
+  }
+
+  async function runMerge() {
     error = '';
     result = null;
     app.busy = true;
@@ -188,9 +292,17 @@
   }
 
   const percent = (value) => `${n(value * 100, value < 0.01 ? 2 : 1)} %`;
-  const maxShift = $derived(result?.merge
-    ? Math.max(0, ...result.merge.shifts.flatMap(([x, y]) => [Math.abs(x), Math.abs(y)]))
-    : 0);
+  const shiftsOf = (r) => r?.merge?.shifts ?? r?.stack?.added?.map((a) => a.shift) ?? [];
+  const maxShift = $derived(Math.max(0, ...shiftsOf(result)
+    .flatMap(([x, y]) => [Math.abs(x), Math.abs(y)])));
+  // Focus breathing, as the most any frame had to be resized, in per cent.
+  const breathing = $derived(Math.max(0, ...(result?.stack?.added ?? [])
+    .filter((a) => !a.left_out).map((a) => Math.abs(a.scale - 1) * 100)));
+  // Frames brought to the reference's exposure, when they were not shot at it.
+  const rescaled = $derived((result?.stack?.added ?? [])
+    .filter((a) => !a.left_out && Math.abs(a.stops) > 0.1).length);
+  const stackFound = (finding) => t(`merge.stack.found.${finding.code}`,
+    { frames: finding.names, count: finding.frames.length, used: finding.value });
 </script>
 
 <Meta title={t('seo.merge.title')} description={t('seo.merge.description')} path="/merge" />
@@ -212,11 +324,29 @@
   <main>
     <div class="mx-auto grid max-w-[880px] gap-4">
       <h1 class="pagetitle">{t('merge.heading')}</h1>
-      <p class="lead">{t('merge.lead')}</p>
+
+      <div class="modes" role="radiogroup" aria-label={t('merge.mode')}>
+        {#each MODES as m (m)}
+          <button
+            type="button"
+            role="radio"
+            aria-checked={mode === m}
+            class="mode"
+            class:on={mode === m}
+            disabled={app.busy}
+            onclick={() => choose(m)}
+          >
+            <strong>{t(`merge.mode.${m}`)}</strong>
+            <span>{t(`merge.mode.${m}.hint`)}</span>
+          </button>
+        {/each}
+      </div>
+
+      <p class="lead">{t(stacking ? `merge.stack.lead.${mode}` : 'merge.lead')}</p>
 
       <details class="how">
-        <summary>{t('merge.how.title')}</summary>
-        <p>{t('merge.how.body')}</p>
+        <summary>{t(stacking ? 'merge.stack.how.title' : 'merge.how.title')}</summary>
+        <p>{t(stacking ? `merge.stack.how.${mode}` : 'merge.how.body')}</p>
       </details>
 
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -237,10 +367,12 @@
           onchange={(e) => add(e.currentTarget.files)}
         />
         <strong>
-          <span class="on-hover">{frames.length ? t('merge.dropMore') : t('merge.drop')}</span>
-          <span class="on-touch">{frames.length ? t('merge.dropMore.touch') : t('merge.drop.touch')}</span>
+          <span class="on-hover">{frames.length ? t('merge.dropMore')
+            : t(stacking ? 'merge.stack.drop' : 'merge.drop')}</span>
+          <span class="on-touch">{frames.length ? t('merge.dropMore.touch')
+            : t(stacking ? 'merge.stack.drop.touch' : 'merge.drop.touch')}</span>
         </strong>
-        <span>{t('merge.formats')}</span>
+        <span>{t(stacking ? `merge.stack.formats.${mode}` : 'merge.formats')}</span>
       </label>
 
       {#if error}<p class="error">{error}</p>{/if}
@@ -283,27 +415,29 @@
 
         <section class="panel">
           <div class="flex items-center justify-between">
-            <h2>{t('merge.frames')}</h2>
+            <h2>{t(stacking ? 'merge.stack.frames' : 'merge.frames')}</h2>
             <button class="ghost small" onclick={clear}>{t('merge.clear')}</button>
           </div>
           <ul class="frames">
-            {#each ordered as frame (frame.uid)}
+            {#each ordered as frame, k (frame.uid)}
               <li class:is-reference={frame === reference}>
-                <span class="stops">{signed(stopsOf(frame), 1)} EV</span>
+                <span class="stops">{stacking ? `${k + 1}` : `${signed(stopsOf(frame), 1)} EV`}</span>
                 <span class="name">
                   {frame.name}
                   {#if frame === reference}<em>{t('merge.reference')}</em>{/if}
-                  {#if dialIgnored.has(frames.indexOf(frame))}
+                  {#if !stacking && dialIgnored.has(frames.indexOf(frame))}
                     <em class="warn" title={t('merge.unhonouredWhy')}>
                       {t('merge.dialled', { ev: signed(frame.exposure_comp ?? 0, 1) })}
                     </em>
                   {/if}
                 </span>
                 <span class="shot">
-                  {t('merge.exposureOf', {
-                    shutter: shutter(frame.shutter_s),
-                    aperture: loose(frame.aperture), iso: frame.iso,
-                  })}
+                  {frame.shutter_s > 0
+                    ? t('merge.exposureOf', {
+                      shutter: shutter(frame.shutter_s),
+                      aperture: loose(frame.aperture), iso: frame.iso,
+                    })
+                    : ''}
                 </span>
                 <button
                   class="ghost small"
@@ -313,7 +447,11 @@
             {/each}
           </ul>
           <!-- The range is the distance between the darkest and brightest frame of a bracket. -->
-          {#if split}
+          {#if stacking}
+            <p class="range">{frames.length > 1
+              ? t('merge.stack.count', { count: frames.length })
+              : t('merge.needTwo')}</p>
+          {:else if split}
             <p class="range">{t('merge.split.pick')}</p>
           {:else if frames.length > 1}
             <p class="range">{t('merge.range', { stops: n(range, 1) })}</p>
@@ -337,9 +475,10 @@
             <input type="checkbox" bind:checked={align} />
             <span>
               <strong>{t('merge.align')}</strong>
-              <small>{t('merge.alignHint')}</small>
+              <small>{t(stacking ? `merge.stack.alignHint.${mode}` : 'merge.alignHint')}</small>
             </span>
           </label>
+          {#if !stacking}
           <div class="option slider">
             <div class="row">
               <strong>{t('merge.deghost')}</strong>
@@ -365,20 +504,53 @@
             </label>
             <small>{t('merge.deghostHint')}</small>
           </div>
+          {/if}
           <!--
             Still offered when the frames fall into several brackets, since refusing
             outright would be deciding for someone who may have meant it.
           -->
           <button
             class="run"
-            class:secondary={split}
+            class:secondary={split && !stacking}
             disabled={frames.length < 2 || app.busy}
             onclick={run}
           >{app.busy
-              ? t('merge.running')
-              : split
-                ? t('merge.split.anyway', { count: frames.length })
-                : t('merge.run')}</button>
+              ? t(stacking ? 'merge.stack.running' : 'merge.running')
+              : stacking
+                ? t(`merge.stack.run.${mode}`, { count: frames.length })
+                : split
+                  ? t('merge.split.anyway', { count: frames.length })
+                  : t('merge.run')}</button>
+        </section>
+      {/if}
+
+      {#if result?.stack}
+        <section class="panel done">
+          <h2>{t('merge.stack.result')}</h2>
+          <p>{t(`merge.stack.resultBody.${result.stack.mode}`, {
+            used: result.stack.used,
+            reference: result.referenceName,
+          })}</p>
+          <ul class="notes">
+            {#if align}
+              <li>{maxShift > 0
+                ? t('merge.shifts', { pixels: maxShift })
+                : t('merge.noShifts')}</li>
+            {/if}
+            {#if breathing >= 0.05}
+              <li>{t('merge.stack.breathing', { percent: n(breathing, 1) })}</li>
+            {/if}
+            {#if rescaled}
+              <li>{t('merge.stack.rescaled', { count: rescaled })}</li>
+            {/if}
+            {#each result.findings as finding (finding.code + finding.frames)}
+              <li class="warn">{stackFound(finding)}</li>
+            {/each}
+          </ul>
+          <div class="flex flex-wrap gap-2.5">
+            <button onclick={develop}>{t('merge.develop')}</button>
+            <button class="ghost" onclick={clear}>{t('merge.stack.again')}</button>
+          </div>
         </section>
       {/if}
 
@@ -445,6 +617,27 @@
   }
 
   .lead { margin: 0; font-size: 15px; line-height: 1.6; color: var(--color-muted); }
+
+  /* How the frames are combined: five cards, as many to a row as fit. */
+  .modes {
+    display: grid; gap: 8px;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    @include phone { grid-template-columns: 1fr 1fr; }
+  }
+  .mode {
+    @include surface;
+    display: grid; gap: 3px; align-content: start; text-align: left;
+    padding: 10px 12px; min-height: 0;
+    background: var(--color-panel); color: var(--color-ink);
+    box-shadow: inset 0 0 0 1px var(--color-line);
+    strong { font-size: 13.5px; font-weight: 650; }
+    span { font-size: 12px; line-height: 1.4; color: var(--color-muted); font-weight: 400; }
+    &:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--color-accent); }
+    &.on {
+      box-shadow: inset 0 0 0 2px var(--color-accent);
+      strong { color: var(--color-accent); }
+    }
+  }
 
   .how {
     font-size: 13.5px; color: var(--color-muted);

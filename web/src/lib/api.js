@@ -59,13 +59,15 @@ export function ready() {
 
 function call(type, body = {}, hooks = {}, transfer = []) {
   const id = nextId++;
-  // Settings arrive as Svelte state proxies, which structured clone refuses.
-  const { buffer, ...rest } = body;
+  // Settings arrive as Svelte state proxies, which structured clone refuses,
+  // so they go through JSON. Bytes and files go over as they are: cloning a
+  // File passes a reference, not its contents.
+  const raw = Object.entries(body).filter(([, v]) => v instanceof ArrayBuffer || v instanceof Blob);
+  const rest = Object.fromEntries(Object.entries(body).filter(([k]) => !raw.some(([r]) => r === k)));
   // `type` and `id` go on last: the callers still pass an `id` field of their
   // own (the session id the server used to hand out), and letting it win here
   // would address the reply to a call nobody is waiting for.
-  const payload = { ...JSON.parse(JSON.stringify(rest)), type, id };
-  if (buffer) payload.buffer = buffer;
+  const payload = { ...JSON.parse(JSON.stringify(rest)), ...Object.fromEntries(raw), type, id };
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject, ...hooks });
     ensure().postMessage(payload, transfer);
@@ -168,6 +170,25 @@ export async function mergeAdd(file) {
 
 export async function mergeFinish(options) {
   const info = await call('mergeFinish', options);
+  return { ...info, id: photoId(), original_name: info.file };
+}
+
+/** How a file says it was taken (shutter, aperture, ISO, when), from its
+ *  first bytes, without decoding it. */
+export async function exposure(file) {
+  const buffer = await file.slice(0, 512 * 1024).arrayBuffer();
+  return call('exposure', { buffer }, {}, [buffer]);
+}
+
+/** Building a stack: begun with its mode, then the files one at a time (the
+ *  worker reads each and lets it go), then one call to finish. The result
+ *  replaces whatever the wizard was developing. */
+export const stackBegin = (mode, align) => call('stackBegin', { mode, align });
+export const stackAdd = (file) => call('stackAdd', { file });
+export const stackReset = () => call('stackReset');
+
+export async function stackFinish() {
+  const info = await call('stackFinish');
   return { ...info, id: photoId(), original_name: info.file };
 }
 

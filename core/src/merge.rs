@@ -242,7 +242,7 @@ pub struct Notes {
 }
 
 // Reading the exposure off the pixels.
-const MEASURE_EDGE: usize = 400;
+pub(crate) const MEASURE_EDGE: usize = 400;
 const MEASURE_MIN_PIXELS: usize = 200;
 // How far the metadata and the pixels have to disagree before the pixels win.
 const METADATA_WRONG_EV: f32 = 0.75;
@@ -313,6 +313,12 @@ pub fn measured_stops(a: &Image, b: &Image) -> Option<(f32, f32)> {
     ratios.sort_by(|x, y| x.partial_cmp(y).unwrap());
     let at = |f: f32| ratios[((ratios.len() - 1) as f32 * f) as usize];
     Some((at(0.5).log2(), (at(0.75) / at(0.25)).log2()))
+}
+
+/// Whether a frame's pixels put it far enough from where its metadata says,
+/// and agree with themselves closely enough, to be believed over it.
+pub fn overrules(claimed: f32, measured: f32, spread: f32) -> bool {
+    (measured - claimed).abs() > METADATA_WRONG_EV && spread < MEASURE_SPREAD_EV
 }
 
 /// The spread shot noise alone puts on a reading, in stops.
@@ -387,7 +393,7 @@ pub fn merge(frames: &[Frame], options: Options) -> Result<(Image, Notes), Strin
         let Some((measured, spread)) = measured_stops(&frames[reference].linear,
                                                       &frames[j].linear) else { continue };
         notes.measured[j] = Some(measured);
-        if (measured - notes.stops[j]).abs() > METADATA_WRONG_EV && spread < MEASURE_SPREAD_EV {
+        if overrules(notes.stops[j], measured, spread) {
             // Overruling a file's own metadata is the strongest thing this code
             // does to a photograph without being asked.
             notes.findings.push(Finding::new("metadata_overruled", vec![j],

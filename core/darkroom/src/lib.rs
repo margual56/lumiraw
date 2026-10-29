@@ -3,11 +3,13 @@
 mod bracket;
 mod grades;
 mod photo;
+pub mod stack;
 pub mod wasm;
 
 pub use bracket::{finding_json, notes_json, Bracket, FrameInfo};
 pub use grades::{clear_cube, curves, load_cube, load_look, looks, CubeInfo};
 pub use photo::{Developed, Encoded, Export, Exported, Photo, Size};
+pub use stack::{Stack, StackMode};
 
 pub use lumiraw_core::grade::Settings as Edit;
 pub use lumiraw_core::develop::Region;
@@ -67,6 +69,14 @@ pub fn preview(bytes: &[u8], long_edge: usize) -> Result<Image, DecodeError> {
 /// the EXIF of raws and of JPEG, PNG and WebP alike.
 pub fn captured(bytes: &[u8]) -> i64 {
     lumiraw_core::decode::captured(bytes)
+}
+
+/// How a file says it was taken, without decoding it, for a list of frames.
+pub fn exposure(bytes: &[u8]) -> serde_json::Value {
+    let m = lumiraw_core::decode::metadata(bytes);
+    serde_json::json!({"iso": m.iso, "shutter_s": m.shutter_s, "aperture": m.aperture,
+                       "exposure_comp": m.exposure_comp, "focal_mm": m.focal_mm,
+                       "captured_s": m.captured_s})
 }
 
 /// The export formats, for a picker: `{id, label, ext, mime}` each.

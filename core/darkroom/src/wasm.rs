@@ -1,12 +1,13 @@
 //! The API as a wasm module, for the web app's worker.
 
-use crate::{Bracket, Edit, Encoded, Export, Lenses, MergeOptions, Photo, Size};
+use crate::{Bracket, Stack, StackMode, Edit, Encoded, Export, Lenses, MergeOptions, Photo, Size};
 use serde_json::json;
 use std::cell::RefCell;
 
 thread_local! {
     static LENSES: RefCell<Option<Lenses>> = RefCell::new(None);
     static BRACKET: RefCell<Bracket> = RefCell::new(Bracket::new());
+    static STACK: RefCell<Option<Stack>> = RefCell::new(None);
     static PHOTO: RefCell<Option<Photo>> = RefCell::new(None);
     static JSON: RefCell<Vec<u8>> = RefCell::new(Vec::new());
     static PIXELS: RefCell<Vec<u8>> = RefCell::new(Vec::new());
@@ -337,6 +338,14 @@ pub extern "C" fn ar_captured(ptr: *const u8, len: usize) -> i32 {
     0
 }
 
+/// How a file says it was taken, without decoding it. The start of the file
+/// is enough.
+#[no_mangle]
+pub extern "C" fn ar_exposure(ptr: *const u8, len: usize) -> i32 {
+    set_json(crate::exposure(unsafe { slice(ptr, len) }));
+    0
+}
+
 /// Before/after: the developed picture in the primary buffer, the same with
 /// every automatic correction off in the secondary one.
 #[no_mangle]
@@ -462,6 +471,60 @@ pub extern "C" fn ar_merge_finish(align: i32, deghost: f32) -> i32 {
             0
         }
         Err(e) => set_error(&e, "merge"),
+    }
+}
+
+// -- a stack ---------------------------------------------------------------
+
+/// Start a stack, dropping any other: `mode` is mean, median, lighten or focus.
+#[no_mangle]
+pub extern "C" fn ar_stack_begin(mode_ptr: *const u8, mode_len: usize, align: i32) -> i32 {
+    let code = text_at(mode_ptr, mode_len);
+    let Some(mode) = StackMode::from_code(&code) else {
+        return set_error(&format!("no such stack: {code}"), "stack");
+    };
+    STACK.with(|s| *s.borrow_mut() = Some(Stack::new(mode, align != 0)));
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn ar_stack_reset() {
+    STACK.with(|s| *s.borrow_mut() = None);
+}
+
+/// Decode a frame and fold it into the stack.
+#[no_mangle]
+pub extern "C" fn ar_stack_add(name_ptr: *const u8, name_len: usize, ptr: *const u8,
+                               len: usize) -> i32 {
+    let name = text_at(name_ptr, name_len);
+    let added = STACK.with(|s| match s.borrow_mut().as_mut() {
+        Some(stack) => Some(stack.add(&name, unsafe { slice(ptr, len) })),
+        None => None,
+    });
+    match added {
+        Some(Ok(a)) => {
+            set_json(crate::stack::added_json(&a));
+            0
+        }
+        Some(Err(e)) => set_decode_error(&name, e),
+        None => set_error("no stack has been started", "stack"),
+    }
+}
+
+/// Stack what was folded in; the result becomes the photograph being developed.
+#[no_mangle]
+pub extern "C" fn ar_stack_finish() -> i32 {
+    let Some(stack) = STACK.with(|s| s.borrow_mut().take()) else {
+        return set_error("no stack has been started", "stack");
+    };
+    let stacked = LENSES.with(|l| stack.finish(l.borrow().as_ref()));
+    match stacked {
+        Ok((photo, notes)) => {
+            set_json(kit::with(describe(&photo), json!({"stack": notes})));
+            PHOTO.with(|p| *p.borrow_mut() = Some(photo));
+            0
+        }
+        Err(e) => set_error(&e, "stack"),
     }
 }
 

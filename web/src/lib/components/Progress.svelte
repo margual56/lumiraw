@@ -11,7 +11,7 @@
   const fraction = $derived(app.job ? app.job.progress : (app.progress?.fraction ?? 0));
   const label = $derived.by(() => {
     if (app.job) return `${stageText(app.job.stage, app.job.stage_params)} · ${n(app.job.elapsed, 0)} s`;
-    if (app.progress) return stageText(app.progress.code, {});
+    if (app.progress) return stageText(app.progress.code, app.progress.params ?? {});
     return app.busyKey ? t(app.busyKey, app.busyParams) : '';
   });
 </script>

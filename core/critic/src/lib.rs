@@ -8,6 +8,7 @@
 pub mod faces;
 pub mod graph;
 pub mod net;
+#[cfg(feature = "module")]
 mod wasm;
 
 use net::{Kind, Layer, Map};

@@ -11,4 +11,5 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 lumiraw-core = { path = ".." }
 kit = { path = "../kit" }
+critic = { path = "../critic", default-features = false }
 serde_json = "1"

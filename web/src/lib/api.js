@@ -145,6 +145,35 @@ export async function compare(body) {
 /** The named grades and their control points, once per session. */
 export const looks = () => call('looks');
 
+/** The side a reference picture is read at for matching its colour. */
+const REFERENCE = 512;
+
+/**
+ * Wheels that bring the open photograph's colour toward a reference picture:
+ * a raw (its embedded preview) or a JPEG, PNG or WebP.
+ */
+export async function matchColour(file, settings) {
+  let pixels, width, height;
+  if (/\.(jpe?g|png|webp|avif|gif)$/i.test(file.name) || file.type.startsWith('image/')) {
+    const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const scale = Math.min(1, REFERENCE / Math.max(bitmap.width, bitmap.height));
+    width = Math.max(1, Math.round(bitmap.width * scale));
+    height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = new OffscreenCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+    pixels = ctx.getImageData(0, 0, width, height).data.buffer;
+  } else {
+    ({ pixels, width, height } = await preview(file, REFERENCE));
+  }
+  return call('match', { settings, pixels, width, height }, {}, [pixels]);
+}
+
+/** The skin of the open photograph's faces: `{hue, chroma, faces}`, or
+ *  `{faces: 0}` when there are none. */
+export const skin = (settings) => call('skin', { settings });
+
 /** The four curves the pipeline will evaluate, baked, for drawing. */
 export const curves = (body) => call('curves', body);
 

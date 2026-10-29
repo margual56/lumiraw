@@ -7,3 +7,9 @@ publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[features]
+# The wasm module's own exports. Off when the pipeline links the crate in for
+# its networks, so the developer's module does not carry the culling one's API.
+default = ["module"]
+module = []

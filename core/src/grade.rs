@@ -12,6 +12,9 @@ pub const EPS: f32 = 1e-6;
 /// The most the automatic white balance may move one channel, in stops.
 pub const WB_LIMIT_EV: f32 = 0.8;
 
+/// How much of vibrance and the wheels is kept off skin unless asked otherwise.
+pub const SKIN_PROTECT: f32 = 0.55;
+
 /// Taste knobs.  The *decisions* stay automatic; these scale them.
 #[derive(Clone, Debug)]
 pub struct Preset {
@@ -185,6 +188,12 @@ pub struct Settings {
     /// Eight hue bands, each with a hue, a saturation and a lightness. What
     /// curves cannot do: pick out one colour and leave the rest.
     pub mixer: crate::mixer::Mixer,
+    /// Colour grading wheels; see `wheels.rs`.
+    pub wheels: crate::wheels::Wheels,
+    /// What skin looks like here, and how much of vibrance and the wheels to
+    /// keep off it, 0..1.
+    pub skin: Skin,
+    pub skin_protect: f32,
     /// How much of the loaded 3D table to apply, 0..1.
     pub lut: f32,
     /// A named look (`looks.rs`), by id, and how much of it; empty for none.
@@ -219,6 +228,9 @@ impl Default for Settings {
             preset: "natural".into(),
             curves: curve::Stack::identity(),
             mixer: crate::mixer::Mixer::default(),
+            wheels: crate::wheels::Wheels::default(),
+            skin: Skin::default(),
+            skin_protect: SKIN_PROTECT,
             lut: 0.0,
             look: String::new(),
             look_strength: 1.0,
@@ -264,6 +276,9 @@ impl Settings {
         }
         s.curves = curve::Stack::from_json(obj.get("curves"));
         s.mixer = crate::mixer::Mixer::from_json(obj.get("mixer"));
+        s.wheels = crate::wheels::Wheels::from_json(obj.get("wheels"));
+        s.skin = Skin::from_json(obj.get("skin"));
+        s.skin_protect = f("skin_protect").unwrap_or(SKIN_PROTECT).clamp(0.0, 1.0);
         s.lut = f("lut").unwrap_or(0.0).clamp(0.0, 1.0);
         s.look = obj.get("look").and_then(|x| x.as_str())
             .filter(|id| *id != "none" && crate::looks::find(id).is_some())
@@ -301,13 +316,50 @@ fn rect_of(v: &Value) -> Option<Rect> {
     Some((g(0), g(1), g(2), g(3)))
 }
 
-// Hue of average skin in Oklab, so the saturation stage can leave faces alone.
-fn skin_hue() -> f32 {
-    let r = kit::srgb_decode_scalar(0.76);
-    let g = kit::srgb_decode_scalar(0.57);
-    let b = kit::srgb_decode_scalar(0.46);
-    let (_, a, bb) = kit::rgb_to_oklab_px(r, g, b);
-    bb.atan2(a)
+/// What skin looks like in this photograph, so the stages that move colour
+/// can leave faces alone: an Oklab hue and chroma, measured from the faces in
+/// the frame (see `skin`), or a typical skin when nobody has been found.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Skin {
+    pub hue: f32,
+    pub chroma: f32,
+    /// Whether this was measured on this photograph's faces.
+    pub measured: bool,
+}
+
+impl Default for Skin {
+    fn default() -> Self {
+        let lin = [0.76f32, 0.57, 0.46].map(kit::srgb_decode_scalar);
+        let (_, a, b) = kit::rgb_to_oklab_px(lin[0], lin[1], lin[2]);
+        Skin { hue: b.atan2(a), chroma: a.hypot(b), measured: false }
+    }
+}
+
+impl Skin {
+    pub fn from_json(v: Option<&Value>) -> Skin {
+        let read = |k: &str| v.and_then(|v| v.get(k)).and_then(|x| x.as_f64()).map(|x| x as f32);
+        match (read("hue"), read("chroma")) {
+            (Some(hue), Some(chroma)) if chroma > 0.005 =>
+                Skin { hue, chroma: chroma.min(0.3), measured: true },
+            _ => Skin::default(),
+        }
+    }
+
+    /// How much a colour is this skin, 0..1. A measured skin is a narrower
+    /// target than the typical one: it is known, so less has to be guessed.
+    pub fn likeness(&self, hue: f32, chroma: f32) -> f32 {
+        let mut d = (hue - self.hue).abs();
+        while d > std::f32::consts::PI {
+            d = (std::f32::consts::TAU - d).abs();
+        }
+        if !self.measured {
+            return (1.0 - kit::smoothstep(0.25, 0.60, d)) * (1.0 - kit::smoothstep(0.10, 0.20, chroma));
+        }
+        let c = self.chroma;
+        (1.0 - kit::smoothstep(0.15, 0.40, d))
+            * kit::smoothstep(0.25 * c, 0.55 * c, chroma)
+            * (1.0 - kit::smoothstep(1.6 * c, 2.6 * c, chroma))
+    }
 }
 
 // -------------------------------------------------------------------------
@@ -598,14 +650,6 @@ pub fn apply_zones(l: f32, shadows: f32, midtones: f32, highlights: f32) -> f32 
     (l + ZONE_RANGE * (shadows * ws + midtones * wm + highlights * wh)).clamp(0.0, 1.0)
 }
 
-fn skin_protection(hue: f32, chroma: f32, skin: f32) -> f32 {
-    let mut d = (hue - skin).abs();
-    while d > std::f32::consts::PI {
-        d = (2.0 * std::f32::consts::PI - d).abs();
-    }
-    (1.0 - kit::smoothstep(0.25, 0.60, d)) * (1.0 - kit::smoothstep(0.10, 0.20, chroma))
-}
-
 /// The part of a plane the estimators look at, at no more than 1024 pixels
 /// on its long edge.
 fn measured(p: &Plane, stats_rect: Option<Rect>) -> Plane {
@@ -788,12 +832,11 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     };
     d.vibrance = boost;
     if (boost - 1.0).abs() > 0.001 {
-        let skin = skin_hue();
         for i in 0..n {
             let c = chroma.d[i];
             let hue = kit::fast_atan2(b.d[i], a.d[i]);
             let mut weight = 1.0 - kit::smoothstep(0.10, 0.30, c);
-            weight *= 1.0 - 0.55 * skin_protection(hue, c, skin);
+            weight *= 1.0 - s.skin_protect * s.skin.likeness(hue, c);
             let gain = 1.0 + (boost - 1.0) * weight;
             a.d[i] *= gain;
             b.d[i] *= gain;
@@ -972,6 +1015,31 @@ pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A photograph nobody has measured protects skin exactly as before there
+    /// was any measuring; a measured skin is a narrower target.
+    #[test]
+    fn skin_is_protected_as_measured() {
+        let typical = Skin::default();
+        let old = |hue: f32, chroma: f32| {
+            let mut d = (hue - typical.hue).abs();
+            while d > std::f32::consts::PI {
+                d = (2.0 * std::f32::consts::PI - d).abs();
+            }
+            (1.0 - kit::smoothstep(0.25, 0.60, d)) * (1.0 - kit::smoothstep(0.10, 0.20, chroma))
+        };
+        for (hue, chroma) in [(0.9, 0.05), (1.3, 0.12), (-2.0, 0.08), (0.5, 0.18)] {
+            assert_eq!(typical.likeness(hue, chroma), old(hue, chroma));
+        }
+        let measured = Skin::from_json(Some(&json!({"hue": 0.8, "chroma": 0.07})));
+        assert!(measured.measured);
+        assert!(measured.likeness(0.8, 0.07) > 0.99);
+        assert!(measured.likeness(1.3, 0.07) < 0.05, "a yellow taken for skin");
+        assert!(measured.likeness(0.8, 0.005) < 0.05, "a grey taken for skin");
+        // No faces found reads as the typical skin.
+        assert_eq!(Skin::from_json(Some(&json!({"faces": 0}))), typical);
+        assert_eq!(Skin::from_json(Some(&json!(false))), typical);
+    }
 
     /// The interface draws the white balance and exposure boxes on the framed
     /// picture.

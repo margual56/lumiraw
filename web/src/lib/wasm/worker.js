@@ -15,6 +15,7 @@ const session = {
   gathering: null, // the same, for a stack still being gathered
   lut: null,       // the loaded .cube's bytes
   looks: {},       // look id -> its table's bytes, as each was first asked for
+  models: {},      // network name -> its bytes, as each was first needed
 };
 
 import { stamp } from './stamp.js';
@@ -48,6 +49,26 @@ async function ensureLook(settings) {
   } catch {
     // Not reachable now; asked again with the next request that wants it.
   }
+}
+
+// The networks the developer runs (see core/darkroom/src/models.rs), fetched
+// the first time something needs one. They share the culling page's files.
+const MODEL_FILES = import.meta.glob('./critic/face-detector.bin',
+                                     { query: '?url', import: 'default', eager: true });
+
+async function ensureModel(name) {
+  if (session.models[name]) return;
+  const url = MODEL_FILES[`./critic/${name}.bin`];
+  if (!url) throw new Error(`no network called ${name}`);
+  const bytes = await fetchBytes(url);
+  loadModel(name, bytes);
+  session.models[name] = bytes;
+}
+
+function loadModel(name, bytes) {
+  const rc = withString(name, (ip, il) =>
+    withBytes(new Uint8Array(bytes), (p, n) => wasm.ar_model_load(ip, il, p, n)));
+  if (rc !== 0) fail(readJson());
 }
 
 function loadLook(id, bytes) {
@@ -266,6 +287,7 @@ async function recover() {
   try {
     if (saved.lut) withBytes(new Uint8Array(saved.lut), (p, n) => wasm.ar_lut_load(p, n));
     for (const [id, bytes] of Object.entries(saved.looks)) loadLook(id, bytes);
+    for (const [name, bytes] of Object.entries(saved.models)) loadModel(name, bytes);
     if (saved.frames.length || saved.merged) await replayMerge();
     if (!saved.merged) await restorePhoto();
   } catch {
@@ -274,7 +296,7 @@ async function recover() {
     ready = init();
     await ready;
     Object.assign(session, { photo: null, frames: [], merged: null, stacked: null,
-                             gathering: null, lut: null, looks: {} });
+                             gathering: null, lut: null, looks: {}, models: {} });
   }
 }
 
@@ -367,6 +389,24 @@ async function compare({ settings, size }) {
     toggles: info.toggles ?? [],
     report: info.report ?? {},
   };
+}
+
+/** Wheels that bring the open photograph toward a reference's colour. */
+function match({ settings, pixels, width, height }) {
+  const rc = settingsPointer(settings, (sp, sl) =>
+    withBytes(new Uint8Array(pixels), (p) => wasm.ar_match(sp, sl, p, width, height)));
+  const info = readJson();
+  if (rc !== 0) fail(info);
+  return info.wheels;
+}
+
+/** What skin looks like on the open photograph's faces. */
+async function skin({ settings }) {
+  await ensureModel('face-detector');
+  const rc = settingsPointer(settings, (sp, sl) => wasm.ar_skin(sp, sl));
+  const info = readJson();
+  if (rc !== 0) fail(info);
+  return info;
 }
 
 /** Every named grade, with the control points that define it. */
@@ -511,7 +551,7 @@ async function stackFinish() {
 }
 
 const HANDLERS = { open, render, full, region, releaseRegion, thumbnail, preview, captured,
-                   compare, looks, curves,
+                   compare, looks, curves, match, skin,
                    lutLoad, lutClear,
                    export: exportImage,
                    mergeAdd, mergeRemove, mergeReset, mergeFinish, mergeCheck,

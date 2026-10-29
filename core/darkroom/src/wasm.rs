@@ -563,6 +563,51 @@ pub extern "C" fn ar_look_load(id_ptr: *const u8, id_len: usize,
     }
 }
 
+/// Wheels matching the open photograph's colour to a reference picture's,
+/// sRGB RGBA of `w` by `h`.
+#[no_mangle]
+pub extern "C" fn ar_match(settings_ptr: *const u8, settings_len: usize,
+                           ptr: *const u8, w: i32, h: i32) -> i32 {
+    let edit = edit_at(settings_ptr, settings_len);
+    let (w, h) = (w.max(0) as usize, h.max(0) as usize);
+    let rgba = unsafe { slice(ptr, w * h * 4) };
+    match with_photo(|photo| photo.match_colour(&edit, rgba, w, h)) {
+        Some(wheels) => {
+            set_json(json!({"wheels": wheels}));
+            0
+        }
+        None => set_error("no image open", "no_session"),
+    }
+}
+
+/// Hold one of the networks in `models::NAMES`.
+#[no_mangle]
+pub extern "C" fn ar_model_load(name_ptr: *const u8, name_len: usize,
+                                ptr: *const u8, len: usize) -> i32 {
+    let name = text_at(name_ptr, name_len);
+    match crate::models::load(&name, unsafe { slice(ptr, len) }) {
+        Ok(()) => {
+            set_json(json!({"model": name}));
+            0
+        }
+        Err(why) => set_error(&why, "bad_model"),
+    }
+}
+
+/// The skin of the open photograph's faces; see `Photo::skin`.
+#[no_mangle]
+pub extern "C" fn ar_skin(settings_ptr: *const u8, settings_len: usize) -> i32 {
+    let edit = edit_at(settings_ptr, settings_len);
+    match with_photo(|photo| photo.skin(&edit)) {
+        Some(Ok(v)) => {
+            set_json(v);
+            0
+        }
+        Some(Err(why)) => set_error(&why, "no_model"),
+        None => set_error("no image open", "no_session"),
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn ar_looks() -> i32 {
     set_json(crate::looks());

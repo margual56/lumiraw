@@ -2,6 +2,7 @@
 
 mod bracket;
 mod grades;
+pub mod models;
 mod photo;
 pub mod stack;
 pub mod wasm;

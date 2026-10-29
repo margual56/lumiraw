@@ -21,6 +21,15 @@
   });
 
   const offset = (v) => (v === 0 ? t('vibrance.auto') : signed(v));
+  const share = (v) => `${Math.round(v * 100)}%`;
+
+  /** Where the skin being protected came from, said plainly. */
+  const skinNow = $derived.by(() => {
+    const skin = app.settings.skin;
+    if (skin === null) return t('skin.measuring');
+    if (!skin?.faces) return t('skin.typical');
+    return t('skin.measured', { count: skin.faces });
+  });
 </script>
 
 <div class="stage">
@@ -30,6 +39,9 @@
     <p class="lede">{t('vibrance.lede')}</p>
     <Slider label={t('vibrance.label')} bind:value={app.settings.vibrance}
             tone="vib" step={0.02} format={offset} />
+    <Slider label={t('skin.protect')} bind:value={app.settings.skin_protect}
+            min={0} max={1} step={0.05} format={share} />
+    <p class="now">{skinNow}</p>
 
     <h3>{t('finish.title')}</h3>
     <p class="lede">{t('finish.lede')}</p>

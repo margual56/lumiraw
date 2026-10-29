@@ -770,7 +770,7 @@ mod tests {
                    0.06 + 0.1 * (x + y) / 1060.0];
         }
         let mut dev = Development::from_frame("test", img, Meta::default(), Vec::new(), None);
-        let s = Settings::from_json(&json!({"clarity": 0.6, "denoise": 0.5, "vignette": 0.7,
+        let s = Settings::from_json(&json!({"clarity": 0.6, "denoise": 0.5, "vignette": 0.7, "dehaze": 0.6,
             "grain": 0.5, "filters": [{"kind": "linear", "a": [0.5, 0.0], "b": [0.5, 0.7],
             "exposure": -0.8}]}));
         let whole = dev.render_region(&s, (0.5, 0.5), (10_000, 10_000), None);

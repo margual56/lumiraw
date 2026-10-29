@@ -116,12 +116,14 @@ pub struct Decisions {
     pub contrast: (f32, f32),
     /// The vibrance boost as applied, one when it was not.
     pub vibrance: f32,
+    /// The colour of the air dehazing measured, when it ran.
+    pub air: Option<[f32; 3]>,
 }
 
 impl Default for Decisions {
     fn default() -> Self {
         Decisions { wb: None, exposure: 1.0, tone: (1.0, 0.0), levels: None,
-                    contrast: (0.0, 0.5), vibrance: 1.0 }
+                    contrast: (0.0, 0.5), vibrance: 1.0, air: None }
     }
 }
 
@@ -174,6 +176,8 @@ pub struct Settings {
     /// Local contrast, -1..1: how much more or less of the fine structure the
     /// tone map keeps than it would by itself. Zero is what it decided.
     pub clarity: f32,
+    /// Haze taken out (up to 1) or put in (down to -1); see `dehaze`.
+    pub dehaze: f32,
     /// Noise reduction, -1..1, on top of the amount measured for this frame.
     /// Zero is the measured amount; -1 turns it off, 1 is as much as it goes.
     pub denoise: f32,
@@ -222,6 +226,7 @@ impl Default for Settings {
             highlights: 0.0,
             refocus: 0.0,
             clarity: 0.0,
+            dehaze: 0.0,
             denoise: 0.0,
             filters: Vec::new(),
             spots: Vec::new(),
@@ -268,6 +273,7 @@ impl Settings {
         s.highlights = f("highlights").unwrap_or(0.0).clamp(-1.0, 1.0);
         s.refocus = f("refocus").unwrap_or(0.0).clamp(0.0, 1.0);
         s.clarity = f("clarity").unwrap_or(0.0).clamp(-1.0, 1.0);
+        s.dehaze = f("dehaze").unwrap_or(0.0).clamp(-1.0, 1.0);
         s.denoise = f("denoise").unwrap_or(0.0).clamp(-1.0, 1.0);
         s.filters = crate::local::filters_from_json(obj.get("filters"));
         s.spots = crate::local::spots_from_json(obj.get("spots"));
@@ -514,6 +520,28 @@ fn decide_exposure(img: &Image, thumb: &Image, s: &Settings, p: &Preset, frame: 
     report.add("exposure", with(info, json!({"source": "automatic",
                                               "bias_ev": round_to(s.exposure_bias, 2)})));
     gain
+}
+
+/// Haze out or in, on the frame and on the thumbnail the tone map measures.
+fn apply_dehaze(img: &mut Image, thumb: &mut Image, s: &Settings, long_edge: usize,
+                d: &mut Decisions, frozen: bool, report: &mut Report) {
+    if s.dehaze.abs() < 1e-3 {
+        d.air = None;
+        report.skipped("dehaze", "not_asked", json!({}));
+        return;
+    }
+    let air = match (frozen, d.air) {
+        (true, Some(air)) => air,
+        _ => crate::dehaze::air_light(thumb),
+    };
+    d.air = Some(air);
+    crate::dehaze::apply(img, air, s.dehaze, long_edge);
+    if !frozen {
+        let edge = thumb.w.max(thumb.h);
+        crate::dehaze::apply(thumb, air, s.dehaze, edge);
+    }
+    report.add("dehaze", json!({"applied": true, "amount": round_to(s.dehaze, 2),
+                                "air": air.map(|v| round_to(v, 4))}));
 }
 
 /// Compress the scene's range on the low-frequency layer only.
@@ -996,6 +1024,8 @@ pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut
     let (noise, info) = analyze::noise_from_floor(
         args.native_noise_floor * exposure_gain.max(1e-6).sqrt(), args.iso, args.noise_prior);
     report.add("noise", info);
+
+    apply_dehaze(&mut img, &mut thumb, settings, long_edge, &mut d, frozen, report);
 
     step(&mut progress, &mut mark);
     let compression = apply_local_tone_map(&mut img, &thumb, settings, &p, long_edge, &mut d,

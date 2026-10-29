@@ -71,6 +71,32 @@ jobs:
           node tools/check-cull.mjs
           node tools/check-calc.mjs
 
+  desktop:
+    name: Desktop app (Tauri)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: web/.node-version
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+          key: desktop
+          cache-on-failure: true
+      - name: WebKitGTK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev
+      # The app embeds the built site, so there has to be one to check against.
+      - name: The app compiles around the site
+        run: |
+          (cd web && npm ci --no-audit --no-fund && npm run build)
+          cargo check --manifest-path desktop/src-tauri/Cargo.toml --locked
+
   release:
     name: Versions agree
     runs-on: ubuntu-latest
@@ -82,7 +108,9 @@ jobs:
           darkroom=$(grep -m1 '^version' core/darkroom/Cargo.toml | cut -d'"' -f2)
           critic=$(grep -m1 '^version' core/critic/Cargo.toml | cut -d'"' -f2)
           web=$(node -p "require('./web/package.json').version")
-          echo "core $core, darkroom $darkroom, critic $critic, web $web"
+          desktop=$(grep -m1 '^version' desktop/src-tauri/Cargo.toml | cut -d'"' -f2)
+          echo "core $core, darkroom $darkroom, critic $critic, web $web, desktop $desktop"
+          test "$core" = "$desktop" || { echo "::error::desktop/src-tauri/Cargo.toml is $desktop, core is $core"; exit 1; }
           test "$core" = "$darkroom" || { echo "::error::darkroom is $darkroom, core is $core"; exit 1; }
           test "$core" = "$critic" || { echo "::error::critic is $critic, core is $core"; exit 1; }
           test "$core" = "$web" || { echo "::error::web/package.json is $web, core is $core"; exit 1; }

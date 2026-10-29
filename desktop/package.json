@@ -1,0 +1,11 @@
+{
+  "name": "lumiraw-desktop",
+  "private": true,
+  "description": "LumiRaw as a desktop app: the built site in a Tauri window",
+  "scripts": {
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.4"
+  }
+}

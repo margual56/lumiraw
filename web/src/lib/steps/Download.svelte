@@ -14,6 +14,12 @@
   let working = $state(false);
 
   const lossy = $derived(['jpeg', 'webp'].includes(format));
+
+  // WebP is encoded by the browser, and not every engine can (WebKit, which
+  // the desktop app runs in on Linux, cannot): offered only where it works.
+  const webp = typeof document !== 'undefined'
+    && document.createElement('canvas').toDataURL('image/webp').startsWith('data:image/webp');
+  const formats = $derived((app.info?.formats ?? []).filter((f) => f.id !== 'webp' || webp));
   // The grade is the one thing on this step's picture that is easy to have
   // forgotten, so it is named, when there is one.
   const graded = $derived(app.settings.look
@@ -116,7 +122,7 @@
     <div class="field">
       <label for="format">{t('download.format')}</label>
       <select id="format" bind:value={format}>
-        {#each app.info?.formats ?? [] as option}
+        {#each formats as option}
           <option value={option.id}>{formatLabel(option.id)}</option>
         {/each}
       </select>

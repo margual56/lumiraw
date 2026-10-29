@@ -5,6 +5,8 @@
 //! one set trained on AVA's aesthetic votes and one on TID2013's technical
 //! ones, baked by `tools/bake-nima.mjs`. Nothing here depends on which it is.
 
+pub mod faces;
+pub mod graph;
 pub mod net;
 mod wasm;
 

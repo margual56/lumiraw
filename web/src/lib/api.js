@@ -109,10 +109,9 @@ export async function thumbnail(file, size = 240) {
   return URL.createObjectURL(out.image);
 }
 
-/** A raw's embedded preview at about `size` pixels, as a JPEG blob, when it
- *  was taken, and how it is exposed (see `histogram.measure`):
- *  { image, width, height, captured_s, measures }. */
-export async function preview(file, size = 512) {
+/** A raw's embedded preview at about `size` pixels, uncompressed, and when
+ *  it was taken: { pixels (RGBA), width, height, captured_s }. */
+export async function preview(file, size) {
   const buffer = await file.arrayBuffer();
   return call('preview', { buffer, size }, {}, [buffer]);
 }

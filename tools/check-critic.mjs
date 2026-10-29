@@ -137,6 +137,14 @@ check('a shifted copy has nearly the same features',
 check('a flat grey picture is the furthest from the scene',
   cosine(flat.feature, sharp.feature) < cosine(moved.feature, sharp.feature) - 0.2);
 
+// The face models: they load, and find no face where there is none.
+['face-detector.bin', 'face-landmarks.bin'].forEach((name, slot) => {
+  const rc = withBytes(readFileSync(new URL(`critic/${name}`, ROOT)), (p, n) => w.cr_load_graph(slot, p, n));
+  check(`${name} loads`, rc === 0);
+});
+const noFaces = withBytes(scene(), (p) => w.cr_faces(p, S, S));
+check(`a landscape has no faces (${noFaces})`, noFaces === 0);
+
 if (failures) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);

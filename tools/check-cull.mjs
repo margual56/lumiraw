@@ -1,7 +1,7 @@
 /** Does the gallery ranking group bursts and pick the right frames? */
 import {
-  DEFAULTS, blend, exposurePenalty, focusPenalty, groupBursts, keepCount, likeness, pick,
-  relativeSharpness, toCsv,
+  DEFAULTS, blend, blinking, exposurePenalty, eyesPenalty, focusPenalty, groupBursts, keepCount,
+  likeness, pick, relativeSharpness, shut, toCsv,
 } from '../web/src/lib/cull.js';
 
 let failures = 0;
@@ -78,10 +78,10 @@ check('a burnt sky costs marks', Math.abs(exposurePenalty({ blown: 0.09, crushed
 check('blown costs more than as much black',
   exposurePenalty({ blown: 0.2, crushed: 0 }, 1) > exposurePenalty({ blown: 0, crushed: 0.2 }, 1));
 check('no photo loses more than three marks', exposurePenalty({ blown: 1, crushed: 1 }, 1) === 3);
-check('the sharpest of a burst loses nothing', focusPenalty({ sharpness: 80 }, 80, 1) === 0);
+check('the sharpest of a burst loses nothing', focusPenalty(80, 80, 1) === 0);
 check('a quarter of the sharpness costs three marks at full strength',
-  Math.abs(focusPenalty({ sharpness: 20 }, 80, 1) - 3) < 1e-9);
-check('focus off costs nothing', focusPenalty({ sharpness: 1 }, 80, 0) === 0);
+  Math.abs(focusPenalty(20, 80, 1) - 3) < 1e-9);
+check('focus off costs nothing', focusPenalty(1, 80, 0) === 0);
 
 // --- picking -----------------------------------------------------------------------
 
@@ -124,6 +124,35 @@ const order = pick(sceneGroups, levers({ variety: 0.5 }), two, scenes.length, sc
 check(`picks come first, in the order they were made (${order.join()})`,
   order[0] === 's1' && order[1] === 'other' && order.length === 5);
 
+// --- faces -------------------------------------------------------------------------
+
+const face = (open, sharpness = 50) => ({ box: [0.3, 0.3, 0.6, 0.6], eyes: [open, open], sharpness });
+check('open eyes are not shut', shut(face(0.27)) === 0);
+check('shut eyes are', shut(face(0.04)) === 1);
+check('a squint is neither', shut(face(0.12)) > 0 && shut(face(0.12)) < 1);
+check('a face too small to read says nothing', shut({ eyes: null }) === null);
+check('a portrait with its eyes shut loses three marks at full strength',
+  eyesPenalty({ faces: [face(0.03)] }, 1) === 3);
+check('one blink in a group of four costs less, and something',
+  ((p) => p > 0 && p < 3)(eyesPenalty({ faces: [face(0.03), face(0.27), face(0.27), face(0.27)] }, 1)));
+check('no faces, no penalty', eyesPenalty({}, 1) === 0 && eyesPenalty({ faces: [] }, 1) === 0);
+check('blinking counts the shut faces',
+  blinking({ faces: [face(0.03), face(0.27), { eyes: null }] }) === 1);
+
+const blink = [item('blink', 1, 1000, 5.6, 5.2, { faces: [face(0.03)] }),
+               item('open', 1, 1001, 5.3, 5.0, { faces: [face(0.28)] })];
+check('in a burst the frame with open eyes wins',
+  pick([blink], levers(), two, 2).groups[0][0].name === 'open');
+check('unless shut eyes do not count',
+  pick([blink], levers({ eyes: 0, focus: 0 }), two, 2).groups[0][0].name === 'blink');
+
+// The whole frame is sharpest in the first, the face in the second: focus
+// was on the background.
+const missed = [item('background', 1, 1000, 5.4, 5.2, { sharpness: 200, faces: [face(0.27, 20)] }),
+                item('face', 1, 1001, 5.3, 5.1, { sharpness: 80, faces: [face(0.27, 90)] })];
+check('in a burst of faces, the sharp face wins over the sharp background',
+  pick([missed], levers({ focus: 0.5 }), two, 2).groups[0][0].name === 'face');
+
 // --- sharpness and CSV ---------------------------------------------------------------
 
 const sharp = relativeSharpness(gallery.map((it, i) => ({ ...it, sharpness: 100 + i })));
@@ -138,7 +167,8 @@ const csv = toCsv(result, result.picked, levers()).trim().split('\n');
 const header = csv[0].split(',');
 check('the CSV has a header and a row per photograph', csv.length === gallery.length + 1);
 check('the CSV carries the penalties and the exposure',
-  ['exposure_penalty', 'focus_penalty', 'score', 'blown_pct', 'black_pct', 'sharpness']
+  ['exposure_penalty', 'eyes_penalty', 'focus_penalty', 'score', 'blown_pct', 'black_pct',
+   'sharpness', 'faces', 'eyes_shut']
     .every((k) => header.includes(k)));
 check('the CSV starts with the picks', csv[1].endsWith(',1') && csv[2].endsWith(',1'));
 check('names with commas are quoted',

@@ -82,28 +82,41 @@ pub fn f16_to_f32(h: u16) -> f32 {
     f32::from_bits(bits)
 }
 
-struct Reader<'a> {
+/// Little-endian fields read off the front of a file, for both baked formats.
+pub(crate) struct Reader<'a> {
     bytes: &'a [u8],
     at: usize,
 }
 
-impl Reader<'_> {
-    fn take(&mut self, n: usize) -> Result<&[u8], String> {
+impl<'a> Reader<'a> {
+    pub(crate) fn new(bytes: &'a [u8]) -> Reader<'a> {
+        Reader { bytes, at: 0 }
+    }
+
+    pub(crate) fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
         let end = self.at.checked_add(n).filter(|&e| e <= self.bytes.len())
-            .ok_or("the weights file is cut short")?;
+            .ok_or("the file is cut short")?;
         let out = &self.bytes[self.at..end];
         self.at = end;
         Ok(out)
     }
 
-    fn u32(&mut self) -> Result<u32, String> {
+    pub(crate) fn u8(&mut self) -> Result<u8, String> {
+        Ok(self.take(1)?[0])
+    }
+
+    pub(crate) fn u32(&mut self) -> Result<u32, String> {
         Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+    }
+
+    pub(crate) fn i32(&mut self) -> Result<i32, String> {
+        Ok(i32::from_le_bytes(self.take(4)?.try_into().unwrap()))
     }
 }
 
 /// Read a weights file.
 pub fn parse(bytes: &[u8]) -> Result<Vec<Layer>, String> {
-    let mut r = Reader { bytes, at: 0 };
+    let mut r = Reader::new(bytes);
     if r.take(4)? != MAGIC {
         return Err("not a NIMA weights file".into());
     }

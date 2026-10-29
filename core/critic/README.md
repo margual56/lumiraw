@@ -1,6 +1,6 @@
 # critic
 
-NIMA photo scoring for the culling page, built into a wasm module of its own
+NIMA photo scoring and face checks for the culling page, built into a wasm module of its own
 so the main one doesn't grow and nobody downloads it until they cull.
 
 ```rust
@@ -18,6 +18,19 @@ which the page uses to tell frames of a burst apart from different shots.
 The weights are idealo's MobileNet NIMA models, converted by
 `tools/bake-nima.mjs` into the flat format described at the top of that script
 (BatchNorm folded in, f16). They live in `web/src/lib/wasm/critic/`.
+
+`src/faces.rs` finds faces and reads their eyes, with MediaPipe's face
+detector and landmark model run by `src/graph.rs`, a small executor for the
+handful of TensorFlow Lite operators they use. `tools/bake-faces.mjs` writes them
+in its format.
+
+```rust
+let detector = critic::graph::Graph::parse(&std::fs::read("face-detector.bin")?)?;
+let landmarks = critic::graph::Graph::parse(&std::fs::read("face-landmarks.bin")?)?;
+for face in critic::faces::find(&detector, Some(&landmarks), &rgba, w, h) {
+    println!("{:?} eyes {:?}", (face.x0, face.y0, face.x1, face.y1), face.eyes);
+}
+```
 
 `src/wasm.rs` is the same as `extern "C"` functions (`cr_load`, `cr_score`, ...);
 `web/src/lib/wasm/critic-worker.js` is the other side.

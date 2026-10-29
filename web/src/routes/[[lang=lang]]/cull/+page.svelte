@@ -8,7 +8,8 @@
   import * as api from '$lib/api.js';
   import * as critic from '$lib/critic.js';
   import {
-    DEFAULTS, blend, exposurePenalty, groupBursts, likeness, pick, relativeSharpness, toCsv, CLIPPED,
+    DEFAULTS, blend, blinking, exposurePenalty, groupBursts, likeness, pick, relativeSharpness, toCsv,
+    CLIPPED,
   } from '$lib/cull.js';
   import { t, n, localized } from '$lib/i18n.svelte.js';
   import { errorText } from '$lib/format.js';
@@ -39,6 +40,7 @@
   let weight = $state(initial.weight);
   let focus = $state(initial.focus);
   let faults = $state(initial.faults);
+  let eyes = $state(initial.eyes);
   let variety = $state(initial.variety);
   let gap = $state(initial.gap);
   let keepMode = $state(initial.keepMode);
@@ -48,9 +50,9 @@
   /** The levers past the first three, folded away until asked for. */
   let refining = $state(false);
 
-  const levers = $derived({ weight, focus, faults, variety });
+  const levers = $derived({ weight, focus, faults, eyes, variety });
   $effect(() => {
-    const all = { weight, focus, faults, variety, gap, similarity, keepMode, keepValue, bursts };
+    const all = { weight, focus, faults, eyes, variety, gap, similarity, keepMode, keepValue, bursts };
     try {
       localStorage.setItem(STORE, JSON.stringify(all));
     } catch {
@@ -59,7 +61,7 @@
   });
 
   function defaults() {
-    ({ weight, focus, faults, variety, gap, similarity } = DEFAULTS);
+    ({ weight, focus, faults, eyes, variety, gap, similarity } = DEFAULTS);
     keepMode = 'percent';
     keepValue = 10;
     bursts = true;
@@ -232,6 +234,7 @@
     const parts = [t('cull.why.blend', { value: mark(blend(it, weight)) })];
     const exposure = exposurePenalty(it, faults);
     if (exposure >= 0.05) parts.push(t('cull.why.exposure', { value: mark(exposure) }));
+    if (m.eyes >= 0.05) parts.push(t('cull.why.eyes', { value: mark(m.eyes) }));
     if (m.focus >= 0.05) parts.push(t('cull.why.focus', { value: mark(m.focus) }));
     return parts.join(' · ');
   }
@@ -417,6 +420,15 @@
               </div>
               <div class="ctl">
                 <div class="row">
+                  <span class="label" id="cull-eyes">{t('cull.eyes')}</span>
+                  <output>{strength(eyes)}</output>
+                </div>
+                <input type="range" min="0" max="1" step="0.05" bind:value={eyes}
+                       aria-labelledby="cull-eyes" />
+                <small>{t('cull.eyesHint')}</small>
+              </div>
+              <div class="ctl">
+                <div class="row">
                   <span class="label" id="cull-variety">{t('cull.variety')}</span>
                   <output>{strength(variety)}</output>
                 </div>
@@ -468,6 +480,14 @@
                     {t('cull.black', { share: share(it.crushed) })}
                   </span>
                   <span>{t('cull.sharp', { value: n(sharp.get(it) ?? 0, 0) })}</span>
+                  {#if it.faces?.length}
+                    {@const shutCount = blinking(it)}
+                    <span class:warn={shutCount > 0}>
+                      {shutCount > 0
+                        ? t('cull.eyesShut', { count: shutCount })
+                        : t('cull.faces', { count: it.faces.length })}
+                    </span>
+                  {/if}
                 </div>
                 {#if nth === 0 && group.length > 1}
                   <button class="ghost small more" onclick={() => unfold(it)}>
@@ -634,7 +654,7 @@
     &[aria-expanded='true'] .caret { transform: rotate(180deg); }
   }
   .refine {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     .ctl { padding-bottom: 0; }
     .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
     output { font-size: 12px; color: var(--color-ink); font-variant-numeric: tabular-nums; }
@@ -644,12 +664,12 @@
     @include narrow {
       grid-template-columns: 1fr 1fr;
       .ctl:first-child { grid-column: auto; border-bottom: 0; padding: 8px 14px 8px 0; }
-      .ctl:nth-child(2) { padding-left: 14px; border-left: 1px solid var(--color-line); }
-      .ctl:nth-child(3) { padding-left: 0; border-left: 0; }
+      .ctl:nth-child(even) { padding-left: 14px; border-left: 1px solid var(--color-line); }
+      .ctl:nth-child(odd) { padding-left: 0; border-left: 0; }
     }
     @include phone {
       grid-template-columns: 1fr;
-      .ctl, .ctl:first-child, .ctl:nth-child(2), .ctl:nth-child(3) {
+      .ctl, .ctl:first-child, .ctl:nth-child(even), .ctl:nth-child(odd) {
         padding: 10px 0 !important; border-left: 0 !important;
         border-bottom: 1px solid var(--color-line);
       }

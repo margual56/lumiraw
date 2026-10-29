@@ -19,7 +19,6 @@ const session = {
 
 import { stamp } from './stamp.js';
 import { withExif } from './webp.js';
-import { measure } from '../histogram.js';
 
 // Imported rather than fetched from a fixed path so the bundler fingerprints
 // them.
@@ -338,17 +337,16 @@ async function thumbnail({ buffer, size }) {
   return { image: await toBlob(pixels, w, h, 'image/jpeg', 0.85), width: w, height: h };
 }
 
-/** A picture of a raw big enough to score, when it was taken, and how it is
- *  exposed, measured before the JPEG for the page can blur any of it. Like
+/** A raw's embedded preview, as RGBA pixels, and when it was taken. Left
+ *  uncompressed, so whatever measures it sees the camera's own pixels. Like
  *  the thumbnail, it leaves the photograph being developed alone. */
-async function preview({ buffer, size }) {
-  const rc = withBytes(new Uint8Array(buffer), (p, n) => wasm.ar_preview(p, n, size ?? 512));
+function preview({ buffer, size }) {
+  const rc = withBytes(new Uint8Array(buffer), (p, n) => wasm.ar_preview(p, n, size));
   const info = readJson();
   if (rc !== 0) fail(info);
   const { w, h, pixels } = primary();
-  return { image: await toBlob(pixels, w, h, 'image/jpeg', 0.85), width: w, height: h,
-           captured_s: info.captured_s ?? 0,
-           measures: measure({ data: pixels, width: w, height: h }) };
+  return { pixels: pixels.buffer, width: w, height: h, captured_s: info.captured_s ?? 0,
+           [TRANSFER]: [pixels.buffer] };
 }
 
 /** When any file the EXIF reader knows says it was taken. */

@@ -479,6 +479,9 @@ async function exportImage({ settings, format, quality, max_size, original_name 
     // because the canvas throws all of it away.
     const { w, h, pixels } = primary();
     blob = await toBlob(pixels, w, h, 'image/webp', (quality ?? 92) / 100);
+    // An engine without a WebP encoder hands back a PNG instead, which must
+    // not be saved under a .webp name.
+    if (blob.type !== 'image/webp') throw new Error('this browser cannot encode WebP');
     if (info.exif) {
       blob = await withExif(blob, encodedBytes(), w, h);
     }

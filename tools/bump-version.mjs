@@ -12,7 +12,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..');
-const CRATES = ['core/Cargo.toml', 'core/darkroom/Cargo.toml', 'core/critic/Cargo.toml'];
+const CRATES = ['core/Cargo.toml', 'core/darkroom/Cargo.toml', 'core/critic/Cargo.toml',
+                'desktop/src-tauri/Cargo.toml'];
 
 const read = (path) => readFileSync(join(ROOT, path), 'utf8');
 const write = (path, text) => writeFileSync(join(ROOT, path), text);

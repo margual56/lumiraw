@@ -1,0 +1,23 @@
+[package]
+name = "lumiraw-desktop"
+version = "1.3.0"
+edition = "2021"
+description = "LumiRaw as a desktop app"
+publish = false
+
+# Its own workspace: the pipeline is in the page's wasm modules, and this is
+# only the window around them.
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

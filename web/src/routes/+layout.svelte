@@ -4,9 +4,19 @@
   import '../app.scss';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
+  import { dev } from '$app/environment';
   import { detectLocale, localized, unlocalized, useLocale } from '$lib/i18n.svelte.js';
 
   let { children } = $props();
+
+  // Offline after the first visit, on the web. The desktop app (Tauri) serves
+  // its own files from disk, so there is nothing for a worker to keep.
+  $effect(() => {
+    if (!('serviceWorker' in navigator) || '__TAURI_INTERNALS__' in window) return;
+    // Bundled into one classic script for a build, as SvelteKit would register it.
+    navigator.serviceWorker.register('/service-worker.js', { type: dev ? 'module' : 'classic' })
+      .catch(() => {});
+  });
 
   // The address says the language (/es/...
   useLocale(page.params.lang ?? 'en');

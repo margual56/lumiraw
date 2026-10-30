@@ -1,0 +1,50 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "LumiRaw",
+  "version": "../../web/package.json",
+  "identifier": "app.lumiraw.LumiRaw",
+  "build": {
+    "frontendDist": "../../web/build"
+  },
+  "app": {
+    "enableGTKAppId": true,
+    "windows": [
+      {
+        "title": "LumiRaw",
+        "width": 1360,
+        "height": 900,
+        "minWidth": 380,
+        "minHeight": 600,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "dangerousDisableAssetCspModification": ["style-src"],
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self' 'unsafe-inline' 'wasm-unsafe-eval'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' blob: data: https://tile.openstreetmap.org",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost",
+        "worker-src": "'self' blob:",
+        "media-src": "'self' blob:",
+        "object-src": "'none'",
+        "base-uri": "'self'",
+        "form-action": "'none'"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["appimage", "nsis"],
+    "category": "Photography",
+    "shortDescription": "Raw photo developer",
+    "longDescription": "Develop raw photos, merge and stack frames, cull a shoot and grade colour. Everything runs on your computer.",
+    "copyright": "Marcos Gutiérrez Alonso",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png", "icons/icon.ico"],
+    "windows": {
+      "nsis": { "installMode": "currentUser" }
+    }
+  }
+}

@@ -164,7 +164,9 @@
     <li><strong>Política de seguridad.</strong> El sitio manda una cabecera
       Content-Security-Policy ({@render f('web/static/_headers')}) que prohíbe a la página
       conectarse a cualquier dirección que no sea la suya. La hace cumplir tu navegador, no
-      yo, y puedes verla en las cabeceras de la respuesta.</li>
+      yo, y puedes verla en las cabeceras de la respuesta. También dice quién puede mostrar
+      la aplicación dentro de sus páginas: solo el blog, para que sus guías dejen probar
+      cada paso con una foto de ejemplo, que les da el propio blog.</li>
     <li><strong>Ejecutarlo tú.</strong> Si no quieres fiarte de mi servidor, no hace falta:
       clona el repositorio, ejecuta <code>npm run build</code> y luego
       <code>npm run preview</code>, y lo tendrás en <code>localhost:8790</code>.
@@ -343,7 +345,8 @@
     <li><strong>Security policy.</strong> The site sends a Content-Security-Policy header
       ({@render f('web/static/_headers')}) that forbids the page from connecting to any address
       but its own. Your browser enforces it, not me, and you can see it in the response
-      headers.</li>
+      headers. It also says who may show the app inside their pages: only the blog, so its
+      guides can let you try each step on a sample photo, which the blog itself hands over.</li>
     <li><strong>Run it yourself.</strong> If you'd rather not trust my server, you don't have
       to: clone the repository, run <code>npm run build</code> and then
       <code>npm run preview</code>, and it's on <code>localhost:8790</code>.

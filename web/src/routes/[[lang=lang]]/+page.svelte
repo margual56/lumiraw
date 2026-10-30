@@ -5,6 +5,8 @@
   import GradeCarry from '$lib/components/GradeCarry.svelte';
   import Filmstrip from '$lib/components/Filmstrip.svelte';
   import { pickMany } from '$lib/roll.svelte.js';
+  import { onMount } from 'svelte';
+  import { embedded, listen } from '$lib/demo.js';
   import Privacy from '$lib/components/Privacy.svelte';
   import Framing from '$lib/steps/Framing.svelte';
   import Refocus from '$lib/steps/Refocus.svelte';
@@ -204,6 +206,15 @@
        .catch(() => {});
   });
 
+  // Inside a blog post, the post sends the photo and picks the step
+  // (lib/demo.js): no header with the steps, and no Back or Continue.
+  let embed = $state(false);
+  onMount(() => {
+    if (!embedded()) return;
+    embed = true;
+    return listen();
+  });
+
   /** Move to a step, stepping over any that this photograph does not need. */
   function go(step) {
     const target = Math.min(Math.max(step, 0), STEPS.length - 1);
@@ -233,13 +244,15 @@
       }} />
 
 <div class="shell">
-  <SiteHeader tagline={t('app.tagline')} home compact>
-    <Stepper onstep={go} />
-  </SiteHeader>
+  {#if !embed}
+    <SiteHeader tagline={t('app.tagline')} home compact>
+      <Stepper onstep={go} />
+    </SiteHeader>
+  {/if}
   <Progress />
 
   <main>
-    {#if app.restored && app.step !== UPLOAD}
+    {#if app.restored && app.step !== UPLOAD && !embed}
       <div class="restored">
         <span>{t('memory.restored')}</span>
         <button class="ghost" onclick={startOver}>{t('memory.startOver')}</button>
@@ -247,7 +260,9 @@
                 onclick={() => (app.restored = false)}>✕</button>
       </div>
     {/if}
-    {#if app.step === UPLOAD}
+    {#if app.step === UPLOAD && embed}
+      <p class="waiting">{app.message || t('demo.waiting')}</p>
+    {:else if app.step === UPLOAD}
       <div class="intro">
         <GradeCarry />
         <label class="straight">
@@ -301,31 +316,33 @@
 
   <Filmstrip />
 
-  <footer class:idle={!app.id}>
-    <span class="nav-start">
-      <button class="ghost" disabled={app.step === UPLOAD} onclick={() => go(app.step - 1)}>
-        {t('nav.back')}
-      </button>
-      {#if app.id && app.step !== UPLOAD}
-        <button class="ghost icon" disabled={!history.canUndo} onclick={undo}
-                title={t('nav.undo.key')} aria-label={t('nav.undo')}>↶</button>
-        <button class="ghost icon" disabled={!history.canRedo} onclick={redo}
-                title={t('nav.redo.key')} aria-label={t('nav.redo')}>↷</button>
+  {#if !embed}
+    <footer class:idle={!app.id}>
+      <span class="nav-start">
+        <button class="ghost" disabled={app.step === UPLOAD} onclick={() => go(app.step - 1)}>
+          {t('nav.back')}
+        </button>
+        {#if app.id && app.step !== UPLOAD}
+          <button class="ghost icon" disabled={!history.canUndo} onclick={undo}
+                  title={t('nav.undo.key')} aria-label={t('nav.undo')}>↶</button>
+          <button class="ghost icon" disabled={!history.canRedo} onclick={redo}
+                  title={t('nav.redo.key')} aria-label={t('nav.redo')}>↷</button>
+        {/if}
+      </span>
+      <span class="file-label">{fileLabel}</span>
+      <span class="nav-end">
+      {#if app.id && app.step < DOWNLOAD - 1}
+        <button class="ghost skip" onclick={() => go(DOWNLOAD)} title={t('nav.straight.why')}>
+          {t('nav.straight')}
+        </button>
       {/if}
-    </span>
-    <span class="file-label">{fileLabel}</span>
-    <span class="nav-end">
-    {#if app.id && app.step < DOWNLOAD - 1}
-      <button class="ghost skip" onclick={() => go(DOWNLOAD)} title={t('nav.straight.why')}>
-        {t('nav.straight')}
+      <button class="next" class:last={app.step === STEPS.length - 1}
+              disabled={!app.id || app.step === STEPS.length - 1} onclick={() => go(app.step + 1)}>
+        {app.step === STEPS.length - 2 ? t('step.download') : t('nav.continue')}
       </button>
-    {/if}
-    <button class="next" class:last={app.step === STEPS.length - 1}
-            disabled={!app.id || app.step === STEPS.length - 1} onclick={() => go(app.step + 1)}>
-      {app.step === STEPS.length - 2 ? t('step.download') : t('nav.continue')}
-    </button>
-    </span>
-  </footer>
+      </span>
+    </footer>
+  {/if}
 </div>
 
 <style lang="scss">
@@ -336,6 +353,8 @@
    * The privacy notice sits above the drop zone, which then takes whatever
    * height is left rather than insisting on a full page of its own.
    */
+  .waiting { display: grid; place-items: center; height: 100%; margin: 0; color: var(--color-muted); text-align: center; padding: 24px; }
+
   .intro {
     display: flex; flex-direction: column; height: 100%;
     max-width: 1080px; margin-inline: auto;

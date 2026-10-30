@@ -6,7 +6,7 @@
   import Filmstrip from '$lib/components/Filmstrip.svelte';
   import { pickMany } from '$lib/roll.svelte.js';
   import { onMount } from 'svelte';
-  import { embedded, listen, report } from '$lib/demo.js';
+  import { embedded, listen } from '$lib/demo.js';
   import Privacy from '$lib/components/Privacy.svelte';
   import Framing from '$lib/steps/Framing.svelte';
   import Refocus from '$lib/steps/Refocus.svelte';
@@ -206,15 +206,13 @@
        .catch(() => {});
   });
 
-  // Inside a blog post, the post sends the photo (lib/demo.js).
+  // Inside a blog post, the post sends the photo and picks the step
+  // (lib/demo.js): no header with the steps, and no Back or Continue.
   let embed = $state(false);
   onMount(() => {
     if (!embedded()) return;
     embed = true;
     return listen();
-  });
-  $effect(() => {
-    if (embed && app.id) report(app.step);
   });
 
   /** Move to a step, stepping over any that this photograph does not need. */
@@ -246,13 +244,15 @@
       }} />
 
 <div class="shell">
-  <SiteHeader tagline={t('app.tagline')} home compact bare={embed}>
-    <Stepper onstep={go} />
-  </SiteHeader>
+  {#if !embed}
+    <SiteHeader tagline={t('app.tagline')} home compact>
+      <Stepper onstep={go} />
+    </SiteHeader>
+  {/if}
   <Progress />
 
   <main>
-    {#if app.restored && app.step !== UPLOAD}
+    {#if app.restored && app.step !== UPLOAD && !embed}
       <div class="restored">
         <span>{t('memory.restored')}</span>
         <button class="ghost" onclick={startOver}>{t('memory.startOver')}</button>
@@ -316,31 +316,33 @@
 
   <Filmstrip />
 
-  <footer class:idle={!app.id}>
-    <span class="nav-start">
-      <button class="ghost" disabled={app.step === UPLOAD} onclick={() => go(app.step - 1)}>
-        {t('nav.back')}
-      </button>
-      {#if app.id && app.step !== UPLOAD}
-        <button class="ghost icon" disabled={!history.canUndo} onclick={undo}
-                title={t('nav.undo.key')} aria-label={t('nav.undo')}>↶</button>
-        <button class="ghost icon" disabled={!history.canRedo} onclick={redo}
-                title={t('nav.redo.key')} aria-label={t('nav.redo')}>↷</button>
+  {#if !embed}
+    <footer class:idle={!app.id}>
+      <span class="nav-start">
+        <button class="ghost" disabled={app.step === UPLOAD} onclick={() => go(app.step - 1)}>
+          {t('nav.back')}
+        </button>
+        {#if app.id && app.step !== UPLOAD}
+          <button class="ghost icon" disabled={!history.canUndo} onclick={undo}
+                  title={t('nav.undo.key')} aria-label={t('nav.undo')}>↶</button>
+          <button class="ghost icon" disabled={!history.canRedo} onclick={redo}
+                  title={t('nav.redo.key')} aria-label={t('nav.redo')}>↷</button>
+        {/if}
+      </span>
+      <span class="file-label">{fileLabel}</span>
+      <span class="nav-end">
+      {#if app.id && app.step < DOWNLOAD - 1}
+        <button class="ghost skip" onclick={() => go(DOWNLOAD)} title={t('nav.straight.why')}>
+          {t('nav.straight')}
+        </button>
       {/if}
-    </span>
-    <span class="file-label">{fileLabel}</span>
-    <span class="nav-end">
-    {#if app.id && app.step < DOWNLOAD - 1}
-      <button class="ghost skip" onclick={() => go(DOWNLOAD)} title={t('nav.straight.why')}>
-        {t('nav.straight')}
+      <button class="next" class:last={app.step === STEPS.length - 1}
+              disabled={!app.id || app.step === STEPS.length - 1} onclick={() => go(app.step + 1)}>
+        {app.step === STEPS.length - 2 ? t('step.download') : t('nav.continue')}
       </button>
-    {/if}
-    <button class="next" class:last={app.step === STEPS.length - 1}
-            disabled={!app.id || app.step === STEPS.length - 1} onclick={() => go(app.step + 1)}>
-      {app.step === STEPS.length - 2 ? t('step.download') : t('nav.continue')}
-    </button>
-    </span>
-  </footer>
+      </span>
+    </footer>
+  {/if}
 </div>
 
 <style lang="scss">

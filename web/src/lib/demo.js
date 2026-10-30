@@ -1,8 +1,8 @@
 /**
  * The developer inside a blog post (blog.lumiraw.app): the post hands it a
  * sample raw file with postMessage, and the step to open it at, and the
- * reader tries that step on a real photo. The post can move it to another
- * step, and is told whenever the reader moves, to keep its text alongside. The file comes from the page that
+ * reader tries that step on a real photo. The post moves it from step to
+ * step as the reader scrolls; the app has no way between steps of its own. The file comes from the page that
  * frames the app, so the app itself still connects to nothing but its own
  * address. Only the blog may frame it (web/static/_headers), and only the
  * blog's messages are read.
@@ -36,15 +36,6 @@ export function stepFor(name, visible = stepVisible) {
   return step;
 }
 
-// The post that sent the photo, the only one told where the reader is.
-let embedder = null;
-
-/** Tells the post which step the reader is on, by its name. */
-export function report(step) {
-  const name = Object.keys(STEP_NAMES).find((key) => STEP_NAMES[key] === step);
-  if (embedder && name) window.parent.postMessage({ type: 'lumiraw-at', step: name }, embedder);
-}
-
 /** Waits for the post's file, opens it, and goes to the step it asks for,
  *  then to any other the post asks for. Says it is ready first, so the post
  *  knows when to send it. Returns the way to stop listening. */
@@ -58,7 +49,6 @@ export function listen() {
     if (event.data?.type !== 'lumiraw-demo') return;
     const { file, name, step } = event.data;
     if (!(file instanceof Blob) || typeof name !== 'string') return;
-    embedder = event.origin;
     const raw = new File([file], name);
     await openFile(raw, { roll: [raw] });
     if (app.id) app.step = stepFor(step);

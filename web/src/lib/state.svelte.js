@@ -25,6 +25,7 @@ export const defaultSettings = () => ({
   highlights: 0,
   refocus: 0,
   clarity: 0,        // local contrast, -1..1, on top of what the tone map kept
+  dehaze: 0,         // haze out (to 1) or in (to -1); core/src/dehaze.rs
   denoise: 0,        // noise reduction, -1..1, on top of what was measured
   // Deep noise reduction on the raw mosaic (core/src/denoise.rs), done when
   // the file is opened, so turning it on opens the file again.

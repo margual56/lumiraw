@@ -4,8 +4,9 @@
   import Zoom from './Zoom.svelte';
   import Histogram from './Histogram.svelte';
   import { analyse, clipMask } from '$lib/histogram.js';
-  import { app } from '$lib/state.svelte.js';
+  import { app, settingsKey } from '$lib/state.svelte.js';
   import { t } from '$lib/i18n.svelte.js';
+  import * as api from '$lib/api.js';
 
   /** A preview image with an optional selection rectangle. */
   let {
@@ -25,6 +26,28 @@
   } = $props();
 
   let zoomed = $state(false);
+
+  // Holding "Before" (or the \ key) shows the photograph with every automatic
+  // correction off, in place, on any step that shows the developed picture.
+  const comparable = $derived(!!src && (src === app.preview.image || src === app.output.image));
+  let holding = $state(false);
+  let fetching = $state(false);
+  const before = $derived(app.wipe.key === settingsKey() ? app.wipe.before : '');
+
+  async function hold(on) {
+    holding = on;
+    if (!on || before || fetching || !app.id) return;
+    fetching = true;
+    const key = settingsKey();
+    try {
+      const out = await api.compare({ id: app.id, settings: app.settings, size: 1300 });
+      if (key === settingsKey()) app.wipe = { key, before: out.before, after: out.after };
+    } catch {
+      holding = false;
+    } finally {
+      fetching = false;
+    }
+  }
 
   // The picture's own pixels at its own size, read once per picture, for the
   // histogram and the clipping overlay.
@@ -258,6 +281,11 @@
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target?.tagName) && target.type !== 'range') return;
     if (event.key === 'j' || event.key === 'J') app.showClipping = !app.showClipping;
+    if (event.key === '\\' && comparable && !event.repeat) hold(true);
+  }
+
+  function keyUp(event) {
+    if (event.key === '\\') hold(false);
   }
 
   $effect(() => {
@@ -268,7 +296,7 @@
   });
 </script>
 
-<svelte:window onkeydown={key} />
+<svelte:window onkeydown={key} onkeyup={keyUp} />
 
 <!-- The picture itself ignores the pointer (it must not be dragged out of
      the page), so the double-click that opens the 100 % view is heard here. -->
@@ -290,6 +318,12 @@
     onpointercancel={cancel}
     onpointerleave={() => { if (!drag) hover = null; }}
   ></canvas>
+  {#if holding && before && !zoomed}
+    <img class="before" src={before} alt={t('compare.before')} draggable="false"
+         style:left={`${placement.left}px`} style:top={`${placement.top}px`}
+         style:width={`${placement.width}px`} style:height={`${placement.height}px`} />
+    <span class="before-tag">{t('compare.before')}</span>
+  {/if}
   {#if children && placement.width && !zoomed}
     {@render children(placement)}
   {/if}
@@ -304,6 +338,15 @@
                 onclick={() => (app.showHistogram = !app.showHistogram)}>{t('hist.toggle')}</button>
         <button type="button" aria-pressed={app.showClipping} title={t('hist.clip.why')}
                 onclick={() => (app.showClipping = !app.showClipping)}>{t('hist.clip')}</button>
+        {#if comparable}
+          <button type="button" class="hold" aria-pressed={holding} title={t('viewer.hold.why')}
+                  onpointerdown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); hold(true); }}
+                  onpointerup={() => hold(false)} onpointercancel={() => hold(false)}
+                  onkeydown={(e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) hold(true); }}
+                  onkeyup={(e) => { if (e.key === ' ' || e.key === 'Enter') hold(false); }}>
+            {fetching ? t('viewer.hold.wait') : t('viewer.hold')}
+          </button>
+        {/if}
       </div>
     </div>
   {/if}
@@ -341,6 +384,15 @@
       &[aria-pressed='true'] { color: #fff; border-color: var(--color-accent); }
     }
   }
+  img.before {
+    position: absolute; z-index: 1; pointer-events: none; object-fit: contain;
+  }
+  .before-tag {
+    position: absolute; right: 12px; bottom: 12px; z-index: 2; padding: 4px 10px; border-radius: 999px;
+    background: rgb(8 9 11 / 72%); color: #fff; font-size: 11.5px; letter-spacing: .04em;
+    text-transform: uppercase; pointer-events: none;
+  }
+  .hold { touch-action: none; user-select: none; }
   .zoom-toggle {
     position: absolute; top: 10px; right: 10px; z-index: 2;
     padding: 4px 10px; font-size: 12px; min-width: 0;

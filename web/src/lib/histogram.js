@@ -65,16 +65,25 @@ export function measure(image) {
   };
 }
 
-/** The clipping overlay: red where a channel is blown, blue where all three
- *  are black, transparent elsewhere. Same size as the picture read. */
+/** The clipping overlay, same size as the picture read. A blown pixel is
+ *  painted the colour of what blew: red, green or blue for one channel, their
+ *  mix for two (yellow where red and green both did), white for all three,
+ *  which is detail gone for good. Pure black is hatched in blue, every other
+ *  pixel, so it is not taken for a blown blue. */
 export function clipMask(image, out = new ImageData(image.width, image.height)) {
   const src = image.data, dst = out.data;
+  const width = image.width;
   for (let i = 0; i < src.length; i += 4) {
-    const R = src[i], G = src[i + 1], B = src[i + 2];
-    if (R >= BLOWN || G >= BLOWN || B >= BLOWN) {
-      dst[i] = 255; dst[i + 1] = 40; dst[i + 2] = 40; dst[i + 3] = 220;
-    } else if (R <= CRUSHED && G <= CRUSHED && B <= CRUSHED) {
-      dst[i] = 40; dst[i + 1] = 110; dst[i + 2] = 255; dst[i + 3] = 220;
+    const R = src[i] >= BLOWN, G = src[i + 1] >= BLOWN, B = src[i + 2] >= BLOWN;
+    if (R || G || B) {
+      dst[i] = R ? 255 : 30;
+      dst[i + 1] = G ? 255 : 30;
+      dst[i + 2] = B ? 255 : 30;
+      dst[i + 3] = 225;
+    } else if (src[i] <= CRUSHED && src[i + 1] <= CRUSHED && src[i + 2] <= CRUSHED) {
+      const p = i / 4;
+      const on = ((p % width) + Math.floor(p / width)) % 2 === 0;
+      dst[i] = 40; dst[i + 1] = 110; dst[i + 2] = 255; dst[i + 3] = on ? 230 : 0;
     } else {
       dst[i + 3] = 0;
     }

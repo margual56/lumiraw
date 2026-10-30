@@ -21,8 +21,13 @@ check('mid grey sits at its own level in luminance', a.l[128] === 1);
 const dark = analyse(px([[1, 0, 200]]));
 check('one dark channel is not crushed', dark.crushed === 0);
 const m = clipMask(img).data;
-check('blown is marked red', m[0] === 255 && m[3] > 0);
-check('crushed is marked blue', m[6] === 255 && m[7] > 0);
+check('a blown red is marked red', m[0] === 255 && m[1] < 64 && m[2] < 64 && m[3] > 0);
+// Black is hatched, every other pixel, so a blown blue is not mistaken for it.
+const black = clipMask(px([[0, 0, 0], [0, 0, 0]])).data;
+check('crushed is hatched in blue', black[2] === 255 && black[3] > 0 && black[7] === 0);
+const blown = clipMask(px([[255, 255, 255], [255, 255, 10]])).data;
+check('all three blown is white', blown[0] === 255 && blown[1] === 255 && blown[2] === 255);
+check('red and green blown is yellow', blown[4] === 255 && blown[5] === 255 && blown[6] < 64);
 check('the rest is left clear', m[11] === 0 && m[15] === 0);
 check('the threshold allows for dither', BLOWN === 254);
 

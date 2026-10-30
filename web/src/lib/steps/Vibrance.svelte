@@ -51,6 +51,8 @@
     <p class="lede">{t('finish.lede')}</p>
     <Slider label={t('finish.clarity')} bind:value={app.settings.clarity}
             step={0.05} format={offset} />
+    <Slider label={t('finish.dehaze')} bind:value={app.settings.dehaze}
+            step={0.05} format={(v) => (v === 0 ? '0' : signed(v))} />
     <Slider label={t('finish.denoise')} bind:value={app.settings.denoise}
             step={0.05} format={offset} />
     <p class="now">{noiseNow}</p>

@@ -9,6 +9,7 @@ pub const SOFTWARE: &str = concat!("LumiRaw ", env!("CARGO_PKG_VERSION"));
 pub mod analyze;
 pub mod curve;
 pub mod decode;
+pub mod dehaze;
 pub mod denoise;
 pub mod develop;
 pub mod effects;

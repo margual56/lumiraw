@@ -1,6 +1,6 @@
 [package]
 name = "critic"
-version = "1.5.0"
+version = "1.6.0"
 edition = "2021"
 description = "NIMA photo scoring for lumiraw, as its own wasm module"
 publish = false

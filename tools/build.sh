@@ -5,7 +5,11 @@ cd "$(dirname "$0")/.."
 # --wasm: rebuild the two modules and stop, for a release, where the version
 # they carry has to change with everything else.
 if [[ "${1:-}" == "--wasm" ]]; then
-  cargo build --release --manifest-path core/Cargo.toml -p darkroom -p critic --target wasm32-unknown-unknown
+  # One at a time: built together, Cargo would hand the developer's module the
+  # culling one's exports along with the networks it shares.
+  for module in darkroom critic; do
+    cargo build --release --manifest-path core/Cargo.toml -p "$module" --target wasm32-unknown-unknown
+  done
   cp core/target/wasm32-unknown-unknown/release/darkroom.wasm web/src/lib/wasm/darkroom.wasm
   cp core/target/wasm32-unknown-unknown/release/critic.wasm web/src/lib/wasm/critic.wasm
   exit 0
@@ -18,7 +22,11 @@ fi
 
 if command -v cargo >/dev/null && rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown; then
   # Target flags (simd128, the getrandom backend) live in .cargo/config.toml.
-  cargo build --release --manifest-path core/Cargo.toml -p darkroom -p critic --target wasm32-unknown-unknown
+  # One at a time: built together, Cargo would hand the developer's module the
+  # culling one's exports along with the networks it shares.
+  for module in darkroom critic; do
+    cargo build --release --manifest-path core/Cargo.toml -p "$module" --target wasm32-unknown-unknown
+  done
   cp core/target/wasm32-unknown-unknown/release/darkroom.wasm web/src/lib/wasm/darkroom.wasm
   cp core/target/wasm32-unknown-unknown/release/critic.wasm web/src/lib/wasm/critic.wasm
   echo "rebuilt the wasm modules from core/darkroom and core/critic"

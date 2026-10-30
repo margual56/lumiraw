@@ -188,6 +188,27 @@ impl Photo {
         Ok(Exported { image, encoded, captured })
     }
 
+    /// Wheels that bring this photograph's colour toward a reference, given as
+    /// sRGB RGBA pixels: the settings' `wheels` to use.
+    pub fn match_colour(&mut self, edit: &Edit, rgba: &[u8], w: usize, h: usize) -> Value {
+        let mut reference = Image::new(w, h);
+        for (px, src) in reference.px_mut().iter_mut().zip(rgba.chunks_exact(4)) {
+            *px = [0, 1, 2].map(|c| kit::srgb_decode_scalar(src[c] as f32 / 255.0));
+        }
+        self.dev.match_colour(edit, &reference).to_json()
+    }
+
+    /// What skin looks like on this photograph's faces, for the settings'
+    /// `skin`: `{hue, chroma, faces}`, or `{faces: 0}` when there are none.
+    pub fn skin(&mut self, edit: &Edit) -> Result<Value, String> {
+        let found = crate::models::with("face-detector", |g| self.dev.measure_skin(edit, g))?;
+        Ok(match found {
+            Some((skin, faces)) => serde_json::json!({"hue": kit::round_to(skin.hue, 4),
+                "chroma": kit::round_to(skin.chroma, 4), "faces": faces}),
+            None => serde_json::json!({"faces": 0}),
+        })
+    }
+
     /// The camera's metadata as read from the file, as the export carries it.
     pub fn exif(&self) -> &[lumiraw_core::exif::Entry] {
         &self.dev.exif

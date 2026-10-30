@@ -12,6 +12,10 @@ export const UPLOAD = 0, FRAME = 1, REFOCUS = 2, EXPOSURE = 3, WB = 4,
 /** Whether a step is worth showing for the photograph in hand. */
 export const stepVisible = (i) => i !== REFOCUS || app.focus?.verdict === 'soft';
 
+const wheel = () => ({ hue: 0, amount: 0, lum: 0 });
+export const blankWheels = () => ({ shadows: wheel(), midtones: wheel(), highlights: wheel(),
+                                    global: wheel(), balance: 0, blending: 0.5 });
+
 export const defaultSettings = () => ({
   framing: { angle: 0, perspective_v: 0, perspective_h: 0, crop: null, auto_fit: true },
   exposure_rect: null,
@@ -39,6 +43,14 @@ export const defaultSettings = () => ({
   // Eight hue bands, each with a hue, a saturation and a lightness. Only the
   // bands that have been touched are here; the rest are absent and mean zero.
   mixer: {},
+  // Colour grading wheels (core/src/wheels.rs): an Oklab hue in degrees, how
+  // far out the point is, and a lightness, per zone; and where the zones meet.
+  wheels: blankWheels(),
+  // What skin looks like on this photograph's faces, `{ hue, chroma }` in
+  // Oklab; null until measured, false when there were no faces to measure.
+  skin: null,
+  // How much of vibrance and the wheels is kept off skin.
+  skin_protect: 0.55,
   // How much of the loaded 3D table to apply, and which one is loaded.
   lut: 0,
   lut_id: '',
@@ -50,7 +62,7 @@ export const defaultSettings = () => ({
 });
 
 /** The part of the settings that is a grade rather than a correction. */
-export const GRADE_KEYS = ['preset', 'look', 'look_strength', 'curves', 'mixer', 'lut', 'lut_id',
+export const GRADE_KEYS = ['preset', 'look', 'look_strength', 'curves', 'mixer', 'wheels', 'lut', 'lut_id',
                            'monochrome', 'vignette', 'grain'];
 
 /** Whether these settings carry any grade at all. */
@@ -149,6 +161,7 @@ export function usable(saved) {
 export function ungraded(settings) {
   const blank = defaultSettings();
   return { ...$state.snapshot(settings), look: '', curves: blank.curves, mixer: blank.mixer,
+           wheels: blank.wheels,
            lut: 0, monochrome: 0, vignette: 0, grain: 0 };
 }
 

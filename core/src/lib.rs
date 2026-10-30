@@ -24,4 +24,6 @@ pub mod output;
 pub mod profile;
 pub mod stack;
 pub mod raw;
+pub mod skin;
 pub mod straighten;
+pub mod wheels;

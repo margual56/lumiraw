@@ -183,6 +183,18 @@
     return () => clearTimeout(timer);
   });
 
+  // Skin is read off this photograph's faces once, the first time a step that
+  // moves colour is opened, and kept with its settings from then on.
+  let skinFor = null;
+  $effect(() => {
+    if (!app.id || ![VIBRANCE, LOOKS].includes(app.step) || app.settings.skin !== null) return;
+    if (skinFor === app.id) return;
+    const id = (skinFor = app.id);
+    api.skin($state.snapshot(app.settings))
+      .then((found) => { if (app.id === id) app.settings.skin = found; })
+      .catch(() => { if (app.id === id) app.settings.skin = { faces: 0 }; });
+  });
+
   // The curve plot, kept in step with the settings.
   $effect(() => {
     const curves = JSON.stringify(app.settings.curves);

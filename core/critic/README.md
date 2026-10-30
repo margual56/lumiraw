@@ -43,3 +43,7 @@ cargo build --release -p critic --target wasm32-unknown-unknown
 
 or `tools/build.sh` from the repo root, which copies it into `web/src/lib/wasm/`.
 `node tools/check-critic.mjs` checks the committed module and weights.
+
+The developer links this crate in too, without its wasm exports (`default-features =
+false`), for the face detector: `core/src/skin.rs` reads what skin looks like on a
+photograph's faces so vibrance and the grading wheels can hold back on it.

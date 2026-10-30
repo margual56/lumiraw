@@ -7,6 +7,7 @@
   import CurveEditor from '$lib/components/CurveEditor.svelte';
   import CubeLoader from '$lib/components/CubeLoader.svelte';
   import ColourMixer from '$lib/components/ColourMixer.svelte';
+  import ColourGrading from '$lib/components/ColourGrading.svelte';
   import { app } from '$lib/state.svelte.js';
   import { t, n } from '$lib/i18n.svelte.js';
   import { lookLabel, lookDescription } from '$lib/format.js';
@@ -68,6 +69,8 @@
     <CurveEditor />
 
     <ColourMixer />
+
+    <ColourGrading />
 
     <CubeLoader />
 

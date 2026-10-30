@@ -377,6 +377,14 @@ fn finish(mut rgb: Image, settings: &Settings, window: Window, report: &mut Repo
 
         effects::monochrome(&mut rgb, settings.monochrome);
 
+        // After monochrome, so the wheels can tone a black-and-white frame.
+        let wheels = &settings.wheels;
+        if !wheels.is_identity() {
+            let (skin, protect) = (settings.skin, settings.skin_protect);
+            rgb = crate::wheels::apply(&rgb, wheels, |hue, chroma| protect * skin.likeness(hue, chroma));
+        }
+        report.add("wheels", json!({"applied": !wheels.is_identity()}));
+
         // The named look sits under the photographer's own curves, the way a
         // camera profile sits under every slider.
         let look_applied = crate::lut::apply_named(&mut rgb, &settings.look, settings.look_strength);
@@ -418,6 +426,7 @@ impl Development {
         // The grade comes off the "before" for the same reason the look does.
         flat.curves = crate::curve::Stack::identity();
         flat.look = String::new();
+        flat.wheels = crate::wheels::Wheels::default();
         for (key, ..) in TOGGLES.iter() {
             // Hold on to what the user asked for themselves, drop what was
             // decided for them.
@@ -439,6 +448,41 @@ impl Development {
         let (img, _) = self.render(&flat, long_edge, true, None);
         self.baseline = Some((flat, long_edge, lut, img.clone()));
         img
+    }
+
+    /// Wheels that bring this photograph's colour toward a reference picture's
+    /// (display-linear), with everything else in `settings` as it is. Fitted
+    /// on the finished picture, so the look and curves after the wheels are
+    /// accounted for, and fitted twice, the second time on what the first
+    /// left over, since those stages bend what goes through them.
+    pub fn match_colour(&mut self, settings: &Settings, reference: &Image) -> crate::wheels::Wheels {
+        const EDGE: usize = 384;
+        let reference = kit::thumbnail(reference, EDGE);
+        let mut s = settings.clone();
+        s.wheels = crate::wheels::Wheels::default();
+        let (plain, _) = self.render(&s, Some(EDGE), true, None);
+        let first = crate::wheels::fit(&plain, &reference);
+        s.wheels = first.clone();
+        let (once, _) = self.render(&s, Some(EDGE), true, None);
+        let rest = crate::wheels::fit(&once, &reference);
+        crate::wheels::add(&first, &rest)
+    }
+
+    /// The skin of this photograph's faces, as developed with `settings`, and
+    /// how many faces it was read from; `None` when there are no faces.
+    pub fn measure_skin(&mut self, settings: &Settings, detector: &critic::graph::Graph)
+                        -> Option<(grade::Skin, usize)> {
+        // The colour skin has where vibrance and the wheels see it: before the
+        // grade does anything to it.
+        let mut s = settings.clone();
+        s.wheels = crate::wheels::Wheels::default();
+        s.mixer = crate::mixer::Mixer::default();
+        s.curves = crate::curve::Stack::identity();
+        s.look = String::new();
+        s.lut = 0.0;
+        s.monochrome = 0.0;
+        let (img, _) = self.render(&s, Some(crate::skin::SEARCH_EDGE), true, None);
+        crate::skin::measure(&img, detector)
     }
 
     fn report_lens(&self, settings: &Settings, measured: &Map<String, Value>, report: &mut Report) {
@@ -604,6 +648,28 @@ mod tests {
         let mut toned = plain.clone();
         toned.highlights = -0.8;
         assert_ne!(dev.baseline(&toned, Some(64)).d, a.d, "a stale before for the tone zones");
+        // The wheels are the grade, and the "before" is without it.
+        let mut graded = plain.clone();
+        graded.wheels.global = crate::wheels::Wheel { hue: 40.0, amount: 1.0, lum: 0.0 };
+        assert_eq!(dev.baseline(&graded, Some(64)).d, a.d, "the wheels reached the before");
+    }
+
+    /// Matched to its own picture with a tint graded in, a photograph gets
+    /// wheels pointing the way of that tint.
+    #[test]
+    fn matching_a_tinted_copy_finds_the_tint() {
+        let mut dev = development();
+        let plain = Settings::default();
+        let mut tinted = plain.clone();
+        tinted.wheels.shadows = crate::wheels::Wheel { hue: 220.0, amount: 0.7, lum: 0.0 };
+        tinted.wheels.highlights = crate::wheels::Wheel { hue: 60.0, amount: 0.7, lum: 0.0 };
+        let (reference, _) = dev.render(&tinted, Some(384), true, None);
+        let found = dev.match_colour(&plain, &reference);
+        let near = |a: f32, b: f32| (a - b + 540.0).rem_euclid(360.0) - 180.0;
+        for (wheel, hue) in [(found.shadows, 220.0), (found.highlights, 60.0)] {
+            assert!(wheel.amount > 0.3 && near(wheel.hue, hue).abs() < 35.0,
+                    "wanted about {hue} degrees, found {wheel:?}");
+        }
     }
 
     /// A piece developed on its own has to be the same pixels the whole frame

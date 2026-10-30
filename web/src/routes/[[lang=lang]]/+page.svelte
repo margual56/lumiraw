@@ -5,6 +5,8 @@
   import GradeCarry from '$lib/components/GradeCarry.svelte';
   import Filmstrip from '$lib/components/Filmstrip.svelte';
   import { pickMany } from '$lib/roll.svelte.js';
+  import { onMount } from 'svelte';
+  import { embedded, listen, report } from '$lib/demo.js';
   import Privacy from '$lib/components/Privacy.svelte';
   import Framing from '$lib/steps/Framing.svelte';
   import Refocus from '$lib/steps/Refocus.svelte';
@@ -204,6 +206,17 @@
        .catch(() => {});
   });
 
+  // Inside a blog post, the post sends the photo (lib/demo.js).
+  let embed = $state(false);
+  onMount(() => {
+    if (!embedded()) return;
+    embed = true;
+    return listen();
+  });
+  $effect(() => {
+    if (embed && app.id) report(app.step);
+  });
+
   /** Move to a step, stepping over any that this photograph does not need. */
   function go(step) {
     const target = Math.min(Math.max(step, 0), STEPS.length - 1);
@@ -233,7 +246,7 @@
       }} />
 
 <div class="shell">
-  <SiteHeader tagline={t('app.tagline')} home compact>
+  <SiteHeader tagline={t('app.tagline')} home compact bare={embed}>
     <Stepper onstep={go} />
   </SiteHeader>
   <Progress />
@@ -247,7 +260,9 @@
                 onclick={() => (app.restored = false)}>✕</button>
       </div>
     {/if}
-    {#if app.step === UPLOAD}
+    {#if app.step === UPLOAD && embed}
+      <p class="waiting">{app.message || t('demo.waiting')}</p>
+    {:else if app.step === UPLOAD}
       <div class="intro">
         <GradeCarry />
         <label class="straight">
@@ -336,6 +351,8 @@
    * The privacy notice sits above the drop zone, which then takes whatever
    * height is left rather than insisting on a full page of its own.
    */
+  .waiting { display: grid; place-items: center; height: 100%; margin: 0; color: var(--color-muted); text-align: center; padding: 24px; }
+
   .intro {
     display: flex; flex-direction: column; height: 100%;
     max-width: 1080px; margin-inline: auto;

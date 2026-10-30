@@ -429,6 +429,7 @@ export default {
 
   'busy.upload': 'subiendo · {percent} %',
   'busy.decode': 'descodificando el raw',
+  'demo.waiting': 'Esperando la foto de ejemplo…',
   'busy.denoise': 'limpiando el ruido del raw',
   'busy.framing': 'aplicando el encuadre',
   'busy.preview': 'revelando la vista previa',

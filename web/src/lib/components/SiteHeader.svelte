@@ -8,8 +8,9 @@
   import { app } from '$lib/state.svelte.js';
 
   /** `home`: the name is this page's heading rather than a link to it.
-   *  `compact`: the navigation folds into its menu, for a full header. */
-  let { tagline, home = false, compact = false, children } = $props();
+   *  `compact`: the navigation folds into its menu, for a full header.
+   *  `bare`: no navigation at all, for the developer inside a blog post. */
+  let { tagline, home = false, compact = false, bare = false, children } = $props();
 </script>
 
 <header>
@@ -21,7 +22,7 @@
     </span>
   </svelte:element>
   {@render children?.()}
-  <SiteNav {compact} />
+  {#if !bare}<SiteNav {compact} />{/if}
 </header>
 
 <style lang="scss">

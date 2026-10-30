@@ -949,6 +949,8 @@ pub struct ProcessArgs<'a> {
     pub window: Window,
     /// Decisions to apply rather than make; see `Decisions`.
     pub decided: Option<Decisions>,
+    /// The sky and subject masks the filters may follow, over the framed picture.
+    pub masks: &'a crate::masks::Masks,
     pub progress: Option<&'a mut dyn FnMut(f32, &str)>,
 }
 
@@ -1000,7 +1002,7 @@ pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut
                                            frozen, report);
     // Local filters on the light as it will be shown, before the shoulder
     // rolls it off; see `local` for why not earlier.
-    crate::local::apply_filters(&mut img, &settings.filters, frame);
+    crate::local::apply_filters(&mut img, &settings.filters, frame, args.masks);
     report.add("filters", json!({"count": settings.filters.len()}));
     step(&mut progress, &mut mark);
     filmic(&mut img);

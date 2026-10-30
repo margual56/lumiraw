@@ -26,6 +26,9 @@ export const defaultSettings = () => ({
   refocus: 0,
   clarity: 0,        // local contrast, -1..1, on top of what the tone map kept
   denoise: 0,        // noise reduction, -1..1, on top of what was measured
+  // Deep noise reduction on the raw mosaic (core/src/denoise.rs), done when
+  // the file is opened, so turning it on opens the file again.
+  deep_denoise: false,
   // Local work, in fractions of the framed picture.
   filters: [],
   spots: [],         // [{ at, r }]: healed spots

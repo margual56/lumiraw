@@ -1,13 +1,14 @@
 //! The networks the developer uses, held once each was fetched: the face
-//! detector, for reading skin. The page fetches each the first time something
-//! needs it, as it does the looks' tables.
+//! detector, for reading skin, the segmenter, for subject masks, and the raw
+//! denoiser. The page
+//! fetches each the first time something needs it, as it does the looks' tables.
 
 use critic::graph::Graph;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
 /// The names a network may be held under, and nothing else.
-pub const NAMES: [&str; 1] = ["face-detector"];
+pub const NAMES: [&str; 3] = ["face-detector", "segmenter", "denoiser"];
 
 thread_local! {
     static MODELS: RefCell<HashMap<&'static str, Graph>> = RefCell::new(HashMap::new());
@@ -19,6 +20,11 @@ pub fn load(name: &str, bytes: &[u8]) -> Result<(), String> {
     let graph = Graph::parse(bytes)?;
     MODELS.with(|m| m.borrow_mut().insert(name, graph));
     Ok(())
+}
+
+/// Whether a network is held.
+pub fn loaded(name: &str) -> bool {
+    MODELS.with(|m| m.borrow().contains_key(name))
 }
 
 /// Run `f` with a network, or say it has not been loaded.

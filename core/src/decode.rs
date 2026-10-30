@@ -25,9 +25,23 @@ pub struct Meta {
 pub struct Decoded {
     pub img: Image,
     pub meta: Meta,
+    /// What deep noise reduction measured, when it ran.
+    pub denoised: Option<crate::denoise::Noise>,
+}
+
+/// The network and a progress callback for `decode_with`'s deep noise reduction.
+pub struct Denoiser<'a> {
+    pub net: &'a critic::graph::Graph,
+    pub progress: &'a mut dyn FnMut(f32),
 }
 
 pub fn decode(bytes: &[u8]) -> Result<Decoded, DecodeError> {
+    decode_with(bytes, None)
+}
+
+/// `decode`, with the mosaic cleaned by `denoiser` first when there is one
+/// (Bayer sensors only; see `denoise`).
+pub fn decode_with(bytes: &[u8], denoiser: Option<Denoiser>) -> Result<Decoded, DecodeError> {
     let raw = raw::load(bytes)?;
 
     let mut meta = read_exif(bytes);
@@ -37,12 +51,12 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, DecodeError> {
     if meta.model.is_empty() {
         meta.model = raw.model.clone();
     }
-    Ok(develop_raw(&raw, meta))
+    Ok(develop_raw(&raw, meta, denoiser))
 }
 
-/// Sensor values to linear sRGB: levels, white balance, demosaic, highlight
-/// reconstruction, colour matrix, orientation.
-fn develop_raw(raw: &raw::Raw, meta: Meta) -> Decoded {
+/// Sensor values to linear sRGB: levels, (noise reduction,) white balance,
+/// demosaic, highlight reconstruction, colour matrix, orientation.
+fn develop_raw(raw: &raw::Raw, meta: Meta, denoiser: Option<Denoiser>) -> Decoded {
     // --- black/white levels + camera white balance ------------------------
     // dcraw normalises the multipliers by the largest one, so no channel can
     // clip further than the raw already did.
@@ -53,14 +67,26 @@ fn develop_raw(raw: &raw::Raw, meta: Meta) -> Decoded {
     }
 
     let (x0, y0, w, h) = raw.area;
+    let mut denoised = None;
     let mut cam = match &raw.layout {
         raw::Layout::Mosaic(cfa) => {
             let (fw, fh) = (raw.width, raw.height);
             let mut cfa_plane = Plane::new(fw, fh);
             for y in 0..fh {
                 for x in 0..fw {
+                    cfa_plane.d[y * fw + x] = raw.normalised(x, y, 0);
+                }
+            }
+            // On the sensor's own values: the noise model the network knows
+            // is the sensor's, before any channel is scaled.
+            if let Some(d) = denoiser {
+                denoised = crate::denoise::denoise(&mut cfa_plane, cfa, raw.area, d.net, d.progress);
+            }
+            for y in 0..fh {
+                for x in 0..fw {
                     let c = cfa.color_at(y, x).min(2);
-                    cfa_plane.d[y * fw + x] = raw.normalised(x, y, 0).clamp(0.0, 1.0) * wb[c];
+                    let v = &mut cfa_plane.d[y * fw + x];
+                    *v = v.clamp(0.0, 1.0) * wb[c];
                 }
             }
             // The pattern is looked up at absolute sensor positions, so the
@@ -104,7 +130,7 @@ fn develop_raw(raw: &raw::Raw, meta: Meta) -> Decoded {
         Orientation::Normal | Orientation::Unknown => Orientation::from_u16(meta.orientation),
         o => o,
     };
-    Decoded { img: orient(&cam, orientation), meta }
+    Decoded { img: orient(&cam, orientation), meta, denoised }
 }
 
 /// A small picture of the file for a filmstrip, from the JPEG the camera
@@ -1249,7 +1275,7 @@ mod tests {
         }
         let raw = raw::Raw::synthetic(w, h, data, raw::Layout::Linear, wb, vec![(6504.0, d65)],
                                       64.0, 4095.0);
-        let out = develop_raw(&raw, Meta::default()).img;
+        let out = develop_raw(&raw, Meta::default(), None).img;
         let g = &out.d[0..3];
         let cast = g.iter().cloned().fold(0.0f32, f32::max) / g.iter().cloned().fold(f32::MAX, f32::min).max(1e-6);
         assert!(cast < 1.02, "a grey card came out tinted: {g:?}");

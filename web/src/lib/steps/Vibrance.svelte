@@ -3,6 +3,10 @@
   import Slider from '$lib/components/Slider.svelte';
   import { app } from '$lib/state.svelte.js';
   import { t, signed } from '$lib/i18n.svelte.js';
+  import { setDeepDenoise } from '$lib/roll.svelte.js';
+
+  /** Deep noise reduction needs the file itself, so a merge or a stack has none. */
+  const canDeep = $derived(!!app.roll[app.rollAt]?.file);
 
   /**
    * What noise reduction is doing to this frame right now, as the pipeline
@@ -50,6 +54,14 @@
     <Slider label={t('finish.denoise')} bind:value={app.settings.denoise}
             step={0.05} format={offset} />
     <p class="now">{noiseNow}</p>
+    {#if canDeep}
+      <label class="check">
+        <input type="checkbox" checked={app.settings.deep_denoise} disabled={app.busy}
+               onchange={(e) => setDeepDenoise(e.currentTarget.checked)} />
+        {t('finish.deep')}
+      </label>
+      <p class="now">{app.info?.deep_denoise === false ? t('finish.deep.unsupported') : t('finish.deep.why')}</p>
+    {/if}
   </aside>
 </div>
 
@@ -60,4 +72,8 @@
     margin: 20px 0 6px; @include section-label;
   }
   .now { margin: -2px 0 0; @include small(12px); color: var(--color-muted); }
+  .check {
+    display: flex; gap: 8px; align-items: center; font-size: 13px; margin: 14px 0 4px;
+    input { accent-color: var(--color-accent); }
+  }
 </style>

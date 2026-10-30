@@ -34,6 +34,11 @@ pub struct Development {
     /// The whole frame at full size, corrected, framed and healed, while
     /// regions of it are being looked at.
     full_frame: Option<(String, Vec<crate::local::Spot>, Image)>,
+    /// The sky and subject masks found for a framing, keyed on it.
+    masks: Option<(String, crate::masks::Masks)>,
+    /// Whether deep noise reduction was asked for when the file was opened,
+    /// and what it measured if it could run.
+    deep_denoise: Option<Option<crate::denoise::Noise>>,
 }
 
 /// A piece of the frame developed at full size; see `render_region`.
@@ -56,8 +61,25 @@ fn region_margin(long: usize) -> usize {
 impl Development {
     pub fn open(filename: &str, bytes: &[u8], db: Option<&Database>)
                 -> Result<Development, decode::DecodeError> {
-        let d = decode::decode(bytes)?;
-        Ok(Self::from_frame(filename, d.img, d.meta, decode::collect_exif(bytes), db))
+        Self::open_with(filename, bytes, db, None)
+    }
+
+    /// `open`, with deep noise reduction on the raw mosaic when `denoiser` is
+    /// given; `describe` says whether it could run.
+    pub fn open_with(filename: &str, bytes: &[u8], db: Option<&Database>,
+                     denoiser: Option<decode::Denoiser>) -> Result<Development, decode::DecodeError> {
+        let asked = denoiser.is_some();
+        let d = decode::decode_with(bytes, denoiser)?;
+        let mut dev = Self::from_frame(filename, d.img, d.meta, decode::collect_exif(bytes), db);
+        dev.deep_denoise = asked.then_some(d.denoised);
+        // The ISO says how noisy the sensor was, which is no longer how noisy
+        // the frame is: from here the noise measured on the cleaned frame
+        // decides alone, or the usual noise reduction smears what the network
+        // has already cleaned, and the usual caution darkens it for nothing.
+        if d.denoised.is_some() {
+            dev.profile.noise_prior = 0.0;
+        }
+        Ok(dev)
     }
 
     /// The noise floor of this capture, at native resolution.
@@ -107,6 +129,8 @@ impl Development {
             baseline: None,
             decided_full: None,
             full_frame: None,
+            masks: None,
+            deep_denoise: None,
         }
     }
 
@@ -215,6 +239,7 @@ impl Development {
             f
         });
 
+        let masks = self.masks_for(settings);
         let native_noise_floor = self.native_noise_floor();
         // The width was measured at a fixed working size, so the blur it
         // describes is that many pixels *there*.
@@ -231,6 +256,7 @@ impl Development {
             focus_sigma,
             window: Window::whole(&src),
             decided: None,
+            masks: &masks,
             progress: graded_progress.as_mut().map(|f| &mut **f as &mut dyn FnMut(f32, &str)),
         };
         let (rgb, _) = grade::process(&src, settings, args, &mut report);
@@ -272,6 +298,7 @@ impl Development {
             }
         }
         let proxy = kit::thumbnail(full, 1024);
+        let masks = self.masks_for(settings);
         let args = ProcessArgs {
             iso: self.profile.iso,
             sharpen_sigma: self.profile.sharpen_sigma,
@@ -283,6 +310,7 @@ impl Development {
             focus_sigma: 0.0,
             window: Window::whole(&proxy),
             decided: None,
+            masks: &masks,
             progress: None,
         };
         let (_, decided) = grade::process(&proxy, settings, args, &mut Report::new());
@@ -328,6 +356,7 @@ impl Development {
         self.full_frame = Some((key, spots, full));
 
         let window = Window { x: x0, y: y0, w: fw, h: fh };
+        let masks = self.masks_for(settings);
         let mut report = Report::new();
         let mut graded_progress = progress.map(|cb| {
             let f: Box<dyn FnMut(f32, &str) + '_> =
@@ -345,6 +374,7 @@ impl Development {
             focus_sigma: self.focus_sigma_at(fw.max(fh)),
             window,
             decided: Some(decided),
+            masks: &masks,
             progress: graded_progress.as_mut().map(|f| &mut **f as &mut dyn FnMut(f32, &str)),
         };
         let (rgb, _) = grade::process(&piece, &healed, args, &mut report);
@@ -450,6 +480,59 @@ impl Development {
         img
     }
 
+    /// The masks `settings`' filters follow, found for its framing the first
+    /// time one is asked for and kept while the framing holds. The subject
+    /// needs the segmenter (`models`); without it that mask is left out.
+    fn masks_for(&mut self, settings: &Settings) -> crate::masks::Masks {
+        use crate::masks::Kind;
+        let wanted: Vec<Kind> = settings.filters.iter().filter_map(|f| f.mask()).collect();
+        if wanted.is_empty() {
+            return crate::masks::Masks::default();
+        }
+        let key = corrected_key(settings, None, true);
+        if self.masks.as_ref().is_some_and(|(k, _)| *k != key) {
+            self.masks = None;
+        }
+        let mut have = self.masks.take().map(|(_, m)| m).unwrap_or_default();
+        let missing = |have: &crate::masks::Masks, k: Kind| {
+            wanted.contains(&k) && have.get(k).is_none()
+                && (k != Kind::Subject || crate::models::loaded("segmenter"))
+        };
+        if missing(&have, Kind::Sky) || missing(&have, Kind::Subject) {
+            // The framed picture as developed, with no filters on it: what the
+            // masks are of.
+            let plain = Settings { filters: Vec::new(), ..settings.clone() };
+            let (picture, _) = self.render(&plain, Some(crate::masks::SKY_EDGE.max(512)), true, None);
+            if missing(&have, Kind::Sky) {
+                let mut sky = crate::masks::sky(&picture);
+                // Whatever the segmenter calls a subject is not sky, however
+                // smooth and light it is; it is asked only when already loaded.
+                if let Ok(subject) = crate::models::with("segmenter",
+                                                         |g| crate::masks::subject(&picture, g)) {
+                    let subject = kit::resize_plane(&subject, sky.w, sky.h);
+                    sky.d.iter_mut().zip(&subject.d).for_each(|(s, p)| *s *= 1.0 - p);
+                }
+                have.sky = Some(sky);
+            }
+            if missing(&have, Kind::Subject) {
+                have.subject = crate::models::with("segmenter", |g| crate::masks::subject(&picture, g)).ok();
+            }
+        }
+        self.masks = Some((key, have.clone()));
+        have
+    }
+
+    /// One mask as found for these settings' framing, for the interface to
+    /// show over the picture; `None` when it cannot be found.
+    pub fn mask(&mut self, settings: &Settings, kind: crate::masks::Kind) -> Option<kit::Plane> {
+        let probe = crate::local::Filter {
+            shape: crate::local::Shape::Mask { kind, invert: false },
+            exposure: 0.0, temperature: 0.0, saturation: 0.0,
+        };
+        let s = Settings { filters: vec![probe], ..settings.clone() };
+        self.masks_for(&s).get(kind).cloned()
+    }
+
     /// Wheels that bring this photograph's colour toward a reference picture's
     /// (display-linear), with everything else in `settings` as it is. Fitted
     /// on the finished picture, so the look and curves after the wheels are
@@ -549,6 +632,9 @@ impl Development {
             "notes": self.profile.notes,
             "lens_calibration": self.lens_match.as_ref().map(|m| json!({
                 "lens": m.lens, "focal": kit::round_to(m.focal, 1), "aperture": kit::round_to(m.aperture, 2)})),
+            // Null when not asked for; false when the sensor is not one it
+            // knows (not a 2 x 2 Bayer mosaic).
+            "deep_denoise": self.deep_denoise.map(|n| n.is_some()),
         })
     }
 }

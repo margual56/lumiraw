@@ -20,6 +20,8 @@ enum Kind {
     Concat,
     Resize,
     Logistic,
+    AvgPool,
+    DepthToSpace,
 }
 
 #[derive(Clone, Debug)]
@@ -96,6 +98,8 @@ impl Graph {
                 8 => Kind::Concat,
                 9 => Kind::Resize,
                 10 => Kind::Logistic,
+                11 => Kind::AvgPool,
+                12 => Kind::DepthToSpace,
                 k => return Err(format!("unknown operator {k}")),
             };
             let (ni, no, np) = (r.u8()? as usize, r.u8()? as usize, r.u8()? as usize);
@@ -187,7 +191,7 @@ impl Graph {
                 let (kh, kw) = (f.shape[1], f.shape[2]);
                 let bias = op.inputs.get(2).map(|t| self.value(values, *t));
                 let mut out = conv(x, input, f.data.as_deref().unwrap(), (kh, kw), bias, output,
-                                   (p[1] as usize, p[0] as usize), p[2] == 1);
+                                   (p[1] as usize, p[0] as usize), p[2] == 1, dilation(p));
                 activate(&mut out, p[3]);
                 out
             }
@@ -196,7 +200,8 @@ impl Graph {
                 let (kh, kw) = (f.shape[1], f.shape[2]);
                 let bias = op.inputs.get(2).map(|t| self.value(values, *t));
                 let mut out = depthwise(x, input, f.data.as_deref().unwrap(), (kh, kw), bias,
-                                        output, (p[1] as usize, p[0] as usize), p[2] == 1);
+                                        output, (p[1] as usize, p[0] as usize), p[2] == 1,
+                                        dilation(p));
                 activate(&mut out, p[3]);
                 out
             }
@@ -217,20 +222,43 @@ impl Graph {
             Kind::Pad => pad(x, input, output, p),
             Kind::MaxPool => max_pool(x, input, output, (p[1] as usize, p[0] as usize),
                                       (p[3] as usize, p[2] as usize), p[4] == 1),
+            Kind::AvgPool => avg_pool(x, input, output, (p[1] as usize, p[0] as usize),
+                                      (p[3] as usize, p[2] as usize), p[4] == 1),
+            Kind::DepthToSpace => depth_to_space(x, input, p[0].max(1) as usize),
             Kind::Reshape => x.to_vec(),
             Kind::Concat => {
-                // Joined along an axis with nothing but ones before it, which
-                // is all the models ask: the second simply follows the first.
-                let mut out = x.to_vec();
-                for t in &op.inputs[1..] {
-                    out.extend_from_slice(self.value(values, *t));
+                let rank = self.tensors[op.outputs[0]].shape.len() as i32;
+                let axis = if p[0] < 0 { p[0] + rank } else { p[0] };
+                let parts: Vec<&[f32]> = op.inputs.iter().map(|t| self.value(values, *t)).collect();
+                if axis == rank - 1 && rank > 1 {
+                    // Along the channels: each pixel's channels from each part
+                    // in turn.
+                    let widths: Vec<usize> = op.inputs.iter()
+                        .map(|t| *self.tensors[*t].shape.last().unwrap_or(&1)).collect();
+                    let pixels = parts[0].len() / widths[0].max(1);
+                    let mut out = Vec::with_capacity(parts.iter().map(|p| p.len()).sum());
+                    for i in 0..pixels {
+                        for (part, w) in parts.iter().zip(&widths) {
+                            out.extend_from_slice(&part[i * w..(i + 1) * w]);
+                        }
+                    }
+                    out
+                } else {
+                    // Along an axis with nothing but ones before it: the
+                    // second simply follows the first.
+                    parts.concat()
                 }
-                out
             }
             Kind::Resize => resize(x, input, output, p[0] == 1, p[1] == 1),
             Kind::Logistic => x.iter().map(|v| 1.0 / (1.0 + (-v).exp())).collect(),
         }
     }
+}
+
+/// A convolution's dilation, y then x: the two optional params after the
+/// activation, one when absent.
+fn dilation(p: &[i32]) -> (usize, usize) {
+    (p.get(5).copied().unwrap_or(1).max(1) as usize, p.get(4).copied().unwrap_or(1).max(1) as usize)
 }
 
 fn activate(v: &mut [f32], code: i32) {
@@ -253,8 +281,9 @@ fn padding(size: usize, out: usize, k: usize, stride: usize, same: bool) -> usiz
 #[allow(clippy::too_many_arguments)]
 fn conv(x: &[f32], (h, w, ci): (usize, usize, usize), f: &[f32], (kh, kw): (usize, usize),
         bias: Option<&[f32]>, (oh, ow, co): (usize, usize, usize), (sy, sx): (usize, usize),
-        same: bool) -> Vec<f32> {
-    let (py, px) = (padding(h, oh, kh, sy, same), padding(w, ow, kw, sx, same));
+        same: bool, (dy, dx): (usize, usize)) -> Vec<f32> {
+    let (py, px) = (padding(h, oh, (kh - 1) * dy + 1, sy, same),
+                    padding(w, ow, (kw - 1) * dx + 1, sx, same));
     let mut out = vec![0.0f32; oh * ow * co];
     for oy in 0..oh {
         for ox in 0..ow {
@@ -263,12 +292,12 @@ fn conv(x: &[f32], (h, w, ci): (usize, usize, usize), f: &[f32], (kh, kw): (usiz
                 acc.copy_from_slice(&b[..co]);
             }
             for ky in 0..kh {
-                let iy = (oy * sy + ky) as isize - py as isize;
+                let iy = (oy * sy + ky * dy) as isize - py as isize;
                 if iy < 0 || iy >= h as isize {
                     continue;
                 }
                 for kx in 0..kw {
-                    let ix = (ox * sx + kx) as isize - px as isize;
+                    let ix = (ox * sx + kx * dx) as isize - px as isize;
                     if ix < 0 || ix >= w as isize {
                         continue;
                     }
@@ -291,8 +320,9 @@ fn conv(x: &[f32], (h, w, ci): (usize, usize, usize), f: &[f32], (kh, kw): (usiz
 #[allow(clippy::too_many_arguments)]
 fn depthwise(x: &[f32], (h, w, c): (usize, usize, usize), f: &[f32], (kh, kw): (usize, usize),
              bias: Option<&[f32]>, (oh, ow, _): (usize, usize, usize), (sy, sx): (usize, usize),
-             same: bool) -> Vec<f32> {
-    let (py, px) = (padding(h, oh, kh, sy, same), padding(w, ow, kw, sx, same));
+             same: bool, (dy, dx): (usize, usize)) -> Vec<f32> {
+    let (py, px) = (padding(h, oh, (kh - 1) * dy + 1, sy, same),
+                    padding(w, ow, (kw - 1) * dx + 1, sx, same));
     let mut out = vec![0.0f32; oh * ow * c];
     for oy in 0..oh {
         for ox in 0..ow {
@@ -301,12 +331,12 @@ fn depthwise(x: &[f32], (h, w, c): (usize, usize, usize), f: &[f32], (kh, kw): (
                 acc.copy_from_slice(&b[..c]);
             }
             for ky in 0..kh {
-                let iy = (oy * sy + ky) as isize - py as isize;
+                let iy = (oy * sy + ky * dy) as isize - py as isize;
                 if iy < 0 || iy >= h as isize {
                     continue;
                 }
                 for kx in 0..kw {
-                    let ix = (ox * sx + kx) as isize - px as isize;
+                    let ix = (ox * sx + kx * dx) as isize - px as isize;
                     if ix < 0 || ix >= w as isize {
                         continue;
                     }
@@ -358,6 +388,59 @@ fn max_pool(x: &[f32], (h, w, c): (usize, usize, usize), (oh, ow, _): (usize, us
                     for (a, v) in acc.iter_mut().zip(src) {
                         *a = a.max(*v);
                     }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The mean over each window, TensorFlow's way: padding is not counted.
+fn avg_pool(x: &[f32], (h, w, c): (usize, usize, usize), (oh, ow, _): (usize, usize, usize),
+            (kh, kw): (usize, usize), (sy, sx): (usize, usize), same: bool) -> Vec<f32> {
+    let (py, px) = (padding(h, oh, kh, sy, same), padding(w, ow, kw, sx, same));
+    let mut out = vec![0.0f32; oh * ow * c];
+    for oy in 0..oh {
+        for ox in 0..ow {
+            let acc = &mut out[(oy * ow + ox) * c..(oy * ow + ox + 1) * c];
+            let mut n = 0usize;
+            for ky in 0..kh {
+                let iy = (oy * sy + ky) as isize - py as isize;
+                if iy < 0 || iy >= h as isize {
+                    continue;
+                }
+                for kx in 0..kw {
+                    let ix = (ox * sx + kx) as isize - px as isize;
+                    if ix < 0 || ix >= w as isize {
+                        continue;
+                    }
+                    let src = &x[(iy as usize * w + ix as usize) * c..][..c];
+                    for (a, v) in acc.iter_mut().zip(src) {
+                        *a += v;
+                    }
+                    n += 1;
+                }
+            }
+            let k = 1.0 / n.max(1) as f32;
+            acc.iter_mut().for_each(|a| *a *= k);
+        }
+    }
+    out
+}
+
+/// Channels moved into space: each pixel's `block²·c` values become a block of
+/// `block × block` pixels of `c`, row by row, as TensorFlow lays them.
+fn depth_to_space(x: &[f32], (h, w, c): (usize, usize, usize), block: usize) -> Vec<f32> {
+    let oc = c / (block * block);
+    let ow = w * block;
+    let mut out = vec![0.0f32; h * w * c];
+    for y in 0..h {
+        for xx in 0..w {
+            let src = &x[(y * w + xx) * c..][..c];
+            for by in 0..block {
+                for bx in 0..block {
+                    let dst = ((y * block + by) * ow + xx * block + bx) * oc;
+                    out[dst..dst + oc].copy_from_slice(&src[(by * block + bx) * oc..][..oc]);
                 }
             }
         }
@@ -421,7 +504,7 @@ mod tests {
             f[k * 2] = 1.0;
         }
         f[4 * 2 + 1] = 1.0;
-        let out = conv(&x, (3, 3, 1), &f, (3, 3), Some(&[0.5, 0.0]), (3, 3, 2), (1, 1), true);
+        let out = conv(&x, (3, 3, 1), &f, (3, 3), Some(&[0.5, 0.0]), (3, 3, 2), (1, 1), true, (1, 1));
         assert_eq!(out[(4) * 2], 36.5, "the centre sees everything");
         assert_eq!(out[0], 0.0 + 1.0 + 3.0 + 4.0 + 0.5, "the corner sees four");
         assert_eq!(out[4 * 2 + 1], 4.0);
@@ -432,6 +515,40 @@ mod tests {
         let x = vec![0.0f32, 1.0];
         let out = resize(&x, (1, 2, 1), (1, 4, 1), false, true);
         assert_eq!(out, vec![0.0, 0.25, 0.75, 1.0]);
+    }
+
+    #[test]
+    fn a_dilated_filter_reaches_further() {
+        // 5x5 ramp, a 3x3 depthwise filter that keeps only its corner taps,
+        // dilated by two: the centre output reads the frame's corners.
+        let x: Vec<f32> = (0..25).map(|v| v as f32).collect();
+        let mut f = vec![0.0f32; 9];
+        f[0] = 1.0;
+        f[8] = 1.0;
+        let out = depthwise(&x, (5, 5, 1), &f, (3, 3), None, (5, 5, 1), (1, 1), true, (2, 2));
+        assert_eq!(out[12], 0.0 + 24.0);
+    }
+
+    #[test]
+    fn an_average_ignores_the_padding() {
+        let x = vec![1.0f32, 2.0, 3.0, 4.0];
+        let out = avg_pool(&x, (2, 2, 1), (2, 2, 1), (2, 2), (1, 1), true);
+        // The last pixel's window hangs off the edge and sees only itself.
+        assert_eq!(out, vec![2.5, 3.0, 3.5, 4.0]);
+        let global = avg_pool(&x, (2, 2, 1), (1, 1, 1), (2, 2), (1, 1), false);
+        assert_eq!(global, vec![2.5]);
+    }
+
+    #[test]
+    fn depth_becomes_a_block_of_pixels() {
+        // One pixel of four channels, one channel out: a 2x2 block.
+        let out = depth_to_space(&[1.0, 2.0, 3.0, 4.0], (1, 1, 4), 2);
+        assert_eq!(out, vec![1.0, 2.0, 3.0, 4.0]);
+        // Two pixels side by side, eight channels of two each.
+        let x: Vec<f32> = (0..16).map(|v| v as f32).collect();
+        let out = depth_to_space(&x, (1, 2, 8), 2);
+        // Top row: pixel 0's first two blocks, then pixel 1's.
+        assert_eq!(&out[..8], &[0.0, 1.0, 2.0, 3.0, 8.0, 9.0, 10.0, 11.0]);
     }
 
     #[test]

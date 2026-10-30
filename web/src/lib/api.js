@@ -88,11 +88,11 @@ export function preload() {
 let opened = 0;
 const photoId = () => `photo-${++opened}`;
 
-export async function upload(file, onProgress) {
-  onProgress?.(0);
+/** Open a raw for developing; `deep` runs the deep noise reduction on its
+ *  mosaic first, which takes a while. */
+export async function upload(file, { deep = false } = {}) {
   const buffer = await file.arrayBuffer();
-  onProgress?.(1);
-  const info = await call('open', { name: file.name, buffer }, {}, [buffer]);
+  const info = await call('open', { name: file.name, buffer, deep }, {}, [buffer]);
   return { ...info, id: photoId(), original_name: info.file || file.name };
 }
 
@@ -169,6 +169,10 @@ export async function matchColour(file, settings) {
   }
   return call('match', { settings, pixels, width, height }, {}, [pixels]);
 }
+
+/** Where a filter following the sky or the subject reaches, as grey RGBA
+ *  over the framed picture: `{ pixels, width, height }`. */
+export const mask = (settings, kind) => call('mask', { settings, kind });
 
 /** The skin of the open photograph's faces: `{hue, chroma, faces}`, or
  *  `{faces: 0}` when there are none. */

@@ -2,11 +2,12 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "LumiRaw",
   "version": "../../web/package.json",
-  "identifier": "app.lumiraw.desktop",
+  "identifier": "app.lumiraw.LumiRaw",
   "build": {
     "frontendDist": "../../web/build"
   },
   "app": {
+    "enableGTKAppId": true,
     "windows": [
       {
         "title": "LumiRaw",

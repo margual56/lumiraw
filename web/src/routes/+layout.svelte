@@ -24,8 +24,9 @@
 
   // Someone arriving at an English address who reads Spanish, by their own
   // earlier choice or their browser's, is taken to the same page in Spanish.
+  // Not inside a blog post (?embed, lib/demo.js): the post says the language.
   $effect(() => {
-    if (page.params.lang) return;
+    if (page.params.lang || page.url.searchParams.has('embed')) return;
     if (detectLocale() === 'es' && page.status === 200) {
       goto(localized(unlocalized(page.url.pathname), 'es') + page.url.search + page.url.hash,
            { replaceState: true, noScroll: true, keepFocus: true });

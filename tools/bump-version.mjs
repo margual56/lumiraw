@@ -4,9 +4,8 @@
  *
  *     node tools/bump-version.mjs patch|minor|major|X.Y.Z
  *
- * Prints the new version. Cargo.lock follows on the next cargo build, and
- * the wasm modules carry the version too, so rebuild them after this
- * (`tools/build.sh --wasm`).
+ * Prints the new version. The wasm modules carry the version too, so rebuild
+ * them after this (`tools/build.sh --wasm`).
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -14,6 +13,9 @@ import { join, resolve } from 'node:path';
 const ROOT = resolve(import.meta.dirname, '..');
 const CRATES = ['core/Cargo.toml', 'core/darkroom/Cargo.toml', 'core/critic/Cargo.toml',
                 'desktop/src-tauri/Cargo.toml'];
+// CI builds with --locked, so the lock files have to name the new version
+// too, not wait for a build to catch up.
+const LOCKS = ['core/Cargo.lock', 'desktop/src-tauri/Cargo.lock'];
 
 const read = (path) => readFileSync(join(ROOT, path), 'utf8');
 const write = (path, text) => writeFileSync(join(ROOT, path), text);
@@ -38,8 +40,15 @@ if (!how) {
 const version = next(current, how);
 
 // Only the package's own version line: the first `version =` in each manifest.
+const names = [];
 for (const path of CRATES) {
-  write(path, read(path).replace(/^version\s*=\s*"[^"]+"/m, `version = "${version}"`));
+  const text = read(path);
+  names.push(text.match(/^name\s*=\s*"([^"]+)"/m)[1]);
+  write(path, text.replace(/^version\s*=\s*"[^"]+"/m, `version = "${version}"`));
+}
+for (const path of LOCKS) {
+  write(path, read(path).replace(/^name = "([^"]+)"\nversion = "[^"]+"/gm,
+    (entry, name) => (names.includes(name) ? `name = "${name}"\nversion = "${version}"` : entry)));
 }
 
 const pkg = JSON.parse(read('web/package.json'));

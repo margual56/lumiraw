@@ -16,4 +16,10 @@ export const READING = [
   { path: '/source', key: 'links.source' },
 ];
 
+/** Pages on other sites, listed after the pages to read. Not part of PAGES:
+ *  they are not built or put in the sitemap here. */
+export const ELSEWHERE = [
+  { href: { en: 'https://blog.lumiraw.app', es: 'https://blog.lumiraw.app/es' }, key: 'links.blog' },
+];
+
 export const PAGES = [...TOOLS, ...READING].map((p) => p.path);

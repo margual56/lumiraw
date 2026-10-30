@@ -6,8 +6,8 @@
    *  most two clicks off. */
   import { page } from '$app/state';
   import LocalePicker from '$lib/components/LocalePicker.svelte';
-  import { localized, t, unlocalized } from '$lib/i18n.svelte.js';
-  import { READING, TOOLS } from '$lib/pages.js';
+  import { i18n, localized, t, unlocalized } from '$lib/i18n.svelte.js';
+  import { ELSEWHERE, READING, TOOLS } from '$lib/pages.js';
 
   /** Always the menu, never the links: for a header that is full already. */
   let { compact = false } = $props();
@@ -53,6 +53,9 @@
           {#each READING as link (link.path)}
             <a href={localized(link.path)} aria-current={current(link.path)}>{t(link.key)}</a>
           {/each}
+          {#each ELSEWHERE as link (link.key)}
+            <a href={link.href[i18n.locale] ?? link.href.en}>{t(link.key)}</a>
+          {/each}
         </div>
       {/if}
     </div>
@@ -73,6 +76,9 @@
         <span class="group">{t('site.reading')}</span>
         {#each READING as link (link.path)}
           <a href={localized(link.path)} aria-current={current(link.path)}>{t(link.key)}</a>
+        {/each}
+        {#each ELSEWHERE as link (link.key)}
+          <a href={link.href[i18n.locale] ?? link.href.en}>{t(link.key)}</a>
         {/each}
         <span class="group">{t('locale.label')}</span>
         <div class="language"><LocalePicker /></div>

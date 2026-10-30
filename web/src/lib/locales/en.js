@@ -35,6 +35,7 @@ export default {
   'merge.heading': 'Combine several frames of one scene',
   'links.cameras': 'Supported cameras',
   'links.source': 'Source code',
+  'links.blog': 'Guides & photos',
   'seo.source.title': 'How LumiRaw works, and its source code',
   'seo.source.description': 'Where every part of LumiRaw lives in its public code, from opening a raw file to downloading the result, what is stored, and how to check that nothing is uploaded.',
   'links.open': 'Open a raw file',

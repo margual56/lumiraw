@@ -4,6 +4,9 @@
 
 @layer base {
   :root {
+    /* Dark through and through, so what the platform still draws (a select's
+       open list, scrollbars) is dark as well. */
+    color-scheme: dark;
     /* Height left for a preview once the header, footer and page padding are
        accounted for.  Previews fit inside it instead of pushing the page. */
     --fit: calc(100vh - 190px);
@@ -68,11 +71,20 @@
     @include phone { padding: 12px 0; font-size: 14px; }
   }
 
+  /*
+   * Drawn here rather than by the platform: WebKitGTK (the desktop app on
+   * Linux) paints a native select in the light GTK theme, under this page's
+   * light text. The arrow is the one thing that has to be put back.
+   */
   select {
-    width: 100%; margin-top: 6px; background: var(--color-panel-2);
+    width: 100%; margin-top: 6px; appearance: none;
+    background-color: var(--color-panel-2);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0h10L5 6z' fill='%238d939c'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 12px center;
     color: var(--color-ink); border: 1px solid var(--color-line);
-    border-radius: 8px; padding: 8px 10px; font: inherit;
-    @include phone { min-height: 42px; padding: 10px; }
+    border-radius: 8px; padding: 8px 32px 8px 10px; font: inherit;
+    @include phone { min-height: 42px; padding: 10px 32px 10px 10px; }
+    option { background: var(--color-panel); color: var(--color-ink); }
   }
 
   input[type=range] {

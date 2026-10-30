@@ -26,8 +26,9 @@
 
 <style lang="scss">
   select {
-    width: auto; margin: 0; padding: 5px 8px; font-size: 12px;
-    color: var(--color-muted); background: var(--color-panel-2);
+    width: auto; margin: 0; padding: 5px 26px 5px 8px; font-size: 12px;
+    color: var(--color-muted); background-color: var(--color-panel-2);
+    background-position: right 9px center;
     &:hover { color: var(--color-ink); }
   }
   /* Read out, never shown: the control is a bare select with a flag of a name. */

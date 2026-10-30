@@ -398,11 +398,12 @@
   }
   input, select {
     width: 100%; min-width: 0; padding: 8px 11px; border-radius: 8px;
-    border: 1px solid var(--color-line); background: var(--color-panel-2);
+    border: 1px solid var(--color-line); background-color: var(--color-panel-2);
     color: var(--color-ink); font: inherit; font-size: 14.5px;
     font-variant-numeric: tabular-nums;
     &:focus { outline: none; border-color: var(--color-accent); }
   }
+  select { padding-right: 32px; }
   /* A number with its unit inside the field, at the right. */
   .unit {
     position: relative; display: block;

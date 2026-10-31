@@ -1,10 +1,11 @@
 # Cloudflare Pages headers.
 
-# Nothing is fetched from other origins, but for the map tiles on the
+# Nothing is fetched from other origins, but for the map tiles and the
+# street-level photos (Mapillary's, served from Facebook's CDN) on the
 # calculators page. Only the blog (and its previews) may show the app inside
 # its pages, for the "try it here" boxes in its guides (src/lib/demo.js).
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https://tile.openstreetmap.org; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; media-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'self' https://blog.lumiraw.app https://*.margual56.workers.dev
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https://tile.openstreetmap.org https://*.fbcdn.net; font-src 'self' data:; connect-src 'self' https://graph.mapillary.com https://*.fbcdn.net; worker-src 'self' blob:; media-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'self' https://blog.lumiraw.app https://*.margual56.workers.dev
 
 # Hashed assets can be cached forever.
 /_app/immutable/*

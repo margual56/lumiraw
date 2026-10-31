@@ -20,6 +20,7 @@
     "vite": "^7.0.0"
   },
   "dependencies": {
-    "leaflet": "1.9.4"
+    "leaflet": "1.9.4",
+    "mapillary-js": "4.1.2"
   }
 }

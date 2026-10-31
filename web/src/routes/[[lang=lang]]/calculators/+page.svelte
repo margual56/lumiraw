@@ -4,6 +4,8 @@
    *  golden and blue hours. */
   import SiteHeader from '$lib/components/SiteHeader.svelte';
   import Meta from '$lib/components/Meta.svelte';
+  import SunView from '$lib/components/SunView.svelte';
+  import { MAPILLARY_TOKEN } from '$lib/brand.js';
   import { t, n, i18n } from '$lib/i18n.svelte.js';
   import {
     SENSORS, FILTERS, SHUTTERS, confusion, depthOfField, duration, lightOfDay, ndShutter, starRules,
@@ -322,6 +324,7 @@
           </div>
           {#if located}<p class="note warn">{located}</p>{/if}
           {#if light}
+            {#if MAPILLARY_TOKEN}<SunView lat={v.lat} lon={v.lon} {day} {light} />{/if}
             <div class="day">
               <div class="half">
                 <h3>{t('calc.sun.morning')}</h3>

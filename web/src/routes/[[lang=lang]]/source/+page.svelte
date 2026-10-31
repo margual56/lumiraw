@@ -163,7 +163,8 @@
       foto: no aparece ninguna petición con su contenido.</li>
     <li><strong>Política de seguridad.</strong> El sitio manda una cabecera
       Content-Security-Policy ({@render f('web/static/_headers')}) que prohíbe a la página
-      conectarse a cualquier dirección que no sea la suya. La hace cumplir tu navegador, no
+      conectarse a cualquier dirección que no sea la suya, salvo a Mapillary para las fotos a
+      pie de calle de la calculadora de la hora dorada. La hace cumplir tu navegador, no
       yo, y puedes verla en las cabeceras de la respuesta. También dice quién puede mostrar
       la aplicación dentro de sus páginas: solo el blog, para que sus guías dejen probar
       cada paso con una foto de ejemplo, que les da el propio blog.</li>
@@ -344,7 +345,7 @@
       request carries its contents.</li>
     <li><strong>Security policy.</strong> The site sends a Content-Security-Policy header
       ({@render f('web/static/_headers')}) that forbids the page from connecting to any address
-      but its own. Your browser enforces it, not me, and you can see it in the response
+      but its own, save Mapillary for the street-level photos in the golden hour calculator. Your browser enforces it, not me, and you can see it in the response
       headers. It also says who may show the app inside their pages: only the blog, so its
       guides can let you try each step on a sample photo, which the blog itself hands over.</li>
     <li><strong>Run it yourself.</strong> If you'd rather not trust my server, you don't have

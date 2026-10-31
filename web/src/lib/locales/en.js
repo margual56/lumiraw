@@ -36,6 +36,8 @@ export default {
   'links.cameras': 'Supported cameras',
   'links.source': 'Source code',
   'links.blog': 'Guides & photos',
+  'step.guide': 'Guide',
+  'step.guide.why': 'This step, explained on the blog, with a photo to try it on',
   'seo.source.title': 'How LumiRaw works, and its source code',
   'seo.source.description': 'Where every part of LumiRaw lives in its public code, from opening a raw file to downloading the result, what is stored, and how to check that nothing is uploaded.',
   'links.open': 'Open a raw file',

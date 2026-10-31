@@ -4,6 +4,7 @@
    * for a face (or, inverted, for everything around it), and healing for dust
    * and small distractions.
    */
+  import GuideLink from '$lib/components/GuideLink.svelte';
   import Viewer from '$lib/components/Viewer.svelte';
   import Slider from '$lib/components/Slider.svelte';
   import LocalOverlay from '$lib/components/LocalOverlay.svelte';
@@ -81,7 +82,7 @@
     {/snippet}
   </Viewer>
   <aside>
-    <h2>{t('local.title')}</h2>
+    <h2>{t('local.title')}<GuideLink /></h2>
     <p class="lede">{t('local.lede')}</p>
 
     <div class="tools" role="radiogroup" aria-label={t('local.title')}>

@@ -1,5 +1,6 @@
 <script>
   /** The grade: one picture, a short list of looks, and the tools to go on from one. */
+  import GuideLink from '$lib/components/GuideLink.svelte';
   import Viewer from '$lib/components/Viewer.svelte';
   import Compare from '$lib/components/Compare.svelte';
   import Slider from '$lib/components/Slider.svelte';
@@ -42,7 +43,7 @@
     </div>
   </div>
   <aside>
-    <h2>{t('grade.title')}</h2>
+    <h2>{t('grade.title')}<GuideLink /></h2>
     <p class="lede">{@html t('grade.lede')}</p>
 
     <!-- An empty grid with only the diagonal in it reads as something that

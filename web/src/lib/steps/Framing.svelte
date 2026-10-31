@@ -1,4 +1,5 @@
 <script>
+  import GuideLink from '$lib/components/GuideLink.svelte';
   import Viewer from '$lib/components/Viewer.svelte';
   import Slider from '$lib/components/Slider.svelte';
   import { app } from '$lib/state.svelte.js';
@@ -93,7 +94,7 @@
     busy={app.busy}
   />
   <aside>
-    <h2>{t('framing.title')}</h2>
+    <h2>{t('framing.title')}<GuideLink /></h2>
     <p class="lede">{t('framing.lede')}</p>
 
     {#if offered}

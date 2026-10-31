@@ -1,5 +1,6 @@
 <script>
   /** The step that only exists for a frame that missed focus. */
+  import GuideLink from '$lib/components/GuideLink.svelte';
   import Viewer from '$lib/components/Viewer.svelte';
   import Slider from '$lib/components/Slider.svelte';
   import { app } from '$lib/state.svelte.js';
@@ -11,7 +12,7 @@
 <div class="stage">
   <Viewer src={app.preview.image} busy={app.busy} />
   <aside>
-    <h2>{t('refocus.title')}</h2>
+    <h2>{t('refocus.title')}<GuideLink /></h2>
     <p class="lede">{@html t('refocus.lede')}</p>
 
     <p class="measured">

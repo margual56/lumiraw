@@ -1,4 +1,5 @@
 <script>
+  import GuideLink from '$lib/components/GuideLink.svelte';
   import Viewer from '$lib/components/Viewer.svelte';
   import Slider from '$lib/components/Slider.svelte';
   import AutoAmount from '$lib/components/AutoAmount.svelte';
@@ -9,7 +10,7 @@
 <div class="stage">
   <Viewer src={app.preview.image} bind:rect={app.settings.wb_rect} selectable busy={app.busy} />
   <aside>
-    <h2>{t('wb.title')}</h2>
+    <h2>{t('wb.title')}<GuideLink /></h2>
     <p class="lede">{t('wb.lede')}</p>
     <AutoAmount id="white_balance" />
     <Slider label={t('wb.temperature')} bind:value={app.settings.temperature}

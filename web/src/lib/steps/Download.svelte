@@ -1,4 +1,5 @@
 <script>
+  import GuideLink from '$lib/components/GuideLink.svelte';
   import Viewer from '$lib/components/Viewer.svelte';
   import Slider from '$lib/components/Slider.svelte';
   import { app } from '$lib/state.svelte.js';
@@ -117,7 +118,7 @@
 <div class="stage">
   <Viewer src={app.output.image} busy={app.busy} />
   <aside>
-    <h2>{t('download.title')}</h2>
+    <h2>{t('download.title')}<GuideLink /></h2>
 
     <div class="field">
       <label for="format">{t('download.format')}</label>

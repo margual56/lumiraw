@@ -1,4 +1,5 @@
 <script>
+  import GuideLink from '$lib/components/GuideLink.svelte';
   import Compare from '$lib/components/Compare.svelte';
   import Rendering from '$lib/components/Rendering.svelte';
   import Toggles from '$lib/components/Toggles.svelte';
@@ -10,7 +11,7 @@
 <div class="stage">
   <Compare before={app.wipe.before} after={app.wipe.after} busy={app.busy} />
   <aside>
-    <h2>{t('compare.title')}</h2>
+    <h2>{t('compare.title')}<GuideLink /></h2>
     <p class="lede">{@html t('compare.lede')}</p>
     <Rendering />
     <Toggles />

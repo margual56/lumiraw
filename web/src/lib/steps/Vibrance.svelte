@@ -1,4 +1,5 @@
 <script>
+  import GuideLink from '$lib/components/GuideLink.svelte';
   import Viewer from '$lib/components/Viewer.svelte';
   import Slider from '$lib/components/Slider.svelte';
   import { app } from '$lib/state.svelte.js';
@@ -39,7 +40,7 @@
 <div class="stage">
   <Viewer src={app.preview.image} busy={app.busy} />
   <aside>
-    <h2>{t('vibrance.title')}</h2>
+    <h2>{t('vibrance.title')}<GuideLink /></h2>
     <p class="lede">{t('vibrance.lede')}</p>
     <Slider label={t('vibrance.label')} bind:value={app.settings.vibrance}
             tone="vib" step={0.02} format={offset} />

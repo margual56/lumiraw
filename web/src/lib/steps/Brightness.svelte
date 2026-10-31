@@ -1,4 +1,5 @@
 <script>
+  import GuideLink from '$lib/components/GuideLink.svelte';
   import Viewer from '$lib/components/Viewer.svelte';
   import Slider from '$lib/components/Slider.svelte';
   import AutoAmount from '$lib/components/AutoAmount.svelte';
@@ -25,7 +26,7 @@
   <Viewer src={app.preview.image} bind:rect={app.settings.exposure_rect} selectable
           mask={showing} busy={app.busy} />
   <aside>
-    <h2>{t('brightness.title')}</h2>
+    <h2>{t('brightness.title')}<GuideLink /></h2>
     <p class="lede">{@html t('brightness.lede')}</p>
 
     <AutoAmount id="exposure" />

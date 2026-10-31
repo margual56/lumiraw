@@ -130,6 +130,35 @@ export function sunTimes(date, lat, lon) {
   return out;
 }
 
+const siderealTime = (d, lw) => RAD * (280.16 + 360.9856235 * d) - lw;
+
+/** How much the air lifts the sun near the horizon, in radians (Bennett's). */
+function refraction(h) {
+  const a = Math.max(h, -0.0015);
+  return 0.0002967 / Math.tan(a + 0.00312536 / (a + 0.08901179));
+}
+
+/**
+ * Where the sun is at `date`, seen from a place: its bearing in degrees
+ * clockwise from north, and its altitude in degrees above the horizon, as
+ * the eye sees it (the air's lift included).
+ */
+export function sunPosition(date, lat, lon) {
+  const lw = RAD * -lon;
+  const phi = RAD * lat;
+  const d = toDays(date);
+  const l = eclipticLongitude(meanAnomaly(d));
+  const dec = declination(l);
+  const h = siderealTime(d, lw) - Math.atan2(Math.sin(l) * Math.cos(OBLIQUITY), Math.cos(l));
+  const altitude = Math.asin(Math.sin(phi) * Math.sin(dec) + Math.cos(phi) * Math.cos(dec) * Math.cos(h));
+  // From the south, westwards, as the formulas give it; turned to a compass bearing.
+  const azimuth = Math.atan2(Math.sin(h), Math.cos(h) * Math.sin(phi) - Math.tan(dec) * Math.cos(phi));
+  return {
+    bearing: ((azimuth / RAD + 180) % 360 + 360) % 360,
+    altitude: (altitude + refraction(altitude)) / RAD,
+  };
+}
+
 /**
  * The golden and blue hours of a day, morning and evening, as `{ from, to }`
  * pairs of Dates (null where the sun does not get there). Golden is from the

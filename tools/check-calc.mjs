@@ -1,6 +1,6 @@
 /** Do the calculators agree with the published tables and almanacs? */
 import {
-  SHUTTERS, depthOfField, duration, lightOfDay, ndShutter, starRules, sunTimes,
+  SHUTTERS, depthOfField, duration, lightOfDay, ndShutter, starRules, sunPosition, sunTimes,
 } from '../web/src/lib/calc.js';
 
 let failures = 0;
@@ -52,6 +52,15 @@ const day = lightOfDay(new Date(2024, 9, 15), 51.5, -0.12);
 check('the day runs blue, golden, noon, golden, blue',
   day.morningBlue.to <= day.morningGolden.from && day.morningGolden.to < day.noon
   && day.noon < day.eveningGolden.from && day.eveningGolden.to <= day.eveningBlue.from);
+
+// The same day in Madrid: at sunset the sun sets at 302° (NOAA's calculator),
+// its centre a quarter of a degree under the horizon as seen, and at noon it stands 73° up, 90° less the latitude and the tilt.
+const dusk = sunPosition(madrid.horizon.set, 40.4168, -3.7038);
+check(`the sun sets in Madrid at ${dusk.bearing.toFixed(1)}°, on the horizon`,
+  near(dusk.bearing, 302.1, 1) && near(dusk.altitude, -0.27, 0.3));
+const high = sunPosition(madrid.noon, 40.4168, -3.7038);
+check(`noon in Madrid, ${high.altitude.toFixed(1)}° up, due south`,
+  near(high.altitude, 90 - 40.4168 + 23.44, 0.3) && near(high.bearing, 180, 1));
 
 check('durations read as a photographer writes them',
   duration(1 / 250) === '1/250 s' && duration(1 / 4) === '1/4 s' && duration(0.4) === '0.4 s'

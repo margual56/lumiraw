@@ -6,7 +6,7 @@
  *  are pure, so `tools/check-calc.mjs` can run them. */
 
 import { RAD, between, wrap360 } from './geo.js';
-import { remoteFetch } from './remote.js';
+import { lastAsked, remoteFetch } from './remote.js';
 
 const ATLAS = 'https://djlorenz.github.io/astronomy/binary_tiles/2025';
 /** The atlas's colour overlay, for a map: tiles 1024 px across, to zoom 8. */
@@ -93,28 +93,14 @@ function cellOf(lat, lon) {
 
 /** Decoded tiles kept, 1.4 MB each: a search's worth and the spot's. */
 const KEEP = 12;
-const cache = new Map();
 
 /** A tile's ratios, fetched and unzipped once while it stays among the last `KEEP` asked for. */
-function tile(key) {
-  const kept = cache.get(key);
-  if (kept) {
-    cache.delete(key);
-    cache.set(key, kept);
-    return kept;
-  }
-  const loading = (async () => {
-    const response = await remoteFetch(`${ATLAS}/binary_tile_${key}.dat.gz`);
-    if (!response.ok) throw new Error(String(response.status));
-    const unzipped = response.body.pipeThrough(new DecompressionStream('gzip'));
-    return decode(new Int8Array(await new Response(unzipped).arrayBuffer()));
-  })();
-  // A failure is not kept, so the next ask tries again.
-  loading.catch(() => cache.delete(key));
-  cache.set(key, loading);
-  if (cache.size > KEEP) cache.delete(cache.keys().next().value);
-  return loading;
-}
+const tile = lastAsked(KEEP, async (key) => {
+  const response = await remoteFetch(`${ATLAS}/binary_tile_${key}.dat.gz`);
+  if (!response.ok) throw new Error(String(response.status));
+  const unzipped = response.body.pipeThrough(new DecompressionStream('gzip'));
+  return decode(new Int8Array(await new Response(unzipped).arrayBuffer()));
+});
 
 /** The sky over a place, or null outside the atlas. */
 export async function skyAt(lat, lon) {

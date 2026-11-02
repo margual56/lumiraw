@@ -14,6 +14,26 @@ const RULES = [
 ];
 export const ruleFor = (url) => RULES.find(([prefix]) => url.startsWith(prefix))?.[1] ?? null;
 
+/** `load(key)`, kept while the key stays among the last `keep` asked for. A
+ *  failure is not kept, so the next ask tries again. */
+export function lastAsked(keep, load) {
+  const cache = new Map();
+  return (key) => {
+    const kept = cache.get(key);
+    if (kept) {
+      // Asked for again: to the back of the queue.
+      cache.delete(key);
+      cache.set(key, kept);
+      return kept;
+    }
+    const loading = load(key);
+    loading.catch(() => cache.delete(key));
+    cache.set(key, loading);
+    if (cache.size > keep) cache.delete(cache.keys().next().value);
+    return loading;
+  };
+}
+
 /** The desktop app's way to its own commands, or null on the site. */
 const desktop = () => (typeof window === 'undefined' ? null : window.__TAURI_INTERNALS__?.invoke ?? null);
 

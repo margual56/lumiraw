@@ -5,7 +5,8 @@
  *  ships it as gzipped tiles of 5° by 5°; `decode`, `zoneOf` and `pickSpots`
  *  are pure, so `tools/check-calc.mjs` can run them. */
 
-const RAD = Math.PI / 180;
+import { RAD, between, wrap360 } from './geo.js';
+
 const ATLAS = 'https://djlorenz.github.io/astronomy/binary_tiles/2025';
 /** The atlas's colour overlay, for a map: tiles 1024 px across, to zoom 8. */
 export const OVERLAY = 'https://djlorenz.github.io/astronomy/image_tiles/tiles2025/tile_{z}_{x}_{y}.png';
@@ -74,50 +75,50 @@ export function decode(bytes) {
   return out;
 }
 
-/** The tile a place falls in, numbered from 1 as the atlas does, or null outside it. */
-function tileOf(lat, lon) {
+/**
+ * The atlas's point a place falls on, or null outside the atlas: its tile,
+ * numbered from 1 as the atlas does (`x`, `y`, and `key` for the file), and
+ * where in the tile's ratios it is (`index`).
+ */
+function cellOf(lat, lon) {
   if (lat < SOUTH || lat >= NORTH) return null;
-  const east = (((lon + 180) % 360) + 360) % 360;
-  return { x: Math.floor(east / 5) + 1, y: Math.floor((lat - SOUTH) / 5) + 1 };
+  const east = wrap360(lon + 180);
+  const x = Math.floor(east / 5) + 1;
+  const y = Math.floor((lat - SOUTH) / 5) + 1;
+  const col = Math.min(SIDE - 1, Math.floor((east - 5 * (x - 1)) / CELL));
+  const row = Math.min(SIDE - 1, Math.floor((lat - SOUTH - 5 * (y - 1)) / CELL));
+  return { x, y, key: `${x}_${y}`, index: row * SIDE + col };
 }
 
+/** Decoded tiles kept, 1.4 MB each: a search's worth and the spot's. */
+const KEEP = 12;
 const cache = new Map();
-/** A tile's ratios, fetched and unzipped once. */
-function tile(x, y) {
-  const key = `${x}_${y}`;
-  if (!cache.has(key)) {
-    cache.set(key, (async () => {
-      const response = await fetch(`${ATLAS}/binary_tile_${key}.dat.gz`);
-      if (!response.ok) throw new Error(String(response.status));
-      const unzipped = response.body.pipeThrough(new DecompressionStream('gzip'));
-      return decode(new Int8Array(await new Response(unzipped).arrayBuffer()));
-    })().catch((error) => {
-      cache.delete(key);
-      throw error;
-    }));
+
+/** A tile's ratios, fetched and unzipped once while it stays among the last `KEEP` asked for. */
+function tile(key) {
+  const kept = cache.get(key);
+  if (kept) {
+    cache.delete(key);
+    cache.set(key, kept);
+    return kept;
   }
-  return cache.get(key);
+  const loading = (async () => {
+    const response = await fetch(`${ATLAS}/binary_tile_${key}.dat.gz`);
+    if (!response.ok) throw new Error(String(response.status));
+    const unzipped = response.body.pipeThrough(new DecompressionStream('gzip'));
+    return decode(new Int8Array(await new Response(unzipped).arrayBuffer()));
+  })();
+  // A failure is not kept, so the next ask tries again.
+  loading.catch(() => cache.delete(key));
+  cache.set(key, loading);
+  if (cache.size > KEEP) cache.delete(cache.keys().next().value);
+  return loading;
 }
 
 /** The sky over a place, or null outside the atlas. */
 export async function skyAt(lat, lon) {
-  const at = tileOf(lat, lon);
-  if (!at) return null;
-  const ratios = await tile(at.x, at.y);
-  const east = (((lon + 180) % 360) + 360) % 360;
-  const col = Math.min(SIDE - 1, Math.floor((east - 5 * (at.x - 1)) / CELL));
-  const row = Math.min(SIDE - 1, Math.floor((lat - SOUTH - 5 * (at.y - 1)) / CELL));
-  return zoneOf(ratios[row * SIDE + col]);
-}
-
-/** Kilometres between two places, and the bearing from the first to the second. */
-export function between(lat, lon, lat2, lon2) {
-  const phi = lat * RAD;
-  const phi2 = lat2 * RAD;
-  const dl = (lon2 - lon) * RAD;
-  const a = Math.sin((phi2 - phi) / 2) ** 2 + Math.cos(phi) * Math.cos(phi2) * Math.sin(dl / 2) ** 2;
-  const bearing = Math.atan2(Math.sin(dl) * Math.cos(phi2), Math.cos(phi) * Math.sin(phi2) - Math.sin(phi) * Math.cos(phi2) * Math.cos(dl));
-  return { km: 12742 * Math.asin(Math.sqrt(a)), bearing: ((bearing / RAD) + 360) % 360 };
+  const cell = cellOf(lat, lon);
+  return cell && zoneOf((await tile(cell.key))[cell.index]);
 }
 
 /**
@@ -139,39 +140,31 @@ export function pickSpots(points, { count = 5, apart }) {
 }
 
 /**
- * The darkest places on land within `km` of a spot. `land(lat, lon)` says
- * whether a place is on land (the sea is dark, and no place to stand).
+ * The darkest places on land within `km` of a spot, each with how far and
+ * which way it is from it. `land(lat, lon)` says whether a place is on land
+ * (the sea is dark, and no place to stand).
  */
 export async function darkSpots(lat, lon, km, land) {
-  const reachLat = km / 111.2;
-  const reachLon = km / (111.2 * Math.max(0.05, Math.cos(lat * RAD)));
-  const south = Math.max(SOUTH, lat - reachLat);
-  const north = Math.min(NORTH - CELL, lat + reachLat);
-  // Every tile the circle touches, fetched together.
-  const wanted = new Map();
-  for (let la = south; la <= north + 5; la += 5) {
-    for (let lo = lon - reachLon; lo <= lon + reachLon + 5; lo += 5) {
-      const at = tileOf(Math.min(la, north), Math.min(lo, lon + reachLon));
-      if (at) wanted.set(`${at.x}_${at.y}`, at);
-    }
-  }
-  const tiles = new Map(await Promise.all([...wanted].map(async ([key, at]) => [key, await tile(at.x, at.y)])));
-  const points = [];
-  // Every point of the atlas within reach: its centre, 1/240° in from the edge of its cell.
+  const kmLat = 111.2;
+  const kmLon = 111.2 * Math.max(0.05, Math.cos(lat * RAD));
+  const south = Math.max(SOUTH, lat - km / kmLat);
+  const north = Math.min(NORTH - CELL, lat + km / kmLat);
+  // Every point of the atlas within reach (at its centre, half a cell in),
+  // measured flat: over 150 km the earth's curve is lost in the rounding.
+  const near = [];
   for (let la = Math.floor(south / CELL) * CELL + CELL / 2; la <= north; la += CELL) {
-    for (let lo = Math.floor((lon - reachLon) / CELL) * CELL + CELL / 2; lo <= lon + reachLon; lo += CELL) {
-      const at = tileOf(la, lo);
-      const ratios = at && tiles.get(`${at.x}_${at.y}`);
-      if (!ratios) continue;
-      const { km: away } = between(lat, lon, la, lo);
-      if (away > km) continue;
-      const east = (((lo + 180) % 360) + 360) % 360;
-      const col = Math.min(SIDE - 1, Math.floor((east - 5 * (at.x - 1)) / CELL));
-      const row = Math.min(SIDE - 1, Math.floor((la - SOUTH - 5 * (at.y - 1)) / CELL));
-      points.push({ lat: la, lon: ((lo + 540) % 360) - 180, ratio: ratios[row * SIDE + col], km: away });
+    for (let lo = Math.floor((lon - km / kmLon) / CELL) * CELL + CELL / 2; lo <= lon + km / kmLon; lo += CELL) {
+      const away = Math.hypot((la - lat) * kmLat, (lo - lon) * kmLon);
+      const cell = away <= km && cellOf(la, lo);
+      if (cell) near.push({ lat: la, lon: wrap360(lo + 180) - 180, km: away, cell });
     }
   }
+  // Every tile they fall in, fetched together.
+  const keys = [...new Set(near.map((p) => p.cell.key))];
+  const tiles = new Map(await Promise.all(keys.map(async (key) => [key, await tile(key)])));
+  for (const p of near) p.ratio = tiles.get(p.cell.key)[p.cell.index];
   // The land checked only for the darkest, not every point.
-  const darkest = points.sort((a, b) => a.ratio - b.ratio).slice(0, 4000).filter((p) => land(p.lat, p.lon));
-  return pickSpots(darkest, { apart: Math.max(4, km / 4) });
+  const darkest = near.sort((a, b) => a.ratio - b.ratio).slice(0, 4000).filter((p) => land(p.lat, p.lon));
+  return pickSpots(darkest, { apart: Math.max(4, km / 4) })
+    .map(({ cell, ...spot }) => ({ ...spot, ...between(lat, lon, spot.lat, spot.lon) }));
 }

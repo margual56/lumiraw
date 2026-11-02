@@ -597,7 +597,7 @@ export default {
   'calc.sensor.inch': '1-inch',
   'calc.sensor.custom': 'Crop factor {crop}',
   'calc.sensor.camera': 'Or find your camera',
-  'calc.sensor.cameraHint': 'Sony ILCE-7M3, Canon EOS R6…',
+  'calc.sensor.cameraHint': 'Sony A7 III, Canon EOS R6, Nikon Z 6II…',
   'calc.sensor.note': 'Sharp means blurred by less than {coc} µm on the sensor: what still looks sharp in a print seen whole, or a screen-filling view.',
   'calc.focal': 'Focal length',
   'calc.aperture': 'Aperture',

@@ -13,6 +13,37 @@ export const SENSORS = [
   { id: 'inch', crop: 2.7 },
 ];
 
+const MARK = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];
+
+/**
+ * A camera as people know it, from lensfun's maker and model: the maker
+ * short ("Nikon", not "Nikon Corporation") and said once, and the name on
+ * the body where lensfun keeps the model code (Sony's ILCE-7M3 is the
+ * A7 III), with the code after it, so either finds it.
+ */
+export function cameraName(maker, model) {
+  const brand = /^OM Digital/i.test(maker) ? 'OM System' : maker.split(/[ ,]/)[0];
+  const name = model.replace(new RegExp(`^${brand}\\s+`, 'i'), '');
+  let known = null;
+  let m;
+  if (brand === 'Sony' && (m = name.match(/^(?:ILCE-|ILCA-|DSLR-A|SLT-A)(\d+)([RSC]?)(?:M(\d))?(A?)V?$/))) {
+    known = `A${m[1]}${m[2]}${m[3] ? ` ${MARK[m[3]]}` : ''}${m[4]}`;
+  } else if (brand === 'Sony' && (m = name.match(/^DSC-(RX\d+R?)(?:M(\d))?(A?)$/))) {
+    known = `${m[1]}${m[2] ? ` ${MARK[m[2]]}` : ''}${m[3]}`;
+  } else if (brand === 'Sony' && (m = name.match(/^ILME-(.+)$/))) {
+    known = m[1];
+  } else if (brand === 'Canon' && (m = name.match(/^(.*\d)m(\d)$/))) {
+    known = `${m[1]} Mark ${MARK[m[2]]}`;
+  } else if (brand === 'Nikon' && (m = name.match(/^(.*)_(\d)$/))) {
+    known = `${m[1]}${MARK[m[2]]}`;
+  } else if (brand === 'Panasonic' && (m = name.match(/^(?:DC|DMC)-(.*?)(?:(?<=\d)M(\d))?$/))) {
+    known = `Lumix ${m[1]}${m[2] ? ` ${MARK[m[2]]}` : ''}`;
+  } else if (brand === 'Olympus' && (m = name.match(/^(E-M\d+)\s*(?:Mark\s*([IVX]+)(S?))?$/))) {
+    known = `OM-D ${m[1]}${m[2] ? ` Mark ${m[2]}${m[3]}` : ''}`;
+  }
+  return known && known !== name ? `${brand} ${known} (${name})` : `${brand} ${name}`;
+}
+
 /** The circle of confusion: the largest blur that still looks sharp in a
  *  print seen whole. 0.03 mm on full frame, smaller on smaller sensors. */
 export const confusion = (crop) => 0.03 / crop;

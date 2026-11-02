@@ -3,6 +3,8 @@
  *  `tools/check-calc.mjs` can run them. Lengths in millimetres unless named
  *  otherwise, distances in metres, times in seconds. */
 
+import { wrap360 } from './geo.js';
+
 /** Common sensors by crop factor, against 35 mm film (36 × 24 mm). */
 export const SENSORS = [
   { id: 'medium', crop: 0.79 },
@@ -128,6 +130,50 @@ export function sunTimes(date, lat, lon) {
     out[name] = { rise: fromJulian(noon - (set - noon)), set: fromJulian(set) };
   }
   return out;
+}
+
+const siderealTime = (d, lw) => RAD * (280.16 + 360.9856235 * d) - lw;
+
+/** How much the air lifts the sun near the horizon, in radians (Bennett's). */
+function refraction(h) {
+  const a = Math.max(h, -0.0015);
+  return 0.0002967 / Math.tan(a + 0.00312536 / (a + 0.08901179));
+}
+
+/**
+ * Which light the sun gives at `altitude` (as `sunTimes` reckons it, before
+ * the air's lift): `day`, `golden`, `dusk` (set, before the blue), `blue`,
+ * or null for night.
+ */
+export function lightOf(altitude) {
+  if (altitude > ANGLES.golden) return 'day';
+  if (altitude > ANGLES.horizon) return 'golden';
+  if (altitude > ANGLES.blueStart) return 'dusk';
+  if (altitude > ANGLES.blueEnd) return 'blue';
+  return null;
+}
+
+/**
+ * Where the sun is at `date`, seen from a place: its bearing in degrees
+ * clockwise from north, its altitude in degrees above the horizon as the eye
+ * sees it (the air's lift included), and `geometric`, without the lift, as
+ * `ANGLES` and `lightOf` take it.
+ */
+export function sunPosition(date, lat, lon) {
+  const lw = RAD * -lon;
+  const phi = RAD * lat;
+  const d = toDays(date);
+  const l = eclipticLongitude(meanAnomaly(d));
+  const dec = declination(l);
+  const h = siderealTime(d, lw) - Math.atan2(Math.sin(l) * Math.cos(OBLIQUITY), Math.cos(l));
+  const altitude = Math.asin(Math.sin(phi) * Math.sin(dec) + Math.cos(phi) * Math.cos(dec) * Math.cos(h));
+  // From the south, westwards, as the formulas give it; turned to a compass bearing.
+  const azimuth = Math.atan2(Math.sin(h), Math.cos(h) * Math.sin(phi) - Math.tan(dec) * Math.cos(phi));
+  return {
+    bearing: wrap360(azimuth / RAD + 180),
+    altitude: (altitude + refraction(altitude)) / RAD,
+    geometric: altitude / RAD,
+  };
 }
 
 /**

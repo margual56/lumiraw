@@ -653,7 +653,7 @@ export default {
   'calc.sun.view.around': 'All round',
   'calc.sun.view.sun': 'Sun',
   'calc.sun.view.note': 'Drawn from the terrain’s heights (the spot stands {ground} m up), out to 60 km: hills and mountains are there, buildings and trees are not. On it, the sun’s path for the day, orange through the golden hour and blue through the blue hour, fainter where the land hides it; the dashed line is level. The terrain comes from Terrain Tiles on AWS, which sees the area you look at.',
-  'calc.sun.view.street': 'Open Street View facing this way',
+  'calc.sun.view.street': 'Open Google Street View facing this way',
   'calc.sun.points': 'N,NE,E,SE,S,SW,W,NW',
   'calc.sun.compass': 'north,north-northeast,northeast,east-northeast,east,east-southeast,southeast,south-southeast,south,south-southwest,southwest,west-southwest,west,west-northwest,northwest,north-northwest',
   'cull.heading': 'Pick the best photos from a shoot',

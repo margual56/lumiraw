@@ -652,7 +652,7 @@ export default {
   'calc.sun.view.around': 'Todo alrededor',
   'calc.sun.view.sun': 'Sol',
   'calc.sun.view.note': 'Dibujado con las alturas del terreno (el sitio está a {ground} m), hasta 60 km: salen los montes, pero no los edificios ni los árboles. Encima, el camino del sol durante el día, naranja en la hora dorada y azul en la hora azul, más tenue donde lo tapa el relieve; la línea discontinua es el horizonte plano. El relieve viene de Terrain Tiles, en AWS, que ve la zona que miras.',
-  'calc.sun.view.street': 'Abrir Street View mirando hacia aquí',
+  'calc.sun.view.street': 'Abrir Google Street View mirando hacia aquí',
   'calc.sun.points': 'N,NE,E,SE,S,SO,O,NO',
   'calc.sun.compass': 'norte,nornordeste,nordeste,estenordeste,este,estesudeste,sudeste,sudsudeste,sur,sudsudoeste,sudoeste,oestesudoeste,oeste,oesnoroeste,noroeste,nornoroeste',
   'cull.heading': 'Elegir las mejores fotos de una sesión',

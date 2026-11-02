@@ -11,6 +11,45 @@ const ALL = [...build, ...files.filter(served), ...prerendered];
 const onDemand = (path) =>
   /\/(lens-[^/]*|lensfun-[^/]*)\.json$|\/((look|nima|face)-[^/]*|segmenter|denoiser)\.bin$/.test(path);
 
+// -- other hosts' data ---------------------------------------------------------
+// Kept here too, so a reload does not ask again and a host that is down does
+// not leave the page empty. OpenStreetMap's tiles are left to the browser: its
+// policy is that clients follow its cache headers, and they are generous.
+const REMOTE = 'lumiraw-remote-v1';
+const SAVED = 'x-lumiraw-saved';
+const HOUR = 3600e3;
+/** Enough for many spots; the oldest go first. */
+const REMOTE_ENTRIES = 500;
+/** How long a copy needs no asking, and how long it may stand in when the host fails. */
+const RULES = [
+  ['https://api.open-meteo.com/v1/forecast', { fresh: HOUR, stale: 24 * HOUR }],
+  ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/', { fresh: 720 * HOUR, stale: Infinity }],
+  ['https://djlorenz.github.io/astronomy/', { fresh: 720 * HOUR, stale: Infinity }],
+];
+
+async function remote(url, { fresh, stale }) {
+  const cache = await caches.open(REMOTE);
+  const hit = await cache.match(url);
+  const age = hit ? Date.now() - Number(hit.headers.get(SAVED)) : Infinity;
+  if (age < fresh) return hit;
+  try {
+    // Readable even for the map's <img> tiles, so that its age can be kept with it.
+    const response = await fetch(url, { mode: 'cors', credentials: 'omit' });
+    if (!response.ok) return age < stale ? hit : response;
+    const headers = new Headers(response.headers);
+    headers.set(SAVED, String(Date.now()));
+    const copy = new Response(await response.blob(), { status: response.status, statusText: response.statusText, headers });
+    await cache.delete(url);
+    await cache.put(url, copy.clone());
+    const keys = await cache.keys();
+    await Promise.all(keys.slice(0, Math.max(0, keys.length - REMOTE_ENTRIES)).map((key) => cache.delete(key)));
+    return copy;
+  } catch (err) {
+    if (age < stale) return hit;
+    throw err;
+  }
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
@@ -29,7 +68,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
     for (const key of await caches.keys()) {
-      if (key === CACHE) continue;
+      if (key === CACHE || key === REMOTE) continue;
       // Lens pieces fetched under the last deploy, still wanted by this one.
       const old = await caches.open(key);
       for (const path of build.filter(onDemand)) {
@@ -46,7 +85,11 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
-  if (url.origin !== self.location.origin) return;
+  if (url.origin !== self.location.origin) {
+    const rule = RULES.find(([prefix]) => request.url.startsWith(prefix));
+    if (rule) event.respondWith(remote(request.url, rule[1]));
+    return;
+  }
 
   if (IMMUTABLE.has(url.pathname)) {
     event.respondWith((async () => {

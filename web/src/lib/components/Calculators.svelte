@@ -12,9 +12,11 @@
   import StarPreview from '$lib/components/StarPreview.svelte';
   import DarkSky from '$lib/components/DarkSky.svelte';
   import { i18n, t, n, clock } from '$lib/i18n.svelte.js';
-  import { RAD, isPlace, round3 } from '$lib/geo.js';
+  import { RAD, atMinute, isPlace, localDay, round3, spotKey } from '$lib/geo.js';
   import { openMap, spotMarker } from '$lib/map.js';
   import { readLink, writeLink } from '$lib/spotlink.js';
+  import { skyOfNight } from '$lib/night.js';
+  import { skyOrUnlit } from '$lib/darksky.js';
   import {
     EXPOSURES, SENSORS, FILTERS, SHUTTERS, cameraName, confusion, depthOfField, duration, lightOfDay,
     ndShutter, nearestStep, starRules, starTrail,
@@ -48,11 +50,7 @@
     starFocal: 20, starAperture: 2.8, megapixels: 24, lat: null, lon: null, ...saved,
     ...(link.lat === undefined ? {} : { lat: link.lat, lon: link.lon }),
   });
-  let day = $state(link.day ?? new Date().toISOString().slice(0, 10));
-  /** The minute on the golden hour's slider, from midnight on `day`. */
-  let minute = $state(link.minutes ?? 18 * 60);
-  /** The minute came with a link: the view keeps it when it next opens on a day or place. */
-  let held = $state(link.minutes !== undefined);
+  let day = $state(link.day ?? localDay(new Date()));
   let locating = $state(false);
   let located = $state('');
 
@@ -121,9 +119,9 @@
   const placed = $derived(isPlace(v.lat, v.lon));
   const light = $derived(placed && day ? lightOfDay(new Date(`${day}T12:00`), v.lat, v.lon) : null);
 
-  // The golden hour's spot, day and time in the address, a moment after they
+  // The golden hour's settings in the address, a moment after they
   // stop changing: browsers limit how often it can be written.
-  const here = $derived(light ? writeLink('sun', { lat: v.lat, lon: v.lon, day, minutes: minute }) : '');
+  const here = $derived(light ? writeLink({ lat: v.lat, lon: v.lon, day, ...look }) : '');
   $effect(() => {
     if (tool !== 'sun' || !here) return;
     const hash = here;
@@ -136,16 +134,30 @@
     const next = readLink(location.hash);
     if (next.lat === undefined) return;
     if (tools.includes(next.tool)) asked = next.tool;
-    const moved = next.lat !== v.lat || next.lon !== v.lon || (next.day && next.day !== day);
-    if (next.minutes !== undefined) {
-      minute = next.minutes;
-      held = !!moved;
-    }
-    if (next.day) day = next.day;
+    Object.assign(look, viewOf(next));
+    day = next.day;
     recentre = true;
     v.lat = next.lat;
     v.lon = next.lon;
   }
+
+  // -- the stars' sky -----------------------------------------------------------
+  // The spot's night, for the Sharp stars preview: at the time picked on the
+  // golden hour if it is dark then, or else at the darkest of that night.
+  let atlas = $state.raw(null);
+  $effect(() => {
+    atlas = null;
+    if (tool !== 'stars' || !placed) return;
+    let stale = false;
+    skyOrUnlit(v.lat, v.lon).then((found) => stale || (atlas = found));
+    return () => (stale = true);
+  });
+  const starSky = $derived(atlas && day ? skyOfNight({ lat: v.lat, lon: v.lon, day, minutes: look.minutes, ratio: atlas.ratio }) : null);
+  const starClock = $derived.by(() => {
+    if (!starSky) return '';
+    const date = atMinute(day, starSky.minutes);
+    return `${date.toLocaleDateString(i18n.locale, { day: 'numeric', month: 'short' })}, ${clock(date)}`;
+  });
 
   /** Metres as a photographer reads them: centimetres up close, ∞ far off. */
   function metres(v) {
@@ -182,8 +194,15 @@
   let leaflet = null;
   /** Fly to the spot on the next update: after "use where I am", not while typing. */
   let recentre = false;
-  /** Which way the view under the map looks, and how wide (SunView), drawn on the map as a wedge. */
-  let look = $state({ facing: 270, fov: 100 });
+  /** The settings of the view under the map (SunView), kept here so they outlast
+   *  its tab; which way it looks and how wide it is are drawn on the map as a wedge. */
+  const viewOf = ({ lat, lon, day: on, minutes, facing, around, dome }) => ({
+    minutes, facing, around, dome, opened: spotKey(lat, lon, on),
+  });
+  let look = $state(link.lat === undefined
+    ? { minutes: 18 * 60, facing: 270, around: false, dome: false, opened: null }
+    : viewOf(link));
+  let shown = $state(100);
   let wedge = null;
   let relabel = null;
 
@@ -241,11 +260,11 @@
     }
     const R = 70;
     const point = (bearing) => `${R + R * Math.sin(bearing * RAD)},${R - R * Math.cos(bearing * RAD)}`;
-    const from = look.facing - look.fov / 2;
-    const to = look.facing + look.fov / 2;
-    const shape = look.fov >= 360
+    const from = look.facing - shown / 2;
+    const to = look.facing + shown / 2;
+    const shape = shown >= 360
       ? `<circle cx="${R}" cy="${R}" r="${R}"/>`
-      : `<path d="M${R},${R} L${point(from)} A${R},${R} 0 ${look.fov > 180 ? 1 : 0} 1 ${point(to)} Z"/>`;
+      : `<path d="M${R},${R} L${point(from)} A${R},${R} 0 ${shown > 180 ? 1 : 0} 1 ${point(to)} Z"/>`;
     const icon = leaflet.divIcon({
       className: 'wedge', iconSize: [2 * R, 2 * R],
       html: `<svg viewBox="0 0 ${2 * R} ${2 * R}" fill="rgba(232,163,61,.25)" stroke="#e8a33d" stroke-width="1.5">${shape}</svg>`,
@@ -261,7 +280,7 @@
   });
   $effect(() => {
     void look.facing;
-    void look.fov;
+    void shown;
     void light;
     aim();
   });
@@ -394,7 +413,15 @@
             </div>
           </div>
           {#if stars}
-            <StarPreview aperture={v.starAperture} pitch={stars.pitch} {trail} />
+            <StarPreview aperture={v.starAperture} pitch={stars.pitch} {trail} limit={starSky?.limit} glow={starSky?.glow} />
+            <p class="note">
+              {#if starSky}
+                {t('calc.stars.sky', { when: starClock, mag: n(starSky.limit, 1) })}
+                {atlas.zone ? t('calc.sun.night.zone', { zone: atlas.zone }) : ''}
+              {:else if !placed}
+                {t('calc.stars.noSpot')}
+              {/if}
+            </p>
             <div class="exposure">
               <label>
                 <span>{t('calc.stars.preview.exposure')} <strong>{duration(EXPOSURES[starTime])}</strong></span>
@@ -445,8 +472,8 @@
           <p class="note map-note">{t('calc.sun.mapNote')}</p>
           <div class="map" bind:this={mapElement}></div>
           {#if light}
-            <SunView lat={v.lat} lon={v.lon} {day} {light} bind:minutes={minute} bind:held
-                     link={here} bind:facing={look.facing} bind:shown={look.fov} />
+            <SunView lat={v.lat} lon={v.lon} bind:day {light} link={here} bind:opened={look.opened} bind:minutes={look.minutes}
+                     bind:facing={look.facing} bind:around={look.around} bind:dome={look.dome} bind:shown />
             <div class="day">
               <div class="half">
                 <h3>{t('calc.sun.morning')}</h3>
@@ -465,8 +492,7 @@
                 </dl>
               </div>
             </div>
-            <p class="note">{t('calc.sun.note', { zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                                                  noon: clock(light.noon) })}</p>
+            <p class="note">{t('calc.sun.note', { noon: clock(light.noon) })}</p>
           {:else}
             <p class="note">{t('calc.sun.ask')}</p>
           {/if}

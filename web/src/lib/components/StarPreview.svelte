@@ -2,11 +2,12 @@
   /** What the stars come out as, at 100 % on the sensor: a patch of sky
    *  drawn pixel by pixel for the lens, aperture, pixels and exposure set,
    *  each star a dot spread by the lens and smeared along by the turning sky,
-   *  enlarged so the pixels can be seen. Redrawn as anything changes. */
+   *  enlarged so the pixels can be seen. Redrawn as anything changes. As many
+   *  stars show, against as bright a sky, as the spot's night lets through. */
   import { t, n } from '$lib/i18n.svelte.js';
 
   /** `trail`: how far a star moves over the exposure, in pixels (starTrail in calc.js). */
-  let { aperture, pitch, trail } = $props();
+  let { aperture, pitch, trail, limit = 6, glow = 21.5 } = $props();
 
   /** How many screen pixels a sensor pixel takes. */
   const ZOOM = 8;
@@ -15,16 +16,15 @@
   const cols = $derived(Math.max(24, Math.floor(width / ZOOM)));
   const ROWS = 30;
 
-  /** The same sky every time: stars at fixed places, of a spread of brightness and colour. */
+  /** The same sky every time: stars at fixed places, of a spread of colour,
+   *  each magnitude some three times as many as the one before, as in the sky. */
   const STARS = (() => {
     let seed = 7;
     const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-    return Array.from({ length: 70 }, () => ({
-      x: random(), y: random(),
-      // Many faint ones, a few bright.
-      flux: 0.15 + 3.5 * random() ** 4,
-      warmth: random() - 0.5,
-    }));
+    return Array.from({ length: 140 }, () => {
+      const mag = 7 + 2 * Math.log10(random() * 0.999 + 0.001);
+      return { x: random(), y: random(), mag, flux: 3.6 * 10 ** (-0.22 * (mag - 1)), warmth: random() - 0.5 };
+    });
   })();
   /** The way the sky drifts across the frame. */
   const ANGLE = (-18 * Math.PI) / 180;
@@ -44,6 +44,7 @@
     const dy = Math.sin(ANGLE);
     const steps = Math.max(1, Math.ceil(trail * 3));
     for (const star of STARS) {
+      if (star.mag > limit) continue;
       // Scattered over a patch a little wider than the frame, so trails come in from its edges.
       const x0 = star.x * (w + trail) - trail * 0.5 * (1 + dx);
       const y0 = star.y * h;
@@ -68,7 +69,9 @@
       }
     }
     const image = new ImageData(w, h);
-    const SKY = [10, 14, 26];
+    // Paler the more light is in it, from a natural sky at 22 to a city's at 18.
+    const paler = Math.max(0, Math.min(1, (22 - glow) / 4));
+    const SKY = [10 + 44 * paler, 14 + 44 * paler, 26 + 40 * paler];
     for (let i = 0; i < w * h; i++) {
       for (let c = 0; c < 3; c++) {
         // Bright stars clip to white, as on the sensor.

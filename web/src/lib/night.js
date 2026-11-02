@@ -3,8 +3,8 @@
  *  `tools/check-calc.mjs` can run it; the stars themselves are in
  *  sky-data.js, loaded with the calculator that draws them. */
 
-import { RAD, wrap360 } from './geo.js';
-import { skyFrom, sunCoords } from './calc.js';
+import { RAD, atMinute, localDay, wrap360 } from './geo.js';
+import { skyFrom, sunCoords, sunPosition } from './calc.js';
 
 const J2000 = 2451545;
 const julian = (date) => date.valueOf() / 864e5 + 2440587.5;
@@ -230,4 +230,72 @@ export function nightSky(data, date, lat, lon, lang) {
     moon: { ...moonFrom(look, date), ...moonPhase(date) },
     core: look(CORE.ra, CORE.dec),
   };
+}
+
+/** The sun's depth at which a night counts as fully dark, and the core's height at which it is worth shooting. */
+export const FULL_DARK = -18;
+const CORE_HIGH = 10;
+
+/**
+ * The nights after `count` days from `first` (`YYYY-MM-DD`), noon to noon, each
+ * `{ day, from, moonless, core, cloud, score }`: when it gets fully dark, in
+ * minutes from midnight on `day`; the hours of dark without the moon;
+ * the Milky Way's core at its highest then; the mean cloud cover, where
+ * `cloudAt(date)` knows it. `clear(p)` says whether a point stands clear of the land.
+ */
+export function bestNights({ lat, lon, first, count = 30, clear = (p) => p.altitude > 0, cloudAt = () => null }) {
+  const STEP_MINUTES = 15;
+  const nights = [];
+  for (let i = 0; i < count; i++) {
+    const start = new Date(`${first}T00:00`);
+    start.setDate(start.getDate() + i);
+    const lit = moonPhase(new Date(start.valueOf() + 864e5)).lit;
+    const night = { day: localDay(start), from: null, moonless: 0, core: null, cloud: null, score: 0 };
+    let coreHours = 0;
+    const covers = [];
+    for (let m = 720; m <= 2160; m += STEP_MINUTES) {
+      const date = new Date(start);
+      date.setMinutes(m);
+      const look = skyFrom(date, lat, lon);
+      const sun = sunCoords(date);
+      if (look(sun.ra, sun.dec).geometric >= FULL_DARK) continue;
+      night.from ??= m;
+      const moonFree = moonFrom(look, date).altitude < 0 || lit < 0.1;
+      if (moonFree) night.moonless += STEP_MINUTES / 60;
+      const core = look(CORE.ra, CORE.dec);
+      if (clear(core)) {
+        if (!night.core || core.altitude > night.core.altitude) night.core = core;
+        if (moonFree && core.altitude >= CORE_HIGH) coreHours += STEP_MINUTES / 60;
+      }
+      const cover = cloudAt(date);
+      if (cover != null) covers.push(cover);
+    }
+    if (covers.length) night.cloud = covers.reduce((a, b) => a + b) / covers.length;
+    night.score = (night.moonless + 0.5 * coreHours) * (1 - (night.cloud ?? 0) / 100);
+    nights.push(night);
+  }
+  return nights;
+}
+
+/**
+ * How the sky looks from a spot on `day` at `minutes` from midnight, or, if the
+ * sun is too high then for stars, at the darkest moment of the night after it:
+ * `{ minutes, glow, limit }`, its brightness (mag/arcsec²) and the faintest star seen.
+ * `ratio` is the atlas's light pollution there.
+ */
+export function skyOfNight({ lat, lon, day, minutes, ratio = 0 }) {
+  const depth = (m) => sunPosition(atMinute(day, m), lat, lon).geometric;
+  let chosen = minutes;
+  let sun = depth(chosen);
+  if (sun > -12) {
+    for (let m = 720; m <= 2160; m += 15) {
+      const down = depth(m);
+      if (m === 720 || down < sun) [chosen, sun] = [m, down];
+    }
+  }
+  const date = atMinute(day, chosen);
+  const glow = skyBrightness({
+    ratio, sun, moon: moonFrom(skyFrom(date, lat, lon), date).altitude, lit: moonPhase(date).lit,
+  });
+  return { minutes: chosen, glow, limit: faintest(glow) };
 }

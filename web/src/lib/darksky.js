@@ -121,6 +121,10 @@ export async function skyAt(lat, lon) {
   return cell && zoneOf((await tile(cell.key))[cell.index]);
 }
 
+/** The same, for drawing a sky: outside the atlas, or if it can't be read, as if unlit. */
+export const skyOrUnlit = (lat, lon) => skyAt(lat, lon).then((sky) => sky ?? UNLIT, () => UNLIT);
+const UNLIT = { ratio: 0, zone: null };
+
 /**
  * The darkest places out of `points` (`{ lat, lon, ratio, km }`), `count` of
  * them, at least `apart` km from one another: by how dark the sky is, to a

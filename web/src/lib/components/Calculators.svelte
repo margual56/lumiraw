@@ -20,7 +20,8 @@
   import camerasUrl from '$lib/wasm/lenses/cameras.json?url';
 
   let { tools, page, path } = $props();
-  let tool = $state(tools[0]);
+  let asked = $state(null);
+  const tool = $derived(asked ?? tools[0]);
 
   /** What was typed, remembered in this browser between visits. */
   const STORE = 'lumiraw.calc';
@@ -50,11 +51,11 @@
 
   // The calculator shown is in the address, so a link can open any of them.
   $effect(() => {
-    const asked = location.hash.slice(1);
-    if (tools.includes(asked)) tool = asked;
+    const hash = location.hash.slice(1);
+    if (tools.includes(hash)) asked = hash;
   });
   function show(next) {
-    tool = next;
+    asked = next;
     history.replaceState(history.state, '', `#${next}`);
   }
 

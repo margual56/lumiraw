@@ -666,6 +666,8 @@ export default {
   'calc.sun.view.street': 'Abrir Google Street View mirando hacia aquí',
   'calc.map.bigger': 'Mapa más grande',
   'calc.map.smaller': 'Mapa más pequeño',
+  'calc.view.bigger': 'Vista más grande',
+  'calc.view.smaller': 'Vista más pequeña',
   'calc.sun.night.dome': 'Todo el cielo desde el sitio, el cenit en el centro y el horizonte en el borde, el norte arriba y el este a la izquierda; haz clic para girar la vista hacia allí',
   'calc.sun.night.tonight': 'Esta noche',
   'calc.sun.night.whole': 'Todo el cielo',

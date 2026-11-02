@@ -386,7 +386,7 @@
           </div>
           {#if located}<p class="note warn">{located}</p>{/if}
           {#if light}
-            <SunView lat={v.lat} lon={v.lon} {day} {light} bind:facing={look.facing} bind:fov={look.fov} />
+            <SunView lat={v.lat} lon={v.lon} {day} {light} bind:facing={look.facing} bind:shown={look.fov} />
             <div class="day">
               <div class="half">
                 <h3>{t('calc.sun.morning')}</h3>

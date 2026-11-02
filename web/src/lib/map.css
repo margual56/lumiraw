@@ -2,8 +2,7 @@
    tall, over the height each page gives its map. */
 html .leaflet-container.big { height: min(82vh, 960px); }
 .map-grow {
-  padding: 6px 10px; border: 0; cursor: pointer;
-  font: 600 12px var(--font-sans, system-ui, sans-serif);
+  display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; cursor: pointer;
   color: #222; background: #fff;
 }
 .map-grow:hover { background: #f2f2f2; }

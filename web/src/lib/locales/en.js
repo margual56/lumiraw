@@ -667,6 +667,8 @@ export default {
   'calc.sun.view.street': 'Open Google Street View facing this way',
   'calc.map.bigger': 'Bigger map',
   'calc.map.smaller': 'Smaller map',
+  'calc.view.bigger': 'Bigger view',
+  'calc.view.smaller': 'Smaller view',
   'calc.sun.night.dome': 'The whole sky from the spot, the zenith in the middle and the horizon round the edge, north at the top and east on the left; click to turn the view that way',
   'calc.sun.night.tonight': 'Tonight',
   'calc.sun.night.whole': 'Whole sky',

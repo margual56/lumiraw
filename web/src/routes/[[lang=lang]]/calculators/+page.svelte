@@ -4,7 +4,10 @@
    *  golden and blue hours. */
   import SiteHeader from '$lib/components/SiteHeader.svelte';
   import Meta from '$lib/components/Meta.svelte';
-  import { t, n, i18n } from '$lib/i18n.svelte.js';
+  import SunView from '$lib/components/SunView.svelte';
+  import { t, n, clock } from '$lib/i18n.svelte.js';
+  import { RAD, isPlace, round3 } from '$lib/geo.js';
+  import { openMap, spotMarker } from '$lib/map.js';
   import {
     SENSORS, FILTERS, SHUTTERS, confusion, depthOfField, duration, lightOfDay, ndShutter, starRules,
   } from '$lib/calc.js';
@@ -80,8 +83,7 @@
   const stars = $derived(valid(v.starFocal, v.starAperture, v.megapixels, v.crop)
     ? starRules({ focal: v.starFocal, crop: v.crop, aperture: v.starAperture,
                   megapixels: v.megapixels }) : null);
-  const placed = $derived(Number.isFinite(v.lat) && Number.isFinite(v.lon)
-    && Math.abs(v.lat) <= 90 && Math.abs(v.lon) <= 180);
+  const placed = $derived(isPlace(v.lat, v.lon));
   const light = $derived(placed && day ? lightOfDay(new Date(`${day}T12:00`), v.lat, v.lon) : null);
 
   /** Metres as a photographer reads them: centimetres up close, ∞ far off. */
@@ -90,12 +92,8 @@
     if (!Number.isFinite(v)) return '—';
     return v < 1 ? `${n(v * 100, 0)} cm` : `${n(v, v < 10 ? 2 : 1)} m`;
   }
-  const clock = (date) => (date
-    ? new Intl.DateTimeFormat(i18n.locale, { hour: '2-digit', minute: '2-digit' }).format(date)
-    : '—');
   const span = (s) => (s ? `${clock(s.from)} – ${clock(s.to)}` : t('calc.sun.never'));
 
-  const round3 = (v) => Math.round(v * 1000) / 1000;
   function locate() {
     if (!navigator.geolocation) {
       located = t('calc.sun.noLocation');
@@ -115,67 +113,83 @@
   }
 
   // -- the map ------------------------------------------------------------------
-  // Leaflet over OpenStreetMap's tiles, loaded only when the golden hour is
-  // open. A click puts the spot there; typed coordinates move it.
+  // Loaded only when the golden hour is open. A click puts the spot there;
+  // typed coordinates move it.
   let mapElement = $state(null);
   let map = null;
   let marker = null;
   let leaflet = null;
   /** Fly to the spot on the next update: after "use where I am", not while typing. */
   let recentre = false;
+  /** Which way the view under the map looks, and how wide (SunView), drawn on the map as a wedge. */
+  let look = $state({ facing: 270, fov: 100 });
+  let wedge = null;
 
   $effect(() => {
     if (!mapElement) return;
     let gone = false;
-    (async () => {
-      leaflet = (await import('leaflet')).default;
-      await import('leaflet/dist/leaflet.css');
-      if (gone) return;
-      map = leaflet.map(mapElement, { worldCopyJump: true, zoomControl: true })
-        .setView(placed ? [v.lat, v.lon] : [30, 0], placed ? 9 : 2);
-      leaflet.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 18,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      }).addTo(map);
-      map.on('click', (e) => {
-        const p = e.latlng.wrap();
-        v.lat = round3(p.lat);
-        v.lon = round3(p.lng);
-      });
+    openMap(mapElement, {
+      centre: placed ? [v.lat, v.lon] : [30, 0], zoom: placed ? 9 : 2,
+      onpick: (lat, lon) => { v.lat = lat; v.lon = lon; },
+    }).then((opened) => {
+      if (gone) return opened.map.remove();
+      ({ leaflet, map } = opened);
+      // Under the spot's dot, which sits in the overlay pane.
+      map.createPane('wedge').style.zIndex = 350;
       place();
-    })();
+    });
     return () => {
       gone = true;
       map?.remove();
-      map = null;
-      marker = null;
+      map = marker = wedge = null;
     };
   });
 
   function place() {
     if (!map || !leaflet) return;
-    if (!placed) {
-      marker?.remove();
-      marker = null;
-      return;
-    }
-    if (!marker) {
-      marker = leaflet.circleMarker([v.lat, v.lon], {
-        radius: 8, weight: 3, color: '#fff', fillColor: '#e8a33d', fillOpacity: 1,
-      }).addTo(map);
-    } else {
-      marker.setLatLng([v.lat, v.lon]);
-    }
-    if (recentre) {
+    marker?.remove();
+    marker = placed ? spotMarker(leaflet, [v.lat, v.lon]).addTo(map) : null;
+    if (placed && recentre) {
       map.setView([v.lat, v.lon], Math.max(map.getZoom(), 9));
       recentre = false;
     }
+    aim();
+  }
+
+  /** The wedge from the spot the way the view looks: a marker, so the same
+   *  size on the screen at any zoom, drawn as a sector of a circle. */
+  function aim() {
+    if (!map || !leaflet) return;
+    if (!placed || !light) {
+      wedge?.remove();
+      wedge = null;
+      return;
+    }
+    const R = 70;
+    const point = (bearing) => `${R + R * Math.sin(bearing * RAD)},${R - R * Math.cos(bearing * RAD)}`;
+    const from = look.facing - look.fov / 2;
+    const to = look.facing + look.fov / 2;
+    const shape = look.fov >= 360
+      ? `<circle cx="${R}" cy="${R}" r="${R}"/>`
+      : `<path d="M${R},${R} L${point(from)} A${R},${R} 0 ${look.fov > 180 ? 1 : 0} 1 ${point(to)} Z"/>`;
+    const icon = leaflet.divIcon({
+      className: 'wedge', iconSize: [2 * R, 2 * R],
+      html: `<svg viewBox="0 0 ${2 * R} ${2 * R}" fill="rgba(232,163,61,.25)" stroke="#e8a33d" stroke-width="1.5">${shape}</svg>`,
+    });
+    if (wedge) wedge.setLatLng([v.lat, v.lon]).setIcon(icon);
+    else wedge = leaflet.marker([v.lat, v.lon], { icon, pane: 'wedge', interactive: false, keyboard: false }).addTo(map);
   }
   $effect(() => {
     // Read so the effect runs when they change.
     void v.lat;
     void v.lon;
     place();
+  });
+  $effect(() => {
+    void look.facing;
+    void look.fov;
+    void light;
+    aim();
   });
 </script>
 
@@ -322,6 +336,7 @@
           </div>
           {#if located}<p class="note warn">{located}</p>{/if}
           {#if light}
+            <SunView lat={v.lat} lon={v.lon} {day} {light} bind:facing={look.facing} bind:fov={look.fov} />
             <div class="day">
               <div class="half">
                 <h3>{t('calc.sun.morning')}</h3>
@@ -466,10 +481,12 @@
     /* Leaflet stacks its panes up to z-index 1000; kept inside, so the sticky
        header still passes over the map. */
     isolation: isolate;
-    height: 300px; border-radius: 10px; overflow: hidden; background: var(--color-panel-2);
+    height: 420px; border-radius: 10px; overflow: hidden; background: var(--color-panel-2);
     @include phone { height: 240px; }
     /* Leaflet's own controls, quieter against the dark page. */
     :global(.leaflet-control-attribution) { font-size: 10px; }
+    /* The way the view under it looks (aim()). */
+    :global(.wedge svg) { display: block; width: 100%; height: 100%; }
   }
   .map-note { margin-top: 6px; }
 

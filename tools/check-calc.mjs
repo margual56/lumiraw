@@ -1,7 +1,8 @@
 /** Do the calculators agree with the published tables and almanacs? */
 import {
-  SHUTTERS, depthOfField, duration, lightOfDay, ndShutter, starRules, sunTimes,
+  SHUTTERS, depthOfField, duration, lightOfDay, ndShutter, lightOf, starRules, sunPosition, sunTimes,
 } from '../web/src/lib/calc.js';
+import { LAYERS, STEP, landAt, skyline } from '../web/src/lib/horizon.js';
 
 let failures = 0;
 const check = (what, ok) => {
@@ -52,6 +53,28 @@ const day = lightOfDay(new Date(2024, 9, 15), 51.5, -0.12);
 check('the day runs blue, golden, noon, golden, blue',
   day.morningBlue.to <= day.morningGolden.from && day.morningGolden.to < day.noon
   && day.noon < day.eveningGolden.from && day.eveningGolden.to <= day.eveningBlue.from);
+
+// The same day in Madrid: at sunset the sun sets at 302° (NOAA's calculator),
+// its centre a quarter of a degree under the horizon as seen, and at noon it stands 73° up, 90° less the latitude and the tilt.
+const dusk = sunPosition(madrid.horizon.set, 40.4168, -3.7038);
+check(`the sun sets in Madrid at ${dusk.bearing.toFixed(1)}°, on the horizon`,
+  near(dusk.bearing, 302.1, 1) && near(dusk.altitude, -0.27, 0.3));
+const high = sunPosition(madrid.noon, 40.4168, -3.7038);
+check('at sunset the sun is where the times put it, and the light turns golden to blue',
+  near(dusk.geometric, -0.833, 0.2) && lightOf(3) === 'golden' && lightOf(-2) === 'dusk'
+  && lightOf(-5) === 'blue' && lightOf(-7) === null && lightOf(20) === 'day');
+check(`noon in Madrid, ${high.altitude.toFixed(1)}° up, due south`,
+  near(high.altitude, 90 - 40.4168 + 23.44, 0.3) && near(high.bearing, 180, 1));
+
+// A ridge 1000 m high 10 km to the west of a spot at sea level: 5.6° up that
+// way, the earth's curve (7 m at that distance, the air's bend counted) taken
+// off, and nothing to the east; within 5 km it is not there yet.
+const west = (la, lo) => (lo < -0.09 && lo > -0.2 ? 1000 : 0);
+const ridge = skyline(west, 0, 0);
+const angle = Math.atan2(1000 - 1.7 - 6.8, 10008) * 180 / Math.PI;
+check(`a ridge 10 km west stands ${landAt(ridge.layers.at(-1), 270).toFixed(2)}° up`,
+  near(landAt(ridge.layers.at(-1), 270), angle, 0.4) && landAt(ridge.layers.at(-1), 90) < 0
+  && landAt(ridge.layers[LAYERS.indexOf(5000)], 270) < 0 && ridge.layers[0].length === 360 / STEP);
 
 check('durations read as a photographer writes them',
   duration(1 / 250) === '1/250 s' && duration(1 / 4) === '1/4 s' && duration(0.4) === '0.4 s'

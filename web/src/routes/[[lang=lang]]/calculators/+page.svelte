@@ -509,7 +509,7 @@
     /* Leaflet stacks its panes up to z-index 1000; kept inside, so the sticky
        header still passes over the map. */
     isolation: isolate;
-    height: 300px; border-radius: 10px; overflow: hidden; background: var(--color-panel-2);
+    height: 420px; border-radius: 10px; overflow: hidden; background: var(--color-panel-2);
     @include phone { height: 240px; }
     /* Leaflet's own controls, quieter against the dark page. */
     :global(.leaflet-control-attribution) { font-size: 10px; }

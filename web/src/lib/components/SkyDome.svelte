@@ -21,10 +21,12 @@
   const rgb = (c) => `rgb(${c.join(',')})`;
   const SHORT = $derived(t('calc.sun.points').split(','));
 
+  /** Kept clear along the top, for the buttons over the view. */
+  const TOP = 44;
   /** The disc: its middle and its radius, room left round it for the compass. */
   const cx = $derived(width / 2);
-  const cy = $derived(height / 2);
-  const R = $derived(Math.max(10, Math.min(width, height) / 2 - 22));
+  const cy = $derived(TOP + (height - TOP) / 2);
+  const R = $derived(Math.max(10, Math.min(width, height - TOP) / 2 - 22));
   const radiusOf = (altitude) => ((90 - altitude) / 90) * R;
   const place = (bearing, altitude) => {
     if (altitude < 0) return null;
@@ -51,7 +53,7 @@
     g.fillStyle = air;
     g.fillRect(0, 0, width, height);
 
-    if (sky) drawSky(g, sky, { ...night, width, height, place, broken: () => false, scale: R / 90, ranks: 2, sun });
+    if (sky) drawSky(g, sky, { ...night, width, height, place, broken: () => false, scale: R / 90, ranks: R < 220 ? 1 : 2, sun });
 
     // The sun's path for the day, and the sun while it is up.
     g.strokeStyle = 'rgba(255,236,190,.55)';

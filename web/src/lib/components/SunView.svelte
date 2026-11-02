@@ -567,7 +567,7 @@
   @use '../../styles/breakpoints' as *;
 
   .view {
-    position: relative; margin-top: 16px; height: 340px; border-radius: 10px; overflow: hidden;
+    position: relative; margin-top: 8px; height: 340px; border-radius: 10px; overflow: hidden;
     background: var(--color-panel-2);
     @include phone { height: 260px; }
   }

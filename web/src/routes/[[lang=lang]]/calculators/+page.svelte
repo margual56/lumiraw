@@ -370,8 +370,6 @@
           {#if located}<p class="note warn">{located}</p>{/if}
 
         {:else}
-          <div class="map" bind:this={mapElement}></div>
-          <p class="note map-note">{t('calc.sun.mapNote')}</p>
           <div class="where">
             <label><span>{t('calc.sun.date')}</span><input type="date" bind:value={day} /></label>
             <label><span>{t('calc.sun.lat')}</span>
@@ -385,6 +383,8 @@
             </button>
           </div>
           {#if located}<p class="note warn">{located}</p>{/if}
+          <p class="note map-note">{t('calc.sun.mapNote')}</p>
+          <div class="map" bind:this={mapElement}></div>
           {#if light}
             <SunView lat={v.lat} lon={v.lon} {day} {light} bind:facing={look.facing} bind:shown={look.fov} />
             <div class="day">
@@ -561,7 +561,7 @@
     /* The way the view under it looks (aim()). */
     :global(.wedge svg) { display: block; width: 100%; height: 100%; }
   }
-  .map-note { margin-top: 6px; }
+  .map-note { margin: 10px 0 8px; }
 
   .where {
     display: grid; grid-template-columns: 1.2fr 1fr 1fr auto; gap: 12px; align-items: end;

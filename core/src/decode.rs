@@ -338,7 +338,7 @@ fn surrounding_hue(img: &Image, onset: &[f32; 3], limit: &[f32; 3]) -> Option<Hu
 
     // Coarsen until the largest hole has closed over.
     let mut levels = vec![(d, wt, w, h)];
-    while levels.last().map_or(false, |(_, _, lw, lh)| *lw > 1 || *lh > 1) {
+    while levels.last().is_some_and(|(_, _, lw, lh)| *lw > 1 || *lh > 1) {
         let (pd, pwt, lw, lh) = levels.last().unwrap();
         let (nw, nh) = (lw.div_ceil(2), lh.div_ceil(2));
         let mut nd = vec![0f32; nw * nh * 3];

@@ -984,13 +984,12 @@ pub struct ProcessArgs<'a> {
 
 /// Linear scene-referred RGB -> display-referred linear sRGB in [0,1], with
 /// what was decided along the way.
-pub fn process(src: &Image, settings: &Settings, args: ProcessArgs, report: &mut Report)
+pub fn process(mut img: Image, settings: &Settings, args: ProcessArgs, report: &mut Report)
                -> (Image, Decisions) {
     let p = args.preset;
     let frozen = args.decided.is_some();
     let mut d = args.decided.unwrap_or_default();
     let long_edge = args.window.long_edge();
-    let mut img = src.clone();
     // Where the frame is, for the stages that place things in it.
     let frame = args.stats_rect.or(args.window.frame(&img));
     // Healing before anything is measured; see `local`.

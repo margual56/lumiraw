@@ -1,6 +1,7 @@
 /** Do the calculators agree with the published tables and almanacs? */
 import {
-  SHUTTERS, depthOfField, duration, lightOfDay, ndShutter, lightOf, starRules, sunPosition, sunTimes,
+  EXPOSURES, SHUTTERS, cameraName, depthOfField, duration, lightOf, lightOfDay, ndShutter, nearestStep, starRules,
+  starTrail, sunPosition, sunTimes,
 } from '../web/src/lib/calc.js';
 import { LAYERS, STEP, landAt, skyline } from '../web/src/lib/horizon.js';
 
@@ -33,6 +34,13 @@ const stars = starRules({ focal: 14, crop: 1, aperture: 2.8, megapixels: 24 });
 check(`NPF for 14 mm f/2.8 on 24 MP full frame (${stars.npf.toFixed(1)} s, 6 µm)`,
   near(stars.pitch, 6, 0.01) && near(stars.npf, 19.86, 0.01));
 check('the 500 rule for 14 mm', near(stars.rule500, 35.71, 0.01));
+// 14 mm for 20 s on 6 µm pixels: the sky turns 15" a second, 0.0204 mm on
+// the sensor, 3.4 pixels; nothing at the pole.
+check('a star trails 3.4 pixels in 20 s at 14 mm on the equator',
+  near(starTrail({ focal: 14, seconds: 20, pitch: 6 }), 3.40, 0.02)
+  && near(starTrail({ focal: 14, seconds: 20, pitch: 6, declination: 90 }), 0, 1e-9));
+check('exposures snap to the nearest step by ratio, 25 s to 25 s and 35 s to 40 s',
+  EXPOSURES[nearestStep(EXPOSURES, 25)] === 25 && EXPOSURES[nearestStep(EXPOSURES, 35.7)] === 40);
 check('the 500 rule shortens with the crop',
   near(starRules({ focal: 14, crop: 1.5, aperture: 2.8, megapixels: 24 }).rule500, 23.81, 0.01));
 
@@ -75,6 +83,19 @@ const angle = Math.atan2(1000 - 1.7 - 6.8, 10008) * 180 / Math.PI;
 check(`a ridge 10 km west stands ${landAt(ridge.layers.at(-1), 270).toFixed(2)}° up`,
   near(landAt(ridge.layers.at(-1), 270), angle, 0.4) && landAt(ridge.layers.at(-1), 90) < 0
   && landAt(ridge.layers[LAYERS.indexOf(5000)], 270) < 0 && ridge.layers[0].length === 360 / STEP);
+
+check('cameras go by the names on them, with lensfun\'s codes after',
+  cameraName('Sony', 'ILCE-7M3') === 'Sony A7 III (ILCE-7M3)'
+  && cameraName('Sony', 'ILCE-7RM4A') === 'Sony A7R IVA (ILCE-7RM4A)'
+  && cameraName('Sony', 'ILCE-6400') === 'Sony A6400 (ILCE-6400)'
+  && cameraName('Sony', 'DSC-RX100M5A') === 'Sony RX100 VA (DSC-RX100M5A)'
+  && cameraName('Canon', 'Canon EOS R6m2') === 'Canon EOS R6 Mark II (EOS R6m2)'
+  && cameraName('Canon', 'Canon EOS R5') === 'Canon EOS R5'
+  && cameraName('Nikon Corporation', 'Z 6_2') === 'Nikon Z 6II (Z 6_2)'
+  && cameraName('Panasonic', 'DC-GH5M2') === 'Panasonic Lumix GH5 II (DC-GH5M2)'
+  && cameraName('Panasonic', 'DMC-GM1') === 'Panasonic Lumix GM1 (DMC-GM1)'
+  && cameraName('Olympus Corporation', 'E-M1MarkII') === 'Olympus OM-D E-M1 Mark II (E-M1MarkII)'
+  && cameraName('OM Digital Solutions', 'OM-1') === 'OM System OM-1');
 
 check('durations read as a photographer writes them',
   duration(1 / 250) === '1/250 s' && duration(1 / 4) === '1/4 s' && duration(0.4) === '0.4 s'

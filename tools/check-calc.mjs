@@ -3,7 +3,7 @@ import {
   EXPOSURES, SHUTTERS, cameraName, depthOfField, duration, lightOf, lightOfDay, ndShutter, nearestStep, starRules,
   skyFrom, starTrail, sunPosition, sunTimes,
 } from '../web/src/lib/calc.js';
-import { faintest, moonCoords, moonPhase, planets, skyBrightness } from '../web/src/lib/night.js';
+import { bestNights, faintest, moonCoords, moonPhase, planets, skyBrightness, skyOfNight } from '../web/src/lib/night.js';
 import { LAYERS, STEP, landAt, skyline } from '../web/src/lib/horizon.js';
 import { decode, pickSpots, zoneOf } from '../web/src/lib/darksky.js';
 import { readLink, writeLink } from '../web/src/lib/spotlink.js';
@@ -148,15 +148,31 @@ check('twilight and the moon brighten the sky',
   skyBrightness({ sun: -12, moon: -10, lit: 0 }) < 19 && skyBrightness({ sun: -30, moon: 60, lit: 1 }) < 19.5
   && skyBrightness({ sun: -30, moon: 60, lit: 0.1 }) > 21.9);
 
-const linked = readLink(writeLink('sun', { lat: 40.4, lon: -3.7, day: '2026-11-02', minutes: 1605 }));
-check('a shared link gives back its spot, day and time, past midnight too',
-  linked.tool === 'sun' && linked.lat === 40.4 && linked.lon === -3.7 && linked.day === '2026-11-02' && linked.minutes === 1605);
-const elsewhere = -new Date('2026-11-02T12:00').getTimezoneOffset() - 120;
-check('a link read in another time zone means the same moment',
-  readLink(`#sun&lat=1&lon=1&date=2026-11-02&time=18:00&tz=${elsewhere}`).minutes === 18 * 60 + 120);
-const odd = readLink('#sun&lat=95&lon=1&date=soon&time=18:00');
-check('a link with nonsense in it asks for none of it', odd.tool === 'sun' && odd.lat === undefined && odd.day === undefined && odd.minutes === undefined);
-check('an old link, the tab alone, still opens the tab', readLink('#dark').tool === 'dark');
+const settings = { lat: 40.417, lon: -3.704, day: '2026-11-02', minutes: 1605, facing: 243, around: true, dome: false };
+const code = writeLink(settings);
+const linked = readLink(code);
+check(`a shared code is short and gives back all it holds (${code})`, code.length === 16
+  && linked.tool === 'sun' && Object.entries(settings).every(([key, value]) => linked[key] === value));
+check('a code for the far corners of the map survives',
+  readLink(writeLink({ ...settings, lat: -90, lon: 180, facing: 359.7, minutes: 0 })).lat === -90 && readLink(writeLink({ ...settings, lon: 180 })).lon === 180);
+check('an old link, the tab alone, still opens the tab', readLink('#dark').tool === 'dark' && readLink('#dark').lat === undefined);
+check('a damaged code asks for no place', readLink(`#1${'z'.repeat(14)}`).lat === undefined);
+
+const winter = bestNights({ lat: 40.4, lon: -3.7, first: '2026-12-01', count: 31 });
+const newMoon = winter.find((night) => night.day === '2026-12-08');
+const fullMoon = winter.find((night) => night.day === '2026-12-23');
+check(`a new moon's night has more moonless dark than a full moon's (${newMoon.moonless} h, ${fullMoon.moonless} h)`,
+  newMoon.moonless > 10 && fullMoon.moonless < 2 && newMoon.score > fullMoon.score);
+const summer = bestNights({ lat: 40.4, lon: -3.7, first: '2026-08-10', count: 1 })[0];
+check(`the core stands high on a summer evening (${summer.core?.altitude.toFixed(0)}°)`, summer.core.altitude > 15 && summer.core.bearing > 150 && summer.core.bearing < 240);
+const cloudy = bestNights({ lat: 40.4, lon: -3.7, first: '2026-12-08', count: 1, cloudAt: () => 80 })[0];
+check('forecast cloud lowers a night', cloudy.cloud === 80 && near(cloudy.score, newMoon.score * 0.2, 0.3));
+check('no night is fully dark in a Tromsø June', bestNights({ lat: 69.6, lon: 18.9, first: '2026-06-21', count: 1 })[0].from === null);
+
+const town = skyOfNight({ lat: 40.4, lon: -3.7, day: '2026-12-08', minutes: 720, ratio: 20 });
+const wild = skyOfNight({ lat: 40.4, lon: -3.7, day: '2026-12-08', minutes: 720, ratio: 0 });
+check(`from noon, a sky taken at its darkest; a town shows fewer stars (${town.limit.toFixed(1)}, ${wild.limit.toFixed(1)})`,
+  town.minutes > 1200 && wild.limit > 6 && town.limit < wild.limit - 1);
 
 if (failures) {
   console.error(`\n${failures} check(s) failed`);

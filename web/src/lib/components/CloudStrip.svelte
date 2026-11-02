@@ -1,15 +1,16 @@
 <script>
-  /** The clouds forecast over the spot for the next 24 hours (lib/weather.js),
-   *  hour by hour in three layers, the higher up the thinner they tend to
+  /** The clouds forecast over the spot for the day picked and on to noon the
+   *  next, as far as the slider runs (lib/weather.js), hour by hour in three layers, the higher up the thinner they tend to
    *  be: a sky of only high cloud can still light up at sunset, while low
    *  cloud hides it. Each hour's band under them says whether it is day or
    *  night there, and the hour of the time picked on the slider is marked. */
   import { t, clock } from '$lib/i18n.svelte.js';
   import { lightOf, sunPosition } from '$lib/calc.js';
-  import { WEATHER_PAGE } from '$lib/weather.js';
+  import { DAYS, WEATHER_PAGE } from '$lib/weather.js';
 
-  /** `hours`: weather.js's clouds, null while loading, or 'failed'; `picked`: the one of them picked, if any. */
-  let { lat, lon, hours, picked } = $props();
+  /** `hours`: those of weather.js's clouds to show, null while loading, or
+   *  'failed'; `picked`: the one of them picked, if any; `far`: over a week ahead. */
+  let { lat, lon, hours, picked, far = false } = $props();
 
   const LAYERS = ['high', 'mid', 'low'];
   const list = $derived(Array.isArray(hours) ? hours : []);
@@ -21,8 +22,10 @@
   <h3 id="clouds-title">{t('calc.sun.clouds.title')}</h3>
   {#if hours === 'failed'}
     <p class="note">{t('calc.sun.clouds.failed')}</p>
-  {:else if !list.length}
+  {:else if !hours}
     <p class="note">{t('calc.sun.clouds.loading')}</p>
+  {:else if !list.length}
+    <p class="note">{t('calc.sun.clouds.outside', { days: DAYS })}</p>
   {:else}
     <div class="grid" style:--hours={list.length}>
       {#each LAYERS as layer (layer)}
@@ -38,11 +41,11 @@
       {/each}
       <span class="layer"></span>
       {#each list as h, i (h.at.valueOf())}
-        <span class="hour">{i % 3 === 0 ? clock(h.at) : ''}</span>
+        <span class="hour">{i % 6 === 0 ? clock(h.at) : ''}</span>
       {/each}
     </div>
     <p class="key">
-      <span class="scale" aria-hidden="true"></span> {t('calc.sun.clouds.key')}
+      <span class="scale" aria-hidden="true"></span> {t('calc.sun.clouds.key')} {far ? t('calc.sun.clouds.far') : ''}
       <a href={WEATHER_PAGE} target="_blank" rel="noopener">{t('calc.sun.clouds.source')}</a>
     </p>
   {/if}

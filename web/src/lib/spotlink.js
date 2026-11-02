@@ -1,41 +1,71 @@
-/** A golden hour's spot, day and time in the address, for sharing:
- *  `#sun&lat=40.4&lon=-3.7&date=2026-11-02&time=18:30&tz=60`. After the `#`,
- *  so the spot does not reach the site's host when the link is opened. `time`
- *  is as on the slider, so past 24:00 is the next morning; `tz` is the minutes
- *  east of UTC it was read in, so the link means the same moment anywhere. */
+/** A golden hour's spot, day, time and view packed into a short code, for
+ *  sharing: `/sky#1aZ09xQkLm2Pz0w`. Nothing is stored anywhere: the code is the
+ *  settings, and it sits after the `#`, so it does not reach the site's host. */
 import { isPlace } from './geo.js';
 
+const ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+const VERSION = '1';
+const LENGTH = 14;
+const CODE = new RegExp(`^${VERSION}[0-9A-Za-z]{${LENGTH}}$`);
 /** The last minute on the slider, noon the next day. */
-export const LAST_MINUTE = 2159;
+const LAST_MINUTE = 2159;
+/** How many values each field takes, in the order packed. */
+const RADIX = { lat: 180001, lon: 360001, day: 65536, minutes: 2160, tz: 105, facing: 360, around: 2, dome: 2 };
 
 const eastOfUtc = (day) => -new Date(`${day}T12:00`).getTimezoneOffset();
-const two = (x) => String(x).padStart(2, '0');
+const dayNumber = (day) => Date.parse(`${day}T00:00Z`) / 864e5 - 10957;
+const dayName = (number) => new Date((number + 10957) * 864e5).toISOString().slice(0, 10);
 
-/** The address's hash for this spot, day and minute. */
-export function writeLink(tool, { lat, lon, day, minutes }) {
-  const time = `${two(Math.floor(minutes / 60))}:${two(minutes % 60)}`;
-  return `#${tool}&lat=${lat}&lon=${lon}&date=${day}&time=${time}&tz=${eastOfUtc(day)}`;
+/** What identifies an opening of the view: a new one starts on the golden hour again. */
+export const spotKey = (lat, lon, day) => `${lat},${lon},${day}`;
+
+/** The address's hash for these settings. */
+export function writeLink({ lat, lon, day, minutes, facing, around, dome }) {
+  const fields = {
+    lat: Math.round((lat + 90) * 1000),
+    lon: Math.round((lon + 180) * 1000),
+    day: dayNumber(day),
+    minutes: Math.round(minutes),
+    tz: Math.round(eastOfUtc(day) / 15) + 48,
+    facing: ((Math.round(facing) % 360) + 360) % 360,
+    around: around ? 1 : 0,
+    dome: dome ? 1 : 0,
+  };
+  let packed = 0n;
+  for (const [name, radix] of Object.entries(RADIX)) packed = packed * BigInt(radix) + BigInt(fields[name]);
+  let code = '';
+  for (let i = 0; i < LENGTH; i++) {
+    code = ALPHABET[Number(packed % 62n)] + code;
+    packed /= 62n;
+  }
+  return `#${VERSION}${code}`;
 }
 
-/** What a hash asks for: `tool`, and `lat`, `lon`, `day` and `minutes` where given and sound. */
+/** What a hash asks for: `tool`, and with a code the settings it holds. */
 export function readLink(hash) {
-  const [tool, ...rest] = hash.replace(/^#/, '').split('&');
-  const asked = new URLSearchParams(rest.join('&'));
-  const out = { tool };
-
-  const lat = Number(asked.get('lat'));
-  const lon = Number(asked.get('lon'));
-  if (asked.get('lat') && asked.get('lon') && isPlace(lat, lon)) Object.assign(out, { lat, lon });
-
-  const day = asked.get('date') ?? '';
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Number.isNaN(new Date(`${day}T12:00`).valueOf())) return out;
-  out.day = day;
-
-  const time = /^(\d{1,2}):(\d{2})$/.exec(asked.get('time') ?? '');
-  if (time) {
-    const tz = Number(asked.get('tz'));
-    const shift = asked.get('tz') && Number.isFinite(tz) ? eastOfUtc(day) - tz : 0;
-    out.minutes = Math.max(0, Math.min(LAST_MINUTE, Number(time[1]) * 60 + Number(time[2]) + shift));
+  const asked = hash.replace(/^#/, '');
+  if (!CODE.test(asked)) return { tool: asked };
+  let packed = 0n;
+  for (const letter of asked.slice(VERSION.length)) packed = packed * 62n + BigInt(ALPHABET.indexOf(letter));
+  const fields = {};
+  for (const [name, radix] of Object.entries(RADIX).reverse()) {
+    fields[name] = Number(packed % BigInt(radix));
+    packed /= BigInt(radix);
   }
-  return out;
+  const lat = fields.lat / 1000 - 90;
+  const lon = fields.lon / 1000 - 180;
+  if (packed !== 0n || !isPlace(lat, lon)) return { tool: 'sun' };
+  const day = dayName(fields.day);
+  // The same moment in the time zone it is read in.
+  const shift = eastOfUtc(day) - (fields.tz - 48) * 15;
+  return {
+    tool: 'sun',
+    lat: Math.round(lat * 1000) / 1000,
+    lon: Math.round(lon * 1000) / 1000,
+    day,
+    minutes: Math.max(0, Math.min(LAST_MINUTE, fields.minutes + shift)),
+    facing: fields.facing,
+    around: fields.around === 1,
+    dome: fields.dome === 1,
+  };
 }

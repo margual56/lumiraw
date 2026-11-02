@@ -12,6 +12,10 @@ export const compassPoint = (bearing, points) =>
 /** Whether a latitude and longitude make a place. */
 export const isPlace = (lat, lon) => Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
 
+/** A date as `YYYY-MM-DD` on this device's calendar. */
+export const localDay = (date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
 /** Degrees to three places, some 100 m: as close as a click on a map means. */
 export const round3 = (degrees) => Math.round(degrees * 1000) / 1000;
 

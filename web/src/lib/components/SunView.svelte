@@ -8,7 +8,9 @@
   import { sunPosition } from '$lib/calc.js';
   import { horizonFrom, landAt } from '$lib/horizon.js';
 
-  let { lat, lon, day, light } = $props();
+  /** `facing` and `fov`: which way the view looks, and how wide it is, in
+   *  degrees; bound, so the map can show them. */
+  let { lat, lon, day, light, facing = $bindable(270), fov = $bindable(100) } = $props();
 
   const RAD = Math.PI / 180;
 
@@ -17,9 +19,6 @@
   let width = $state(0);
   let height = $state(0);
   let minutes = $state(18 * 60);
-  /** Which way the view looks, and how wide it is, in degrees. */
-  let facing = $state(270);
-  let fov = $state(100);
   let canvas = $state(null);
 
   // -- the land -------------------------------------------------------------------

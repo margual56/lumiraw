@@ -124,6 +124,9 @@
   let leaflet = null;
   /** Fly to the spot on the next update: after "use where I am", not while typing. */
   let recentre = false;
+  /** Which way the view under the map looks, and how wide (SunView), drawn on the map as a wedge. */
+  let look = $state({ facing: 270, fov: 100 });
+  let wedge = null;
 
   $effect(() => {
     if (!mapElement) return;
@@ -138,6 +141,7 @@
         maxZoom: 18,
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       }).addTo(map);
+      map.on('zoomend', aim);
       map.on('click', (e) => {
         const p = e.latlng.wrap();
         v.lat = round3(p.lat);
@@ -150,6 +154,7 @@
       map?.remove();
       map = null;
       marker = null;
+      wedge = null;
     };
   });
 
@@ -158,6 +163,7 @@
     if (!placed) {
       marker?.remove();
       marker = null;
+      aim();
       return;
     }
     if (!marker) {
@@ -171,12 +177,47 @@
       map.setView([v.lat, v.lon], Math.max(map.getZoom(), 9));
       recentre = false;
     }
+    aim();
+  }
+
+  /** The wedge from the spot the way the view looks, the same size on the
+   *  screen at any zoom: worked out in the map's pixels, so redrawn on zooming. */
+  function aim() {
+    if (!map || !leaflet) return;
+    if (!placed || !light) {
+      wedge?.remove();
+      wedge = null;
+      return;
+    }
+    const RADIUS = 70;
+    const centre = map.latLngToLayerPoint([v.lat, v.lon]);
+    const from = look.facing - look.fov / 2;
+    const steps = Math.max(2, Math.ceil(look.fov / 5));
+    const arc = Array.from({ length: steps + 1 }, (_, i) => {
+      const bearing = ((from + (look.fov * i) / steps) * Math.PI) / 180;
+      return map.layerPointToLatLng(centre.add([Math.sin(bearing) * RADIUS, -Math.cos(bearing) * RADIUS]));
+    });
+    const points = look.fov >= 360 ? arc : [[v.lat, v.lon], ...arc];
+    if (!wedge) {
+      wedge = leaflet.polygon(points, {
+        color: '#e8a33d', weight: 1.5, fillColor: '#e8a33d', fillOpacity: 0.25, interactive: false,
+      }).addTo(map);
+    } else {
+      wedge.setLatLngs(points);
+    }
+    marker?.bringToFront();
   }
   $effect(() => {
     // Read so the effect runs when they change.
     void v.lat;
     void v.lon;
     place();
+  });
+  $effect(() => {
+    void look.facing;
+    void look.fov;
+    void light;
+    aim();
   });
 </script>
 
@@ -323,7 +364,7 @@
           </div>
           {#if located}<p class="note warn">{located}</p>{/if}
           {#if light}
-            <SunView lat={v.lat} lon={v.lon} {day} {light} />
+            <SunView lat={v.lat} lon={v.lon} {day} {light} bind:facing={look.facing} bind:fov={look.fov} />
             <div class="day">
               <div class="half">
                 <h3>{t('calc.sun.morning')}</h3>

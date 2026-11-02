@@ -179,7 +179,7 @@ function milkyCells(data) {
  * (`bearing` and `altitude`, degrees): `stars` four numbers each (bearing,
  * altitude, magnitude, B−V), the constellations' `lines` as runs of bearing
  * and altitude and their `labels`, the bright stars' `names`, the Milky
- * Way's `milky` cells, the `planets`, the `moon` (with how much is lit) and
+ * Way's `milky` cells (`milkyGrid` degrees apart), the `planets`, the `moon` (with how much is lit) and
  * the galaxy's `core`. Only what is above the horizon, or near it, for the
  * stars and cells. `data` is sky-data.js; `lang` picks the names.
  */
@@ -222,6 +222,7 @@ export function nightSky(data, date, lat, lon, lang) {
     lines,
     labels,
     milky,
+    milkyGrid: data.MILKY_GRID,
     planets: planets(date).map((p) => ({ name: p.name, mag: p.mag, ...look(p.ra, p.dec) })),
     moon: { ...moon, ...moonPhase(date, sun) },
     core: look(CORE.ra, CORE.dec),

@@ -42,15 +42,18 @@ let haze = null;
  * daylight to 1 full night), `milky` how plainly the Milky Way shows (0–1),
  * `ranks` the constellations named (1 the best known only, to 3 all), and
  * `sun` where the sun is, which the moon's lit side faces. `planetName`
- * gives a planet's name in the page's language.
+ * gives a planet's name in the page's language, and `milkyName` the Milky Way's.
  */
-export function drawSky(g, sky, { width, height, place, broken, scale, limit, dark, milky, ranks, sun, planetName }) {
+export function drawSky(g, sky, { width, height, place, broken, scale, limit, dark, milky, ranks, sun, planetName, milkyName }) {
   if (dark <= 0) return;
   g.save();
 
-  // The Milky Way: its cells drawn small and enlarged, which blurs them into a glow.
+  // The Milky Way: its cells drawn small, blurred and enlarged into a glow;
+  // the brighter clouds stand out more than their outlines' count, as they do
+  // to the eye, and the dark lanes between them stay dark.
+  let named = null;
   if (milky > 0) {
-    const shrink = 6;
+    const shrink = 3;
     const w = Math.ceil(width / shrink);
     const h = Math.ceil(height / shrink);
     haze ??= document.createElement('canvas');
@@ -59,22 +62,35 @@ export function drawSky(g, sky, { width, height, place, broken, scale, limit, da
     const m = haze.getContext('2d');
     m.clearRect(0, 0, w, h);
     m.globalCompositeOperation = 'lighter';
-    const r = Math.max(1.5, (3.2 * scale) / shrink);
-    for (const cell of sky.milky) {
-      const at = place(cell.bearing, cell.altitude);
+    const cell = (sky.milkyGrid * scale) / shrink;
+    const r = Math.max(0.8, 0.75 * cell);
+    m.filter = `blur(${Math.max(1, 0.6 * cell).toFixed(1)}px)`;
+    for (const c of sky.milky) {
+      const at = place(c.bearing, c.altitude);
       if (!at) continue;
       // Cells are closer together towards the poles; each counts for less.
-      m.fillStyle = `rgba(190,204,255,${0.028 * cell.level * Math.cos(cell.dec * RAD)})`;
+      m.fillStyle = `rgba(200,210,240,${0.012 * c.level ** 1.6 * Math.cos(c.dec * RAD)})`;
       m.beginPath();
       m.arc(at[0] / shrink, at[1] / shrink, r, 0, 2 * Math.PI);
       m.fill();
+      // Named on its highest bright stretch in view, clear of the ground and of the names low down.
+      const rank = Math.min(c.level, 3) * 1000 + c.altitude;
+      if (c.altitude > 8 && (!named || rank > named.rank)) named = { rank, at };
     }
+    m.filter = 'none';
     g.globalAlpha = Math.min(1, milky * dark);
     g.globalCompositeOperation = 'lighter';
     g.imageSmoothingEnabled = true;
     g.drawImage(haze, 0, 0, w * shrink, h * shrink);
     g.globalCompositeOperation = 'source-over';
     g.globalAlpha = 1;
+  }
+
+  if (named && milkyName) {
+    g.font = 'italic 500 12px system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.fillStyle = `rgba(214,222,246,${0.75 * Math.min(1, milky * dark)})`;
+    g.fillText(milkyName, named.at[0], named.at[1] - 14);
   }
 
   // The constellations' lines.

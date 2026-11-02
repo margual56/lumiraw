@@ -681,6 +681,7 @@ export default {
   'calc.sun.night.sets': 'Se pone a las {time}.',
   'calc.sun.night.moonAllNight': 'Fuera toda la noche.',
   'calc.sun.night.moonNoNight': 'Bajo el horizonte toda la noche.',
+  'calc.sun.night.milkyWay': 'Vía Láctea',
   'calc.sun.night.core': 'Centro de la Vía Láctea',
   'calc.sun.night.coreBest': 'Lo más alto de noche cerrada a las {time}, a {altitude}° hacia el {side}',
   'calc.sun.night.coreNever': 'No asoma sobre el terreno de noche cerrada',

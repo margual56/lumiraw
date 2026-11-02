@@ -682,6 +682,7 @@ export default {
   'calc.sun.night.sets': 'Sets at {time}.',
   'calc.sun.night.moonAllNight': 'Up all night.',
   'calc.sun.night.moonNoNight': 'Below the horizon all night.',
+  'calc.sun.night.milkyWay': 'Milky Way',
   'calc.sun.night.core': 'Milky Way core',
   'calc.sun.night.coreBest': 'Highest while it’s dark at {time}, {altitude}° up to the {side}',
   'calc.sun.night.coreNever': 'Doesn’t clear the land while it’s dark',

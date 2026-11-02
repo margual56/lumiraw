@@ -5,14 +5,17 @@
    *  same as the golden hour's. */
   import { untrack } from 'svelte';
   import { t, n } from '$lib/i18n.svelte.js';
-  import { ATLAS_PAGE, BORTLE_PAGE, OVERLAY, between, darkSpots, skyAt } from '$lib/darksky.js';
+  import { ATLAS_PAGE, BORTLE_PAGE, OVERLAY, ZONES, darkSpots, skyAt } from '$lib/darksky.js';
+  import { compassPoint, isPlace, round3 } from '$lib/geo.js';
   import { heightsAround } from '$lib/horizon.js';
+  import { openMap, spotMarker } from '$lib/map.js';
 
   /** `onpick`: a spot's golden hour asked for. */
   let { lat = $bindable(), lon = $bindable(), locate, locating, onpick } = $props();
 
-  const placed = $derived(Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180);
-  const round3 = (x) => Math.round(x * 1000) / 1000;
+  const placed = $derived(isPlace(lat, lon));
+  /** One colour a zone number, as the overlay paints its second half. */
+  const LEGEND = [...new Map(ZONES.map(([, zone, colour]) => [zone[0], colour]))];
 
   let km = $state(50);
   let here = $state.raw(null);
@@ -34,39 +37,34 @@
   $effect(() => {
     if (!element) return;
     let gone = false;
-    (async () => {
-      leaflet = (await import('leaflet')).default;
-      await import('leaflet/dist/leaflet.css');
-      if (gone) return;
-      map = leaflet.map(element, { worldCopyJump: true }).setView(placed ? [lat, lon] : [40, -3.7], placed ? 8 : 5);
-      leaflet.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 18,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      }).addTo(map);
+    openMap(element, {
+      centre: placed ? [lat, lon] : [40, -3.7], zoom: placed ? 8 : 5,
+      onpick: (la, lo) => {
+        clicked = true;
+        lat = la;
+        lon = lo;
+      },
+    }).then((opened) => {
+      if (gone) return opened.map.remove();
+      ({ leaflet, map } = opened);
       leaflet.tileLayer(OVERLAY, {
         minZoom: 2, maxNativeZoom: 8, maxZoom: 18, tileSize: 1024, zoomOffset: -2, opacity: 0.5,
         attribution: `<a href="${ATLAS_PAGE}">Light Pollution Atlas</a> &copy; David Lorenz`,
       }).addTo(map);
-      map.on('click', (e) => {
-        const p = e.latlng.wrap();
-        clicked = true;
-        lat = round3(p.lat);
-        lon = round3(p.lng);
-      });
-      draw();
-    })();
+      untrack(place);
+      untrack(pin);
+    });
     return () => {
       gone = true;
       map?.remove();
-      map = null;
-      marker = circle = null;
+      map = marker = circle = null;
       pins = [];
     };
   });
 
-  /** The spot, the circle searched, and the spots found, on the map. */
-  function draw() {
-    if (!map || !leaflet) return;
+  /** The spot and the circle searched, on the map. */
+  function place() {
+    if (!map) return;
     marker?.remove();
     circle?.remove();
     marker = circle = null;
@@ -74,40 +72,57 @@
       circle = leaflet.circle([lat, lon], {
         radius: km * 1000, color: '#fff', weight: 2, opacity: 0.9, fill: false, dashArray: '8 6', interactive: false,
       }).addTo(map);
-      marker = leaflet.circleMarker([lat, lon], {
-        radius: 8, weight: 3, color: '#fff', fillColor: '#e8a33d', fillOpacity: 1,
-      }).addTo(map);
+      marker = spotMarker(leaflet, [lat, lon]).addTo(map);
       if (!clicked) map.fitBounds(circle.getBounds(), { maxZoom: 10 });
     }
     clicked = false;
-    for (const pin of pins) pin.remove();
+  }
+
+  /** The spots found, numbered. */
+  function pin() {
+    if (!map) return;
+    for (const each of pins) each.remove();
     pins = spots.map((spot, i) => leaflet.marker([spot.lat, spot.lon], {
       icon: leaflet.divIcon({ className: 'dark-pin', html: `<span>${i + 1}</span>`, iconSize: [26, 26] }),
       keyboard: false,
     }).addTo(map));
   }
 
-  // A new spot or distance: its sky read again, the old spots gone.
+  // A new spot: its sky read, the spots found from the last one gone.
   $effect(() => {
-    void km;
-    if (!placed) {
-      here = null;
-      spots = [];
-      untrack(draw);
-      return;
-    }
-    const spot = [lat, lon];
     spots = [];
     status = '';
+    untrack(place);
+    untrack(pin);
+    if (!placed) {
+      here = null;
+      return;
+    }
+    let stale = false;
     hereStatus = 'reading';
-    skyAt(...spot).then((sky) => {
-      if (spot[0] !== lat || spot[1] !== lon) return;
+    skyAt(lat, lon).then((sky) => {
+      if (stale) return;
       here = sky;
       hereStatus = sky ? '' : 'outside';
     }, () => {
-      hereStatus = 'failed';
+      if (!stale) hereStatus = 'failed';
     });
-    untrack(draw);
+    return () => {
+      stale = true;
+    };
+  });
+
+  // A new distance: the circle resized, and the spots found within the old one gone.
+  $effect(() => {
+    const radius = km * 1000;
+    untrack(() => {
+      if (!circle) return;
+      circle.setRadius(radius);
+      map.fitBounds(circle.getBounds(), { maxZoom: 10 });
+      spots = [];
+      status = '';
+      pin();
+    });
   });
 
   let searched = 0;
@@ -121,9 +136,9 @@
       const height = await heightsAround(lat, lon, [[km * 1000, zoom]]);
       const found = await darkSpots(lat, lon, km, (la, lo) => (height(la, lo, zoom) ?? 0) > 1);
       if (job !== searched) return;
-      spots = found.map((spot) => ({ ...spot, ...between(lat, lon, spot.lat, spot.lon), height: height(spot.lat, spot.lon, zoom) }));
+      spots = found.map((spot) => ({ ...spot, height: height(spot.lat, spot.lon, zoom) }));
       status = spots.length ? '' : 'none';
-      draw();
+      pin();
       if (spots.length) map?.fitBounds(circle.getBounds(), { maxZoom: 10 });
     } catch {
       if (job === searched) status = 'failed';
@@ -131,7 +146,6 @@
   }
 
   const POINTS = $derived(t('calc.sun.points').split(','));
-  const side = (bearing) => POINTS[Math.round(bearing / 45) % 8];
   const colour = (c) => `rgb(${c.join(',')})`;
   const directions = (spot) => `https://www.google.com/maps/dir/?api=1&destination=${spot.lat.toFixed(4)},${spot.lon.toFixed(4)}`;
   function show(spot) {
@@ -144,7 +158,7 @@
 <p class="note">{t('calc.dark.mapNote')}</p>
 
 <div class="legend" aria-hidden="true">
-  {#each [['0', [0, 0, 0]], ['1', [66, 66, 66]], ['2', [33, 84, 216]], ['3', [31, 161, 42]], ['4', [184, 166, 37]], ['5', [253, 150, 80]], ['6', [251, 90, 73]], ['7', [242, 242, 242]]] as [zone, c] (zone)}
+  {#each LEGEND as [zone, c] (zone)}
     <span><i style:background={colour(c)}></i>{zone}</span>
   {/each}
   <em>{t('calc.dark.legend')}</em>
@@ -196,7 +210,7 @@
         <li>
           <span class="number">{i + 1}</span>
           <div class="facts">
-            <strong>{t('calc.dark.away', { km: n(spot.km, 0), side: side(spot.bearing) })}</strong>
+            <strong>{t('calc.dark.away', { km: n(spot.km, 0), side: compassPoint(spot.bearing, POINTS) })}</strong>
             <span>
               <i style:background={colour(spot.colour)}></i>
               {t('calc.dark.spotSky', { bortle: spot.bortle, sqm: n(spot.sqm, 2) })}{#if spot.height != null}{` · ${n(spot.height, 0)} m`}{/if}
@@ -268,14 +282,6 @@
     label { display: grid; gap: 10px; }
     label > span { font-size: 12.5px; color: var(--color-muted); }
     strong { color: var(--color-ink); font-variant-numeric: tabular-nums; }
-    input {
-      appearance: none; width: 100%; height: 6px; padding: 0; border: 0; border-radius: 999px;
-      background: var(--color-line); margin: 6px 0;
-      &::-webkit-slider-thumb {
-        appearance: none; width: 18px; height: 18px; border-radius: 50%; background: var(--color-accent);
-      }
-      &::-moz-range-thumb { width: 18px; height: 18px; border: 0; border-radius: 50%; background: var(--color-accent); }
-    }
   }
   .status { margin: 10px 0 0; font-size: 13.5px; color: var(--color-muted); }
 

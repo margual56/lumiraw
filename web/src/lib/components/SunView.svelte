@@ -155,6 +155,7 @@
   const night = $derived({
     limit, dark, milky: Math.max(0, Math.min(1, (glow - 19.8) / 1.4)),
     planetName: (name) => t(`calc.sun.night.planet.${name}`),
+    milkyName: t('calc.sun.night.milkyWay'),
   });
 
   /** The night after the day picked, noon to noon, every five minutes:

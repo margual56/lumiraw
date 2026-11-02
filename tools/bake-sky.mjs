@@ -22,7 +22,7 @@ const FAINTEST = 5;
 /** The faintest star named. */
 const NAMED = 2;
 /** The Milky Way's grid, in degrees. */
-const GRID = 2;
+const GRID = 1;
 
 const get = async (name) => (await fetch(`${SOURCE}/${name}`)).json();
 const [stars, names, constellations, lines, milky] = await Promise.all(

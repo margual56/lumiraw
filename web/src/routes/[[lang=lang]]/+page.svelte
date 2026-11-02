@@ -272,7 +272,11 @@
         </label>
         <Dropzone onpick={pickMany} />
         <Privacy />
-        <a class="merge-link" href={localized('/merge')}>
+        <a class="merge-link sky-link" href={localized('/sky')}>
+          <strong>{t('sky.link')}</strong>
+          <span>{t('sky.linkHint')}</span>
+        </a>
+        <a class="merge-link cull-link" href={localized('/merge')}>
           <strong>{t('merge.link')}</strong>
           <span>{t('merge.linkHint')}</span>
         </a>
@@ -419,4 +423,18 @@
   }
   /* The ones after the first, close under it. */
   .cull-link { margin-top: 8px; }
+  /* The sky planner, as a night sky: a few stars over deep blue. */
+  .sky-link {
+    border-color: #2b3c78;
+    background:
+      radial-gradient(1px 1px at 12% 30%, #fff 60%, transparent),
+      radial-gradient(1px 1px at 38% 75%, #fff 60%, transparent),
+      radial-gradient(1.5px 1.5px at 67% 22%, #fff 60%, transparent),
+      radial-gradient(1px 1px at 84% 64%, #fff 60%, transparent),
+      radial-gradient(1px 1px at 93% 18%, #fff 60%, transparent),
+      linear-gradient(135deg, #0b1230, #1d2b5e);
+    strong { color: #f2c46a; }
+    span { color: rgba(255, 255, 255, .78); }
+    &:hover { border-color: #f2c46a; background-color: transparent; filter: brightness(1.12); }
+  }
 </style>

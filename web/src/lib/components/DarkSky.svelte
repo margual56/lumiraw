@@ -44,6 +44,7 @@
         lat = la;
         lon = lo;
       },
+      bigger: { more: t('calc.map.bigger'), less: t('calc.map.smaller') },
     }).then((opened) => {
       if (gone) return opened.map.remove();
       ({ leaflet, map } = opened);

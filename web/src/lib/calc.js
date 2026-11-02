@@ -137,7 +137,9 @@ function eclipticLongitude(m) {
   const centre = RAD * (1.9148 * Math.sin(m) + 0.02 * Math.sin(2 * m) + 0.0003 * Math.sin(3 * m));
   return m + centre + RAD * 102.9372 + Math.PI;
 }
-const declination = (l) => Math.asin(Math.sin(OBLIQUITY) * Math.sin(l));
+/** From the ecliptic (longitude `l`, latitude `b`, radians) to the sky's own coordinates. */
+const declination = (l, b = 0) => Math.asin(Math.sin(b) * Math.cos(OBLIQUITY) + Math.cos(b) * Math.sin(OBLIQUITY) * Math.sin(l));
+const rightAscension = (l, b = 0) => Math.atan2(Math.sin(l) * Math.cos(OBLIQUITY) - Math.tan(b) * Math.sin(OBLIQUITY), Math.cos(l));
 const transit = (ds, m, l) => J2000 + ds + 0.0053 * Math.sin(m) - 0.0069 * Math.sin(2 * l);
 const approxTransit = (ht, lw, n) => J0 + (ht + lw) / (2 * Math.PI) + n;
 
@@ -204,26 +206,46 @@ export function lightOf(altitude) {
 }
 
 /**
+ * How the sky stands over a place at `date`: a function from right ascension
+ * and declination (degrees) to the bearing (degrees clockwise from north) and
+ * the altitude (degrees above the horizon) as the eye sees it, the air's
+ * lift included, and `geometric`, without it. Worked out once for the moment
+ * and place, so a sky full of stars costs one call each.
+ */
+export function skyFrom(date, lat, lon) {
+  const phi = RAD * lat;
+  const sinPhi = Math.sin(phi);
+  const cosPhi = Math.cos(phi);
+  const sidereal = siderealTime(toDays(date), RAD * -lon);
+  return (ra, dec) => {
+    const h = sidereal - ra * RAD;
+    const delta = dec * RAD;
+    const altitude = Math.asin(sinPhi * Math.sin(delta) + cosPhi * Math.cos(delta) * Math.cos(h));
+    // From the south, westwards, as the formulas give it; turned to a compass bearing.
+    const azimuth = Math.atan2(Math.sin(h), Math.cos(h) * sinPhi - Math.tan(delta) * cosPhi);
+    return {
+      bearing: wrap360(azimuth / RAD + 180),
+      altitude: (altitude + refraction(altitude)) / RAD,
+      geometric: altitude / RAD,
+    };
+  };
+}
+
+/** The sun's right ascension and declination at `date`, in degrees. */
+export function sunCoords(date) {
+  const l = eclipticLongitude(meanAnomaly(toDays(date)));
+  return { ra: wrap360(rightAscension(l) / RAD), dec: declination(l) / RAD };
+}
+
+/**
  * Where the sun is at `date`, seen from a place: its bearing in degrees
  * clockwise from north, its altitude in degrees above the horizon as the eye
  * sees it (the air's lift included), and `geometric`, without the lift, as
  * `ANGLES` and `lightOf` take it.
  */
 export function sunPosition(date, lat, lon) {
-  const lw = RAD * -lon;
-  const phi = RAD * lat;
-  const d = toDays(date);
-  const l = eclipticLongitude(meanAnomaly(d));
-  const dec = declination(l);
-  const h = siderealTime(d, lw) - Math.atan2(Math.sin(l) * Math.cos(OBLIQUITY), Math.cos(l));
-  const altitude = Math.asin(Math.sin(phi) * Math.sin(dec) + Math.cos(phi) * Math.cos(dec) * Math.cos(h));
-  // From the south, westwards, as the formulas give it; turned to a compass bearing.
-  const azimuth = Math.atan2(Math.sin(h), Math.cos(h) * Math.sin(phi) - Math.tan(dec) * Math.cos(phi));
-  return {
-    bearing: wrap360(azimuth / RAD + 180),
-    altitude: (altitude + refraction(altitude)) / RAD,
-    geometric: altitude / RAD,
-  };
+  const { ra, dec } = sunCoords(date);
+  return skyFrom(date, lat, lon)(ra, dec);
 }
 
 /**

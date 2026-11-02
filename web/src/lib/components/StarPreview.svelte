@@ -75,13 +75,10 @@
       }
       image.data[i * 4 + 3] = 255;
     }
-    const small = new OffscreenCanvas(w, h);
-    small.getContext('2d').putImageData(image, 0, 0);
-    canvas.width = w * ZOOM;
-    canvas.height = h * ZOOM;
-    const g = canvas.getContext('2d');
-    g.imageSmoothingEnabled = false;
-    g.drawImage(small, 0, 0, w * ZOOM, h * ZOOM);
+    // At the sensor's own size, enlarged by the page with its pixels kept square.
+    canvas.width = w;
+    canvas.height = h;
+    canvas.getContext('2d').putImageData(image, 0, 0);
   });
 
 </script>
@@ -94,7 +91,7 @@
 <style lang="scss">
   .patch {
     position: relative; margin-top: 22px; border-radius: 10px; overflow: hidden; background: #0a0e1a;
-    canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; }
+    canvas { display: block; width: 100%; height: auto; image-rendering: crisp-edges; image-rendering: pixelated; }
     .tag { position: absolute; right: 8px; bottom: 6px; font-size: 11px; color: rgba(255, 255, 255, .6); }
   }
 </style>

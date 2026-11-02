@@ -9,7 +9,7 @@
   import DarkSky from '$lib/components/DarkSky.svelte';
   import { t, n, i18n } from '$lib/i18n.svelte.js';
   import {
-    SENSORS, FILTERS, SHUTTERS, confusion, depthOfField, duration, lightOfDay, ndShutter, starRules, starTrail,
+    SENSORS, FILTERS, SHUTTERS, cameraName, confusion, depthOfField, duration, lightOfDay, ndShutter, starRules, starTrail,
   } from '$lib/calc.js';
   import camerasUrl from '$lib/wasm/lenses/cameras.json?url';
 
@@ -61,7 +61,7 @@
       // Some models are listed once per mount; one entry each is enough here.
       const seen = new Map();
       for (const c of data.cameras) {
-        const label = `${c.maker} ${c.model}`;
+        const label = cameraName(c.maker, c.model);
         if (c.crop > 0 && !seen.has(label)) seen.set(label, { label, crop: c.crop });
       }
       cameras = [...seen.values()];

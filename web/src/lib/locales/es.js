@@ -596,7 +596,7 @@ export default {
   'calc.sensor.inch': '1 pulgada',
   'calc.sensor.custom': 'Factor de recorte {crop}',
   'calc.sensor.camera': 'O busca tu cámara',
-  'calc.sensor.cameraHint': 'Sony ILCE-7M3, Canon EOS R6…',
+  'calc.sensor.cameraHint': 'Sony A7 III, Canon EOS R6, Nikon Z 6II…',
   'calc.sensor.note': 'Nítido quiere decir desenfocado menos de {coc} µm en el sensor: lo que sigue pareciendo nítido en una copia vista entera, o a pantalla completa.',
   'calc.focal': 'Distancia focal',
   'calc.aperture': 'Diafragma',

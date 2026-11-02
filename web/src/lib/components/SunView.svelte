@@ -14,12 +14,15 @@
   import { drawSky } from '$lib/drawsky.js';
   import { skyAt } from '$lib/darksky.js';
   import { clouds, hourOf } from '$lib/weather.js';
+  import { GROW, SHRINK } from '$lib/map.js';
   import SkyDome from './SkyDome.svelte';
   import CloudStrip from './CloudStrip.svelte';
 
-  /** `facing` and `fov`: which way the view looks, and how wide it is, in
+  /** `facing` and `shown`: which way the view looks, and how wide it is, in
    *  degrees; bound, so the map can show them. */
-  let { lat, lon, day, light, facing = $bindable(270), fov = $bindable(100) } = $props();
+  let { lat, lon, day, light, facing = $bindable(270), shown = $bindable(100) } = $props();
+  /** How wide a view was asked for: the usual, or all round. */
+  let fov = $state(100);
 
   /** The sun's half-width in degrees, its colour, and how far it may be out of view and still drawn. */
   const SUN_RADIUS = 0.27;
@@ -34,6 +37,8 @@
   let canvas = $state(null);
   /** The panorama, or the whole sky overhead. */
   let dome = $state(false);
+  /** Taller, as the maps can be. */
+  let tall = $state(false);
 
   // -- the land -------------------------------------------------------------------
 
@@ -252,9 +257,15 @@
 
   // -- the drawing ----------------------------------------------------------------
 
-  /** Pixels a degree, and where level ground meets the sky. */
-  const scale = $derived(width / fov);
-  const level = $derived(height * 0.66);
+  /** Where level ground meets the sky: a third of the way up, and less ground when the view is tall. */
+  const level = $derived(Math.max(height * 0.66, height - 140));
+  /** How wide the view is: as asked, but when tall, no wider than keeps its top at the zenith. */
+  const span = $derived(tall && fov < 360 && width && level ? Math.min(fov, (width * 90) / level) : fov);
+  $effect(() => {
+    shown = span;
+  });
+  /** Pixels a degree. */
+  const scale = $derived(width / span);
   const turnFrom = (bearing) => wrap360(bearing - facing + 180) - 180;
   const xOf = (bearing) => width / 2 + turnFrom(bearing) * scale;
   const yOf = (altitude) => level - altitude * scale;
@@ -268,7 +279,7 @@
     const g = canvas.getContext('2d');
     g.setTransform(ratio, 0, 0, ratio, 0, 0);
     g.shadowBlur = 0;
-    const left = facing - fov / 2;
+    const left = facing - span / 2;
 
     // The sky, and a glow about the sun while it is low.
     const air = g.createLinearGradient(0, 0, 0, level);
@@ -298,7 +309,7 @@
           return x < -20 || x > width + 20 ? null : [x, yOf(altitude)];
         },
         broken: (a, b) => Math.abs(a[0] - b[0]) > width / 2,
-        ranks: fov > 180 ? 1 : 2,
+        ranks: span > 180 ? 1 : 2,
       });
     }
 
@@ -361,7 +372,7 @@
 
     // The compass along the bottom.
     g.fillStyle = 'rgba(255,255,255,.7)';
-    for (let b = Math.ceil(left / 15) * 15; b <= left + fov; b += 15) {
+    for (let b = Math.ceil(left / 15) * 15; b <= left + span; b += 15) {
       const x = xOf(b);
       const major = b % 45 === 0;
       g.fillRect(x - 0.5, height - (major ? 26 : 20), 1, major ? 8 : 4);
@@ -473,9 +484,9 @@
   const street = $derived(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lon}&heading=${Math.round(facing)}`);
 </script>
 
-<div class="view" class:dome bind:clientWidth={width} bind:clientHeight={height}>
+<div class="view" class:dome class:tall bind:clientWidth={width} bind:clientHeight={height}>
   {#if dome}
-    <SkyDome {sky} {night} {tone} {ground} {skyline} {path} {sun} bind:facing {fov} />
+    <SkyDome {sky} {night} {tone} {ground} {skyline} {path} {sun} bind:facing fov={span} />
   {:else}
     <canvas bind:this={canvas} tabindex="0" aria-label={t('calc.sun.view.label')}
             onpointerdown={grab} onpointermove={drag} onpointerup={() => (dragged = null)}
@@ -484,6 +495,10 @@
   {#if cloudNow}
     <p class="cloudy">{t('calc.sun.clouds.now', { total: cloudNow.total, low: cloudNow.low })}</p>
   {/if}
+  <button type="button" class="grow" aria-label={t(tall ? 'calc.view.smaller' : 'calc.view.bigger')}
+          title={t(tall ? 'calc.view.smaller' : 'calc.view.bigger')} onclick={() => (tall = !tall)}>
+    {@html tall ? SHRINK : GROW}
+  </button>
   {#if status === 'looking'}<p class="status">{t('calc.sun.view.looking')}</p>{/if}
 </div>
 
@@ -563,6 +578,15 @@
     &:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
   }
   .view.dome { height: min(560px, 92vw); }
+  .view.tall { height: min(82vh, 960px); }
+  /* As the maps' (map.css). */
+  .grow {
+    position: absolute; top: 8px; right: 8px; display: grid; place-items: center; width: 34px; height: 34px;
+    padding: 0; border: 0; border-radius: 4px; cursor: pointer; color: #222; background: #fff;
+    box-shadow: 0 1px 5px rgba(0, 0, 0, .4);
+    &:hover { background: #f2f2f2; }
+    &:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+  }
   .cloudy {
     position: absolute; top: 8px; left: 8px; margin: 0; padding: 3px 8px; border-radius: 6px;
     font-size: 12px; color: #fff; background: rgba(0, 0, 0, .45); pointer-events: none;

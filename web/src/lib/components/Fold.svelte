@@ -1,16 +1,12 @@
 <script>
+  import { readStored } from '$lib/stored.js';
+
   /** A section closed until asked for, its main fact in the heading. Which
    *  ones are open is remembered in this browser. */
   let { id, title, peek = '', children } = $props();
 
   const STORE = 'lumiraw.folds';
-  const opened = () => {
-    try {
-      return JSON.parse(localStorage.getItem(STORE)) ?? {};
-    } catch {
-      return {};
-    }
-  };
+  const opened = () => readStored(STORE);
   const keep = (event) => {
     try {
       localStorage.setItem(STORE, JSON.stringify({ ...opened(), [id]: event.currentTarget.open }));

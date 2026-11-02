@@ -6,7 +6,7 @@
  *  `tools/check-calc.mjs` can run it. */
 
 import { RAD, wrap360 } from './geo.js';
-import { remoteFetch } from './remote.js';
+import { lastAsked, remoteFetch } from './remote.js';
 
 const EARTH = 6371000;
 /** How much the air bends a sight line over the curve of the earth. */
@@ -92,45 +92,29 @@ const SIZE = 256;
 /** Decoded tiles kept, some 260 KB each: the last few places' worth. */
 const KEEP = 64;
 
-const cache = new Map();
 let scratch = null;
 
 /** A tile's heights, in metres, decoded from its colours (Terrarium's
  *  encoding); fetched once while it stays among the last `KEEP` asked for. */
-function tile(z, x, y) {
-  const key = `${z}/${x}/${y}`;
-  const kept = cache.get(key);
-  if (kept) {
-    // Asked for again: to the back of the queue.
-    cache.delete(key);
-    cache.set(key, kept);
-    return kept;
+const tile = lastAsked(KEEP, async (key) => {
+  const response = await remoteFetch(`${TILES}/${key}.png`);
+  if (!response.ok) throw new Error(String(response.status));
+  const bitmap = await createImageBitmap(await response.blob(), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+  if (!scratch) {
+    scratch = document.createElement('canvas');
+    scratch.width = SIZE;
+    scratch.height = SIZE;
   }
-  const loading = (async () => {
-    const response = await remoteFetch(`${TILES}/${key}.png`);
-    if (!response.ok) throw new Error(String(response.status));
-    const bitmap = await createImageBitmap(await response.blob(), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
-    if (!scratch) {
-      scratch = document.createElement('canvas');
-      scratch.width = SIZE;
-      scratch.height = SIZE;
-    }
-    const context = scratch.getContext('2d', { willReadFrequently: true });
-    context.drawImage(bitmap, 0, 0);
-    bitmap.close();
-    const { data } = context.getImageData(0, 0, SIZE, SIZE);
-    const heights = new Float32Array(SIZE * SIZE);
-    for (let i = 0; i < heights.length; i++) {
-      heights[i] = data[i * 4] * 256 + data[i * 4 + 1] + data[i * 4 + 2] / 256 - 32768;
-    }
-    return heights;
-  })();
-  // A failure is not kept, so the next ask tries again.
-  loading.catch(() => cache.delete(key));
-  cache.set(key, loading);
-  if (cache.size > KEEP) cache.delete(cache.keys().next().value);
-  return loading;
-}
+  const context = scratch.getContext('2d', { willReadFrequently: true });
+  context.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  const { data } = context.getImageData(0, 0, SIZE, SIZE);
+  const heights = new Float32Array(SIZE * SIZE);
+  for (let i = 0; i < heights.length; i++) {
+    heights[i] = data[i * 4] * 256 + data[i * 4 + 1] + data[i * 4 + 2] / 256 - 32768;
+  }
+  return heights;
+});
 
 /** Where a place falls on the tiles of `z`, in pixels. */
 function pixel(lat, lon, z) {
@@ -160,7 +144,7 @@ export async function heightsAround(lat, lon, levels) {
         const index = wrapped + y * n;
         if (tiles.get(z).has(index)) continue;
         tiles.get(z).set(index, null);
-        jobs.push(tile(z, wrapped, y).then((heights) => tiles.get(z).set(index, heights)));
+        jobs.push(tile(`${z}/${wrapped}/${y}`).then((heights) => tiles.get(z).set(index, heights)));
       }
     }
   }

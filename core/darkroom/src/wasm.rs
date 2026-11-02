@@ -5,16 +5,16 @@ use serde_json::json;
 use std::cell::RefCell;
 
 thread_local! {
-    static LENSES: RefCell<Option<Lenses>> = RefCell::new(None);
+    static LENSES: RefCell<Option<Lenses>> = const { RefCell::new(None) };
     static BRACKET: RefCell<Bracket> = RefCell::new(Bracket::new());
-    static STACK: RefCell<Option<Stack>> = RefCell::new(None);
-    static PHOTO: RefCell<Option<Photo>> = RefCell::new(None);
-    static JSON: RefCell<Vec<u8>> = RefCell::new(Vec::new());
-    static PIXELS: RefCell<Vec<u8>> = RefCell::new(Vec::new());
-    static PIXELS_B: RefCell<Vec<u8>> = RefCell::new(Vec::new());
-    static BYTES: RefCell<Vec<u8>> = RefCell::new(Vec::new());
-    static SIZE: RefCell<(u32, u32)> = RefCell::new((0, 0));
-    static SIZE_B: RefCell<(u32, u32)> = RefCell::new((0, 0));
+    static STACK: RefCell<Option<Stack>> = const { RefCell::new(None) };
+    static PHOTO: RefCell<Option<Photo>> = const { RefCell::new(None) };
+    static JSON: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    static PIXELS: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    static PIXELS_B: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    static BYTES: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    static SIZE: RefCell<(u32, u32)> = const { RefCell::new((0, 0)) };
+    static SIZE_B: RefCell<(u32, u32)> = const { RefCell::new((0, 0)) };
 }
 
 // -- progress out to the host ---------------------------------------------

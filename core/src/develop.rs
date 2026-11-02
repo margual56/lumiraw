@@ -198,7 +198,9 @@ impl Development {
         // original frame) and before everything tonal, so metering and the auto
         // levels only ever see the picture that will actually be kept.
         let eff = geometry::effective_crop(src.w, src.h, &s.framing);
-        src = geometry::apply(&src, &s.framing, crop);
+        if !s.framing.is_identity() {
+            src = geometry::apply(&src, &s.framing, crop);
+        }
         if long_edge.is_some() {
             if self.cache.len() > 6 {
                 self.cache.clear();
@@ -259,7 +261,7 @@ impl Development {
             masks: &masks,
             progress: graded_progress.as_mut().map(|f| &mut **f as &mut dyn FnMut(f32, &str)),
         };
-        let (rgb, _) = grade::process(&src, settings, args, &mut report);
+        let (rgb, _) = grade::process(src, settings, args, &mut report);
 
         // What the frame measured, said out loud whichever way it came out.
         report.add("focus", match measured_width {
@@ -313,7 +315,7 @@ impl Development {
             masks: &masks,
             progress: None,
         };
-        let (_, decided) = grade::process(&proxy, settings, args, &mut Report::new());
+        let (_, decided) = grade::process(proxy, settings, args, &mut Report::new());
         self.decided_full = Some((settings.clone(), decided.clone()));
         decided
     }
@@ -377,7 +379,7 @@ impl Development {
             masks: &masks,
             progress: graded_progress.as_mut().map(|f| &mut **f as &mut dyn FnMut(f32, &str)),
         };
-        let (rgb, _) = grade::process(&piece, &healed, args, &mut report);
+        let (rgb, _) = grade::process(piece, &healed, args, &mut report);
         let rgb = finish(rgb, settings, window, &mut report);
         Region { image: rgb.crop(x - x0, y - y0, w, h), x, y, full_w: fw, full_h: fh }
     }

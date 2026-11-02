@@ -6,6 +6,7 @@
   import SiteHeader from '$lib/components/SiteHeader.svelte';
   import Meta from '$lib/components/Meta.svelte';
   import * as api from '$lib/api.js';
+  import { readStored } from '$lib/stored.js';
   import * as critic from '$lib/critic.js';
   import {
     DEFAULTS, blend, blinking, exposurePenalty, groupBursts, likeness, pick, relativeSharpness, toCsv,
@@ -29,13 +30,7 @@
 
   /** Every lever, remembered in this browser between visits. */
   const STORE = 'lumiraw.cull';
-  const saved = (() => {
-    try {
-      return JSON.parse(localStorage.getItem(STORE)) ?? {};
-    } catch {
-      return {};
-    }
-  })();
+  const saved = readStored(STORE);
   const initial = { ...DEFAULTS, keepMode: 'percent', keepValue: 10, bursts: true, ...saved };
   let weight = $state(initial.weight);
   let focus = $state(initial.focus);

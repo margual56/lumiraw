@@ -1,17 +1,12 @@
 /** Edits remembered between visits. */
+import { readStored } from './stored.js';
 
 const STORE = 'lumiraw.edits';
 const LIMIT = 300;
 
 export const fileKey = (file) => (file ? `${file.name}|${file.size}|${file.lastModified}` : null);
 
-function load() {
-  try {
-    return JSON.parse(localStorage.getItem(STORE)) ?? {};
-  } catch {
-    return {};
-  }
-}
+const load = () => readStored(STORE);
 
 function save(all) {
   try {

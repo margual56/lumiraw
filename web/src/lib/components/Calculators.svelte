@@ -16,6 +16,7 @@
   import { RAD, atMinute, isPlace, localDay, round3, spotKey } from '$lib/geo.js';
   import { openMap, spotMarker } from '$lib/map.js';
   import { readLink, writeLink } from '$lib/spotlink.js';
+  import { readStored } from '$lib/stored.js';
   import { skyOfNight } from '$lib/night.js';
   import { skyOrUnlit } from '$lib/darksky.js';
   import {
@@ -30,13 +31,7 @@
 
   /** What was typed, remembered in this browser between visits. */
   const STORE = 'lumiraw.calc';
-  const saved = (() => {
-    try {
-      return JSON.parse(localStorage.getItem(STORE)) ?? {};
-    } catch {
-      return {};
-    }
-  })();
+  const saved = readStored(STORE);
   /** A spot, day and time the address asks for, over what was remembered. */
   const link = (() => {
     try {

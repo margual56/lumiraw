@@ -464,7 +464,7 @@ impl Pyramid {
             if lw.min(lh) <= 16 {
                 break;
             }
-            sizes.push(((lw + 1) / 2, (lh + 1) / 2));
+            sizes.push((lw.div_ceil(2), lh.div_ceil(2)));
         }
         let detail = sizes.iter().map(|(w, h)| vec![0.0; w * h * 3]).collect();
         let weight = sizes.iter().map(|(w, h)| vec![0.0; w * h]).collect();
@@ -576,7 +576,7 @@ impl Pyramid {
 fn reduce(p: &Plane) -> Plane {
     const K: [f32; 5] = [1.0 / 16.0, 4.0 / 16.0, 6.0 / 16.0, 4.0 / 16.0, 1.0 / 16.0];
     let (w, h) = (p.w, p.h);
-    let (nw, nh) = ((w + 1) / 2, (h + 1) / 2);
+    let (nw, nh) = (w.div_ceil(2), h.div_ceil(2));
     let mut rows = Plane::new(nw, h);
     for y in 0..h {
         let row = &p.d[y * w..(y + 1) * w];

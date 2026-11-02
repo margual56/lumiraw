@@ -76,6 +76,15 @@ export function t(key, params) {
     (params[name] === undefined ? whole : String(params[name])));
 }
 
+const clocks = new Map();
+/** A time of day as this language writes it (18:42, 06:42 PM), or a dash for none. */
+export function clock(date) {
+  if (!date) return '—';
+  let format = clocks.get(i18n.locale);
+  if (!format) clocks.set(i18n.locale, (format = new Intl.DateTimeFormat(i18n.locale, { hour: '2-digit', minute: '2-digit' })));
+  return format.format(date);
+}
+
 /** Numbers in the reader's own notation, 1,36 in Spanish, 1.36 in English. */
 export function n(value, digits = 2) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';

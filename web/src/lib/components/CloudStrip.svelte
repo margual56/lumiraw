@@ -3,20 +3,18 @@
    *  hour by hour in three layers, the higher up the thinner they tend to
    *  be: a sky of only high cloud can still light up at sunset, while low
    *  cloud hides it. Each hour's band under them says whether it is day or
-   *  night there, and the time picked on the slider is marked. */
+   *  night there, and the hour of the time picked on the slider is marked. */
   import { t, clock } from '$lib/i18n.svelte.js';
   import { lightOf, sunPosition } from '$lib/calc.js';
   import { WEATHER_PAGE } from '$lib/weather.js';
 
-  /** `hours`: weather.js's clouds, null while loading, or 'failed'. */
+  /** `hours`: weather.js's clouds, null while loading, or 'failed'; `picked`: the one of them picked, if any. */
   let { lat, lon, hours, picked } = $props();
 
   const LAYERS = ['high', 'mid', 'low'];
   const list = $derived(Array.isArray(hours) ? hours : []);
   /** Each hour's light, at its middle. */
   const light = $derived(list.map((h) => lightOf(sunPosition(new Date(h.at.valueOf() + 1800e3), lat, lon).geometric) ?? 'night'));
-  const pickedHour = $derived(list.findIndex((h) => picked >= h.at && picked - h.at < 3600e3));
-  const hourLabel = (h) => clock(h.at);
 </script>
 
 <section class="clouds" aria-labelledby="clouds-title">
@@ -29,18 +27,18 @@
     <div class="grid" style:--hours={list.length}>
       {#each LAYERS as layer (layer)}
         <span class="layer">{t(`calc.sun.clouds.${layer}`)}</span>
-        {#each list as h, i (h.at.valueOf())}
-          <span class="cell" class:picked={i === pickedHour} style:--cover={h[layer] / 100}
-                title={t('calc.sun.clouds.hour', { time: hourLabel(h), total: h.total, low: h.low, mid: h.mid, high: h.high })}></span>
+        {#each list as h (h.at.valueOf())}
+          <span class="cell" class:picked={h === picked} style:--cover={h[layer] / 100}
+                title={t('calc.sun.clouds.hour', { time: clock(h.at), total: h.total, low: h.low, mid: h.mid, high: h.high })}></span>
         {/each}
       {/each}
       <span class="layer"></span>
       {#each list as h, i (h.at.valueOf())}
-        <span class="light {light[i]}" class:picked={i === pickedHour}></span>
+        <span class="light {light[i]}" class:picked={h === picked}></span>
       {/each}
       <span class="layer"></span>
       {#each list as h, i (h.at.valueOf())}
-        <span class="hour">{i % 3 === 0 ? hourLabel(h) : ''}</span>
+        <span class="hour">{i % 3 === 0 ? clock(h.at) : ''}</span>
       {/each}
     </div>
     <p class="key">

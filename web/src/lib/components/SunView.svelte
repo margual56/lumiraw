@@ -7,14 +7,15 @@
    *  the stars, the planets, the moon and the Milky Way, as many as the sky
    *  there lets through; and the clouds forecast for the next day. */
   import { i18n, t, n, clock } from '$lib/i18n.svelte.js';
-  import { lightOf, skyFrom, sunCoords as sunCoordsOf, sunPosition } from '$lib/calc.js';
+  import { lightOf, skyFrom, sunCoords, sunPosition } from '$lib/calc.js';
   import { compassPoint, wrap360 } from '$lib/geo.js';
   import { STEP, horizonFrom, landAt } from '$lib/horizon.js';
-  import { CORE, faintest, moonCoords, moonPhase, nightSky, skyBrightness } from '$lib/night.js';
+  import { CORE, faintest, moonFrom, moonPhase, nightSky, skyBrightness } from '$lib/night.js';
   import { drawSky } from '$lib/drawsky.js';
   import { skyAt } from '$lib/darksky.js';
   import { clouds, hourOf } from '$lib/weather.js';
   import { GROW, SHRINK } from '$lib/map.js';
+  import '$lib/map.css';
   import SkyDome from './SkyDome.svelte';
   import CloudStrip from './CloudStrip.svelte';
 
@@ -40,27 +41,33 @@
   /** Taller, as the maps can be. */
   let tall = $state(false);
 
-  // -- the land -------------------------------------------------------------------
-
-  $effect(() => {
+  /**
+   * `load` the spot's data a moment after it stops changing, so typing a
+   * coordinate asks once, not once a keystroke; `done` or `failed` hear only
+   * the latest. Gives the effect's clean-up.
+   */
+  function forSpot(load, done, failed = () => {}) {
     const spot = [lat, lon];
     let stale = false;
-    status = 'looking';
-    // A moment's wait, so typing a coordinate works out one horizon, not one a keystroke.
-    const wait = setTimeout(() => horizonFrom(...spot).then((found) => {
-      if (stale) return;
-      land = found;
-      status = 'ready';
-    }, () => {
-      if (stale) return;
-      // Level all round: the path still shows, the hills do not.
-      land = null;
-      status = 'failed';
-    }), 300);
+    const wait = setTimeout(() => load(...spot).then((x) => stale || done(x), () => stale || failed()), 300);
     return () => {
       stale = true;
       clearTimeout(wait);
     };
+  }
+
+  // -- the land -------------------------------------------------------------------
+
+  $effect(() => {
+    status = 'looking';
+    return forSpot(horizonFrom, (found) => {
+      land = found;
+      status = 'ready';
+    }, () => {
+      // Level all round: the path still shows, the hills do not.
+      land = null;
+      status = 'failed';
+    });
   });
 
   // -- the sun --------------------------------------------------------------------
@@ -111,42 +118,25 @@
   let data = $state.raw(null);
   let pollution = $state.raw(null);
   $effect(() => {
-    if ((dark > 0 || dome) && !data) import('$lib/sky-data.js').then((loaded) => (data = loaded));
+    if (nightly && !data) import('$lib/sky-data.js').then((loaded) => (data = loaded));
   });
-  const wantsPollution = $derived(dark > 0 || dome);
+  const nightly = $derived(dark > 0 || dome);
   $effect(() => {
-    if (!wantsPollution) return;
-    const spot = [lat, lon];
-    let stale = false;
+    if (!nightly) return;
     pollution = null;
-    const wait = setTimeout(() => skyAt(...spot).then((found) => {
-      if (!stale) pollution = found ?? { ratio: 0, zone: null };
-    }, () => {}), 300);
-    return () => {
-      stale = true;
-      clearTimeout(wait);
-    };
+    // Outside the atlas, as if unlit.
+    return forSpot(skyAt, (found) => (pollution = found ?? { ratio: 0, zone: null }));
   });
 
   /** The clouds over the next day. */
   let forecast = $state.raw(null);
   $effect(() => {
-    const spot = [lat, lon];
-    let stale = false;
     forecast = null;
-    const wait = setTimeout(() => clouds(...spot).then((hours) => {
-      if (!stale) forecast = hours;
-    }, () => {
-      if (!stale) forecast = 'failed';
-    }), 300);
-    return () => {
-      stale = true;
-      clearTimeout(wait);
-    };
+    return forSpot(clouds, (hours) => (forecast = hours), () => (forecast = 'failed'));
   });
   const cloudNow = $derived(Array.isArray(forecast) ? hourOf(forecast, at(minutes)) : null);
 
-  const sky = $derived(data && (dark > 0 || dome) ? nightSky(data, at(minutes), lat, lon, i18n.locale) : null);
+  const sky = $derived(data && nightly ? nightSky(data, at(minutes), lat, lon, i18n.locale) : null);
   /** How bright the sky is at the time picked, the faintest star it lets through, and how plain the Milky Way is. */
   const glow = $derived(skyBrightness({
     ratio: pollution?.ratio ?? 0, sun: sun.geometric, moon: sky?.moon.altitude ?? -90, lit: sky?.moon.lit ?? 0,
@@ -165,12 +155,11 @@
     for (let m = 720; m <= END; m += 5) {
       const date = at(m);
       const look = skyFrom(date, lat, lon);
-      const s = sunCoordsOf(date);
-      const c = moonCoords(date);
+      const s = sunCoords(date);
       out.push({
         m, sun: look(s.ra, s.dec).geometric,
-        // The moon's top edge, its parallax taken off.
-        moon: look(c.ra, c.dec).altitude - 0.95 + 0.27,
+        // Its top edge.
+        moon: moonFrom(look, date).altitude + 0.27,
         core: look(CORE.ra, CORE.dec),
       });
     }
@@ -179,8 +168,8 @@
 
   /** When the sky is fully dark that night, the sun 18° down. */
   const fullDark = $derived.by(() => {
-    const dark = overnight.filter((p) => p.sun < -18);
-    return dark.length ? { from: dark[0].m, until: dark.at(-1).m } : null;
+    const black = overnight.filter((p) => p.sun < -18);
+    return black.length ? { from: black[0].m, until: black.at(-1).m } : null;
   });
 
   /** The moon that night: when it rises and sets, and how much of it is lit. */
@@ -194,7 +183,7 @@
       if (was && !is) set ??= overnight[i].m;
     }
     const middle = at(fullDark ? (fullDark.from + fullDark.until) / 2 : 1440);
-    return { rise, set, up: overnight[0].moon > 0, ...moonPhase(middle, sunCoordsOf(middle)) };
+    return { rise, set, up: overnight[0].moon > 0, ...moonPhase(middle) };
   });
 
   /** The galaxy's core while it is dark: when it stands highest above the land, and how high. */
@@ -496,7 +485,7 @@
   {#if cloudNow}
     <p class="cloudy">{t('calc.sun.clouds.now', { total: cloudNow.total, low: cloudNow.low })}</p>
   {/if}
-  <button type="button" class="grow" aria-label={t(tall ? 'calc.view.smaller' : 'calc.view.bigger')}
+  <button type="button" class="map-grow grow" aria-label={t(tall ? 'calc.view.smaller' : 'calc.view.bigger')}
           title={t(tall ? 'calc.view.smaller' : 'calc.view.bigger')} onclick={() => (tall = !tall)}>
     {@html tall ? SHRINK : GROW}
   </button>
@@ -557,7 +546,7 @@
     </div>
   {/if}
 </dl>
-<CloudStrip {lat} {lon} hours={forecast} picked={at(minutes)} />
+<CloudStrip {lat} {lon} hours={forecast} picked={cloudNow} />
 <p class="note">
   {status === 'failed' ? t('calc.sun.view.failed') : t('calc.sun.view.note', { ground: n(land?.ground ?? 0, 0) })}
   <a href={street} target="_blank" rel="noopener">{t('calc.sun.view.street')}</a>
@@ -580,14 +569,8 @@
   }
   .view.dome { height: min(560px, 92vw); }
   .view.tall { height: min(82vh, 960px); }
-  /* As the maps' (map.css). */
-  .grow {
-    position: absolute; top: 8px; right: 8px; display: grid; place-items: center; width: 34px; height: 34px;
-    padding: 0; border: 0; border-radius: 4px; cursor: pointer; color: #222; background: #fff;
-    box-shadow: 0 1px 5px rgba(0, 0, 0, .4);
-    &:hover { background: #f2f2f2; }
-    &:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
-  }
+  /* Drawn as the maps' is (map.css). */
+  .grow { position: absolute; top: 8px; right: 8px; border-radius: 4px; box-shadow: 0 1px 5px rgba(0, 0, 0, .4); }
   .cloudy {
     position: absolute; top: 8px; left: 8px; margin: 0; padding: 3px 8px; border-radius: 6px;
     font-size: 12px; color: #fff; background: rgba(0, 0, 0, .45); pointer-events: none;

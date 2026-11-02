@@ -31,10 +31,20 @@ export function moonCoords(date) {
 }
 
 /**
- * How much of the moon is lit at `date` (0 new to 1 full), and whether it
- * is waxing. `sun` is calc.js's `sunCoords` of the date.
+ * Where the moon stands from a place, through `look` (calc.js's `skyFrom`
+ * for the place and `date`): lower than from the earth's centre by its
+ * parallax, nearly a degree at the horizon.
  */
-export function moonPhase(date, sun) {
+export function moonFrom(look, date) {
+  const m = moonCoords(date);
+  const p = look(m.ra, m.dec);
+  p.altitude -= Math.asin(6378 / m.km) / RAD * Math.cos(p.altitude * RAD);
+  return p;
+}
+
+/** How much of the moon is lit at `date` (0 new to 1 full), and whether it is waxing. */
+export function moonPhase(date) {
+  const sun = sunCoords(date);
   const m = moonCoords(date);
   const [sa, sd, ma, md] = [sun.ra, sun.dec, m.ra, m.dec].map((x) => x * RAD);
   const elongation = Math.acos(Math.sin(sd) * Math.sin(md) + Math.cos(sd) * Math.cos(md) * Math.cos(sa - ma));
@@ -151,9 +161,6 @@ export const faintest = (sqm) => 7.93 - 5 * Math.log10(10 ** (4.316 - sqm / 5) +
 /** The centre of the galaxy, the Milky Way's brightest part, in Sagittarius. */
 export const CORE = { ra: 266.4, dec: -28.94 };
 
-/** The moon's parallax at its mean distance, in degrees: it stands this much lower near the horizon than from the earth's centre. */
-const PARALLAX = 0.95;
-
 /** The Milky Way's cells that are on it, as right ascension, declination and level (sky-data's grid). */
 const cellsOf = new WeakMap();
 function milkyCells(data) {
@@ -212,10 +219,6 @@ export function nightSky(data, date, lat, lon, lang) {
     const p = look(cell.ra, cell.dec);
     if (p.altitude > -5) milky.push({ ...p, level: cell.level, dec: cell.dec });
   }
-  const sun = sunCoords(date);
-  const m = moonCoords(date);
-  const moon = look(m.ra, m.dec);
-  moon.altitude -= PARALLAX * Math.cos(moon.altitude * RAD);
   return {
     stars,
     names,
@@ -224,7 +227,7 @@ export function nightSky(data, date, lat, lon, lang) {
     milky,
     milkyGrid: data.MILKY_GRID,
     planets: planets(date).map((p) => ({ name: p.name, mag: p.mag, ...look(p.ra, p.dec) })),
-    moon: { ...moon, ...moonPhase(date, sun) },
+    moon: { ...moonFrom(look, date), ...moonPhase(date) },
     core: look(CORE.ra, CORE.dec),
   };
 }

@@ -424,7 +424,8 @@
             </div>
           </div>
           {#if stars}
-            <StarPreview aperture={v.starAperture} pitch={stars.pitch} {trail} limit={starSky?.limit} glow={starSky?.glow} />
+            <StarPreview aperture={v.starAperture} pitch={stars.pitch} {trail} seconds={EXPOSURES[starTime]} focal={v.starFocal}
+                         limit={starSky?.limit} glow={starSky?.glow} />
             <p class="note">
               {#if starSky}
                 {t('calc.stars.sky', { when: starClock, mag: n(starSky.limit, 1) })}

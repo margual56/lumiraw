@@ -629,7 +629,7 @@ export default {
   'calc.stars.pitch': '{pitch} µm pixels, at 100 % view',
   'calc.stars.note': 'NPF holds at 100 % on modern sensors. The 500 rule only suits small prints. Stars near the poles move less.',
   'calc.stars.preview.label': 'A patch of sky at the exposure set, enlarged: each star trails {pixels} pixels',
-  'calc.stars.preview.zoom': '{zoom} %, every pixel enlarged',
+  'calc.stars.preview.zoom': '{zoom} %, about ISO 3200, unedited',
   'calc.stars.preview.exposure': 'Exposure',
   'calc.stars.preview.where': 'Pointing at',
   'calc.stars.preview.equator': 'The celestial equator (Orion)',

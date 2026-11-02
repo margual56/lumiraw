@@ -628,7 +628,7 @@ export default {
   'calc.stars.pitch': 'píxeles de {pitch} µm, vistos al 100 %',
   'calc.stars.note': 'NPF aguanta al 100 % en sensores modernos. La regla del 500 solo sirve para copias pequeñas. Cerca de los polos las estrellas se mueven menos.',
   'calc.stars.preview.label': 'Un trozo de cielo con la exposición elegida, ampliado: cada estrella se mueve {pixels} píxeles',
-  'calc.stars.preview.zoom': '{zoom} %, cada píxel ampliado',
+  'calc.stars.preview.zoom': '{zoom} %, a unos ISO 3200, sin editar',
   'calc.stars.preview.exposure': 'Exposición',
   'calc.stars.preview.where': 'Apuntando a',
   'calc.stars.preview.equator': 'El ecuador celeste (Orión)',

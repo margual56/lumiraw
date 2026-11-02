@@ -6,6 +6,7 @@
   import Meta from '$lib/components/Meta.svelte';
   import SunView from '$lib/components/SunView.svelte';
   import StarPreview from '$lib/components/StarPreview.svelte';
+  import DarkSky from '$lib/components/DarkSky.svelte';
   import { t, n, clock } from '$lib/i18n.svelte.js';
   import { RAD, isPlace, round3 } from '$lib/geo.js';
   import { openMap, spotMarker } from '$lib/map.js';
@@ -15,7 +16,7 @@
   } from '$lib/calc.js';
   import camerasUrl from '$lib/wasm/lenses/cameras.json?url';
 
-  const TOOLS = ['dof', 'nd', 'stars', 'sun'];
+  const TOOLS = ['dof', 'nd', 'stars', 'sun', 'dark'];
   let tool = $state('dof');
 
   /** What was typed, remembered in this browser between visits. */
@@ -362,6 +363,11 @@
           {/if}
           <p class="note">{t('calc.stars.note')}</p>
 
+        {:else if tool === 'dark'}
+          <DarkSky bind:lat={v.lat} bind:lon={v.lon} {locate} {locating}
+                   onpick={(lat, lon) => { v.lat = lat; v.lon = lon; recentre = true; show('sun'); }} />
+          {#if located}<p class="note warn">{located}</p>{/if}
+
         {:else}
           <div class="map" bind:this={mapElement}></div>
           <p class="note map-note">{t('calc.sun.mapNote')}</p>
@@ -418,13 +424,13 @@
   .page { display: grid; gap: 18px; max-width: 760px; margin: 0 auto; }
   .lead { margin: 0; font-size: 15px; line-height: 1.6; color: var(--color-muted); }
 
-  /* One calculator at a time: four tabs, a row on anything wider than a
-     phone, two by two on one. */
+  /* One calculator at a time: five tabs, a row on anything wider than a
+     phone, two by two on one with the last across. */
   .tabs {
-    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px;
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px;
     padding: 4px; border-radius: 12px; background: var(--color-panel);
     box-shadow: inset 0 0 0 1px var(--color-line);
-    @include phone { grid-template-columns: 1fr 1fr; }
+    @include phone { grid-template-columns: 1fr 1fr; button:last-child { grid-column: 1 / -1; } }
     button {
       min-height: 40px; padding: 8px 10px; border-radius: 9px;
       background: transparent; color: var(--color-muted); font-size: 13.5px; font-weight: 550;

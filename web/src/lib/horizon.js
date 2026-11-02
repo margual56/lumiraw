@@ -99,11 +99,16 @@ function pixel(lat, lon, z) {
   return [((lon + 180) / 360) * scale, ((1 - Math.log(Math.tan(phi) + 1 / Math.cos(phi)) / Math.PI) / 2) * scale];
 }
 
-/** The horizon from a spot, fetching the tiles it needs: a few dozen at most, all at once. */
-export async function horizonFrom(lat, lon) {
+/**
+ * The terrain's heights about a spot, fetching the tiles they take all at
+ * once: for each `[reach, zoom]` of `levels`, the tiles of that zoom within
+ * `reach` metres. Gives `height(lat, lon, zoom)`, in metres above the sea, or
+ * null outside what was fetched.
+ */
+export async function heightsAround(lat, lon, levels) {
   const tiles = new Map();
   const jobs = [];
-  for (const [reach, z] of ZOOMS) {
+  for (const [reach, z] of levels) {
     const across = reach / (111320 * Math.cos(lat * RAD));
     const [x0, y0] = pixel(lat + reach / 111320, lon - across, z);
     const [x1, y1] = pixel(lat - reach / 111320, lon + across, z);
@@ -120,7 +125,7 @@ export async function horizonFrom(lat, lon) {
   }
   await Promise.all(jobs);
   // Heights between the four pixels about a place.
-  const height = (la, lo, z) => {
+  return (la, lo, z) => {
     const n = 2 ** z;
     const [px, py] = pixel(la, lo, z);
     const fx = px - 0.5;
@@ -139,5 +144,9 @@ export async function horizonFrom(lat, lon) {
     const ky = fy - y;
     return (corners[0] * (1 - kx) + corners[1] * kx) * (1 - ky) + (corners[2] * (1 - kx) + corners[3] * kx) * ky;
   };
-  return skyline(height, lat, lon);
+}
+
+/** The horizon from a spot: a few dozen tiles at most. */
+export async function horizonFrom(lat, lon) {
+  return skyline(await heightsAround(lat, lon, ZOOMS), lat, lon);
 }

@@ -2,16 +2,21 @@
 
 import { base } from '$app/paths';
 import en from './locales/en.js';
-import es from './locales/es.js';
 
 export const LOCALES = [
-  { id: 'en', name: 'English', dict: en },
-  { id: 'es', name: 'Español', dict: es },
+  { id: 'en', name: 'English' },
+  { id: 'es', name: 'Español' },
 ];
 
 const STORAGE_KEY = 'lumiraw.locale';
 
 export const i18n = $state({ locale: 'en' });
+
+/** Loaded by the layout for the pages in Spanish; English is always here, as the fallback. */
+let spanish = $state.raw(null);
+export async function loadLocale(id) {
+  if (id === 'es' && !spanish) spanish = (await import('./locales/es.js')).default;
+}
 
 function known(id) {
   return LOCALES.some((locale) => locale.id === id) ? id : null;
@@ -64,12 +69,9 @@ export function unlocalized(pathname) {
   return page.replace(/^\/es(?=\/|$)/, '').replace(/\/$/, '') || '/';
 }
 
-const dictionary = () =>
-  (LOCALES.find((locale) => locale.id === i18n.locale) ?? LOCALES[0]).dict;
-
 /** Translate `key`, filling `{placeholders}` from `params`. */
 export function t(key, params) {
-  const template = dictionary()[key] ?? en[key];
+  const template = (i18n.locale === 'es' ? spanish?.[key] : undefined) ?? en[key];
   if (template === undefined) return key;
   if (!params) return template;
   return template.replace(/\{(\w+)\}/g, (whole, name) =>

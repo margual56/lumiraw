@@ -1,6 +1,6 @@
 /** Do the calculators agree with the published tables and almanacs? */
 import {
-  SHUTTERS, depthOfField, duration, lightOfDay, ndShutter, starRules, sunPosition, sunTimes,
+  SHUTTERS, depthOfField, starTrail, duration, lightOfDay, ndShutter, starRules, sunPosition, sunTimes,
 } from '../web/src/lib/calc.js';
 import { LAYERS, STEP, landAt, skyline } from '../web/src/lib/horizon.js';
 
@@ -33,6 +33,11 @@ const stars = starRules({ focal: 14, crop: 1, aperture: 2.8, megapixels: 24 });
 check(`NPF for 14 mm f/2.8 on 24 MP full frame (${stars.npf.toFixed(1)} s, 6 µm)`,
   near(stars.pitch, 6, 0.01) && near(stars.npf, 19.86, 0.01));
 check('the 500 rule for 14 mm', near(stars.rule500, 35.71, 0.01));
+// 14 mm for 20 s on 6 µm pixels: the sky turns 15" a second, 0.0204 mm on
+// the sensor, 3.4 pixels; nothing at the pole.
+check('a star trails 3.4 pixels in 20 s at 14 mm on the equator',
+  near(starTrail({ focal: 14, seconds: 20, pitch: 6 }), 3.40, 0.02)
+  && near(starTrail({ focal: 14, seconds: 20, pitch: 6, declination: 90 }), 0, 1e-9));
 check('the 500 rule shortens with the crop',
   near(starRules({ focal: 14, crop: 1.5, aperture: 2.8, megapixels: 24 }).rule500, 23.81, 0.01));
 

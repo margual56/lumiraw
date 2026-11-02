@@ -66,6 +66,18 @@ export function starRules({ focal, crop, aperture, megapixels }) {
   return { rule500: 500 / (focal * crop), npf: (35 * aperture + 30 * pitch) / focal, pitch };
 }
 
+/** How far the sky turns a second, in radians: once a sidereal day. */
+const SIDEREAL = (2 * Math.PI) / 86164.1;
+
+/**
+ * How long a star's trail is on the sensor, in pixels, over `seconds` with
+ * a lens of `focal` mm and pixels `pitch` µm across, for a star `declination`
+ * degrees from the celestial equator: there the sky moves fastest, and at the
+ * poles not at all.
+ */
+export const starTrail = ({ focal, seconds, pitch, declination = 0 }) =>
+  (focal * 1000 * SIDEREAL * seconds * Math.cos((declination * Math.PI) / 180)) / pitch;
+
 // --- the sun ---------------------------------------------------------------------
 // After Vladimir Agafonkin's SunCalc (BSD), itself after the formulas at
 // https://aa.quae.nl/en/reken/zonpositie.html: good to a couple of minutes, which is

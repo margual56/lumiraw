@@ -26,7 +26,7 @@
         "style-src": "'self' 'unsafe-inline'",
         "img-src": "'self' blob: data: https://tile.openstreetmap.org https://djlorenz.github.io/astronomy/image_tiles/",
         "font-src": "'self' data:",
-        "connect-src": "'self' ipc: http://ipc.localhost https://s3.amazonaws.com/elevation-tiles-prod/terrarium/ https://djlorenz.github.io/astronomy/binary_tiles/ https://api.open-meteo.com/v1/forecast",
+        "connect-src": "'self' ipc: http://ipc.localhost https://s3.amazonaws.com/elevation-tiles-prod/terrarium/ https://djlorenz.github.io/astronomy/binary_tiles/ https://djlorenz.github.io/astronomy/image_tiles/ https://api.open-meteo.com/v1/forecast",
         "worker-src": "'self' blob:",
         "media-src": "'self' blob:",
         "object-src": "'none'",

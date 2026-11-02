@@ -15,6 +15,9 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+dirs = "7"
+
 [profile.release]
 opt-level = "s"
 lto = true

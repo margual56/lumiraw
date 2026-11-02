@@ -6,6 +6,7 @@
  *  `tools/check-calc.mjs` can run it. */
 
 import { RAD, wrap360 } from './geo.js';
+import { remoteFetch } from './remote.js';
 
 const EARTH = 6371000;
 /** How much the air bends a sight line over the curve of the earth. */
@@ -106,7 +107,7 @@ function tile(z, x, y) {
     return kept;
   }
   const loading = (async () => {
-    const response = await fetch(`${TILES}/${key}.png`);
+    const response = await remoteFetch(`${TILES}/${key}.png`);
     if (!response.ok) throw new Error(String(response.status));
     const bitmap = await createImageBitmap(await response.blob(), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
     if (!scratch) {

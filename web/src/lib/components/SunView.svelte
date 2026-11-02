@@ -8,10 +8,10 @@
    *  there lets through; and the clouds forecast for the next day. */
   import { untrack } from 'svelte';
   import { i18n, t, n, clock } from '$lib/i18n.svelte.js';
-  import { lightOf, skyFrom, sunCoords, sunPosition } from '$lib/calc.js';
+  import { frameOutline, lightOf, skyFrom, sunPosition } from '$lib/calc.js';
   import { atMinute, compassPoint, localDay, spotKey, wrap360 } from '$lib/geo.js';
   import { STEP, horizonFrom, landAt } from '$lib/horizon.js';
-  import { CORE, FULL_DARK, bestNights, faintest, moonFrom, moonPhase, nightSky, skyBrightness } from '$lib/night.js';
+  import { bestNights, coreBest, darkSpan, faintest, moonFrom, moonOfNight, nightOf, nightSky, nightness, skyBrightness, topNights } from '$lib/night.js';
   import { drawSky } from '$lib/drawsky.js';
   import { skyOrUnlit } from '$lib/darksky.js';
   import { clouds, hourOf } from '$lib/weather.js';
@@ -20,16 +20,20 @@
   import SkyDome from './SkyDome.svelte';
   import CloudStrip from './CloudStrip.svelte';
   import BestNights from './BestNights.svelte';
+  import Fold from './Fold.svelte';
 
   /** `facing` and `shown`: which way the view looks, and how wide it is, in
    *  degrees; bound, so the map can show them. `minutes`: the time picked,
    *  from midnight on `day`. `around`: all round, not the usual width. `dome`:
    *  the whole sky overhead, not the panorama. `opened`: the spotKey this was
    *  last opened on, so coming back or following a link leaves all that as it
-   *  is. `link`: the address's hash for all of this, to share. */
+   *  is. `link`: the address's hash for all of this, to share. `frame`: the
+   *  lens's `{ focal, width, height, tilt }` to mark on the view, or null.
+   *  `children`: what always shows under the controls, over the sections. */
   let {
-    lat, lon, day = $bindable(), light, link, opened = $bindable(), minutes = $bindable(),
+    lat, lon, day = $bindable(), light, link, frame = null, opened = $bindable(), minutes = $bindable(),
     facing = $bindable(), around = $bindable(), dome = $bindable(), shown = $bindable(),
+    children,
   } = $props();
   const fov = $derived(around ? 360 : 100);
 
@@ -122,7 +126,7 @@
   // -- the night ------------------------------------------------------------------
 
   /** How far into the night the time picked is: 0 by day, 1 once the stars are all out. */
-  const dark = $derived(Math.max(0, Math.min(1, (-sun.geometric - 4) / 10)));
+  const dark = $derived(nightness(sun.geometric));
 
   /** The stars, and the light on the ground under the sky (the atlas's
    *  brightness ratio), each fetched the first time the night needs them. */
@@ -164,54 +168,11 @@
     milkyName: t('calc.sun.night.milkyWay'),
   });
 
-  /** The night after the day picked, noon to noon, every five minutes:
-   *  how far down the sun is, how high the moon and the galaxy's core. */
-  const overnight = $derived.by(() => {
-    const out = [];
-    for (let m = 720; m <= END; m += 5) {
-      const date = at(m);
-      const look = skyFrom(date, lat, lon);
-      const s = sunCoords(date);
-      out.push({
-        m, sun: look(s.ra, s.dec).geometric,
-        moon: moonFrom(look, date),
-        core: look(CORE.ra, CORE.dec),
-      });
-    }
-    return out;
-  });
-
-  /** When the sky is fully dark that night, the sun 18° down. */
-  const fullDark = $derived.by(() => {
-    const black = overnight.filter((p) => p.sun < FULL_DARK);
-    return black.length ? { from: black[0].m, until: black.at(-1).m } : null;
-  });
-
-  /** The moon that night: when it rises and sets, and how much of it is lit. */
-  const moonNight = $derived.by(() => {
-    // By its top edge.
-    const up = (p) => p.moon.altitude + 0.27 > 0;
-    let rise = null;
-    let set = null;
-    for (let i = 1; i < overnight.length; i++) {
-      const was = up(overnight[i - 1]);
-      const is = up(overnight[i]);
-      if (is && !was) rise ??= overnight[i].m;
-      if (was && !is) set ??= overnight[i].m;
-    }
-    const middle = at(fullDark ? (fullDark.from + fullDark.until) / 2 : 1440);
-    return { rise, set, up: up(overnight[0]), ...moonPhase(middle) };
-  });
-
-  /** The galaxy's core while it is dark: when it stands highest above the land, and how high. */
-  const core = $derived.by(() => {
-    let best = null;
-    for (const { m, sun: down, core: p } of overnight) {
-      if (down >= FULL_DARK || p.altitude <= (skyline ? landAt(skyline, p.bearing) : 0)) continue;
-      if (!best || p.altitude > best.altitude) best = { m, ...p };
-    }
-    return best;
-  });
+  /** The night after the day picked, and what is said about it. */
+  const overnight = $derived(nightOf({ lat, lon, day }));
+  const fullDark = $derived(darkSpan(overnight));
+  const moonNight = $derived(moonOfNight(overnight));
+  const core = $derived(coreBest(overnight, above));
 
   /** What is up at the time picked and clear of the land: the planets the sky lets through, and the best-known constellations. */
   const above = (p, by = 0) => p.altitude > (skyline ? landAt(skyline, p.bearing) : 0) + by;
@@ -249,6 +210,20 @@
     while (up(from - 1)) from--;
     while (up(to + 1)) to++;
     return moonTrack.slice(from, to + 1);
+  });
+
+  /** What the lens takes in, looking the way the view does. */
+  const outline = $derived(frame ? frameOutline({ facing, ...frame }) : null);
+
+  /** What each closed section says in its heading. */
+  const peeks = $derived({
+    sky: [
+      fullDark ? t('calc.sun.fold.dark', { from: hm(fullDark.from), until: hm(fullDark.until) }) : t('calc.sun.night.never'),
+      t('calc.sun.fold.moon', { lit: Math.round(moonNight.lit * 100) }),
+    ].join(' · '),
+    clouds: noForecast ? t('calc.sun.fold.noClouds') : cloudNow ? t('calc.sun.fold.clouds', { total: cloudNow.total }) : '',
+    nights: topNights(nights, 1).map((night) => new Date(`${night.day}T12:00`)
+      .toLocaleDateString(i18n.locale, { weekday: 'short', day: 'numeric', month: 'short' }))[0] ?? '',
   });
 
   /** Where the moon is at the time picked. */
@@ -492,6 +467,24 @@
       }
     }
 
+    // What the lens takes in.
+    if (outline) {
+      g.strokeStyle = '#f2c46a';
+      g.fillStyle = '#f2c46a';
+      g.lineWidth = 2;
+      g.beginPath();
+      outline.forEach((p, i) => {
+        const x = xOf(p.bearing);
+        const y = yOf(p.altitude);
+        if (i && Math.abs(x - xOf(outline[i - 1].bearing)) < width / 2) g.lineTo(x, y);
+        else g.moveTo(x, y);
+      });
+      g.stroke();
+      g.textAlign = 'left';
+      g.fillText(`${frame.focal} mm`, xOf(outline[0].bearing) + 6, yOf(outline[0].altitude) + 16);
+      g.textAlign = 'center';
+    }
+
     // The hours along it.
     g.fillStyle = '#fff';
     g.shadowColor = 'rgba(0,0,0,.6)';
@@ -602,7 +595,7 @@
 
 <div class="view" class:dome class:tall bind:clientWidth={width} bind:clientHeight={height}>
   {#if dome}
-    <SkyDome {sky} {night} {tone} {ground} {skyline} {path} {sun} bind:facing fov={span} />
+    <SkyDome {sky} {night} {tone} {ground} {skyline} {path} {sun} bind:facing fov={span} {outline} />
   {:else}
     <canvas bind:this={canvas} tabindex="0" aria-label={t('calc.sun.view.label')}
             onpointerdown={grab} onpointermove={drag} onpointerup={() => (dragged = null)}
@@ -645,6 +638,8 @@
   </div>
 </div>
 {#if shared === 'failed'}<p class="sunline" role="status">{t('calc.sun.view.shareFailed')}</p>{/if}
+{@render children?.()}
+<Fold id="sky" title={t('calc.sun.fold.sky')} peek={peeks.sky}>
 <p class="sunline">
   {t(sun.altitude >= 0 ? 'calc.sun.view.up' : 'calc.sun.view.down', {
     altitude: n(Math.abs(sun.altitude), Math.abs(sun.altitude) < 10 ? 1 : 0), bearing: n(sun.bearing, 0), side: compassPoint(sun.bearing, POINTS) })}
@@ -685,12 +680,20 @@
     </div>
   {/if}
 </dl>
-<CloudStrip {lat} {lon} hours={cloudHours} failed={noForecast} picked={cloudNow} far={midnight - new Date(`${today}T00:00`) > 7 * 864e5} />
-<BestNights {nights} {day} onpick={pickNight} />
-<p class="note">
-  {status === 'failed' ? t('calc.sun.view.failed') : t('calc.sun.view.note', { ground: n(land?.ground ?? 0, 0) })}
-  <a href={street} target="_blank" rel="noopener">{t('calc.sun.view.street')}</a>
-</p>
+</Fold>
+<Fold id="clouds" title={t('calc.sun.clouds.title')} peek={peeks.clouds}>
+  <CloudStrip {lat} {lon} hours={cloudHours} failed={noForecast} picked={cloudNow} far={midnight - new Date(`${today}T00:00`) > 7 * 864e5} />
+</Fold>
+<Fold id="nights" title={t('calc.sun.nights.title')} peek={peeks.nights}>
+  <BestNights {nights} {day} onpick={pickNight} />
+</Fold>
+<Fold id="notes" title={t('calc.sun.fold.notes')}>
+  <p class="note">{t('calc.sun.note', { noon: clock(light.noon) })}</p>
+  <p class="note">
+    {status === 'failed' ? t('calc.sun.view.failed') : t('calc.sun.view.note', { ground: n(land?.ground ?? 0, 0) })}
+    <a href={street} target="_blank" rel="noopener">{t('calc.sun.view.street')}</a>
+  </p>
+</Fold>
 
 <style lang="scss">
   @use '../../styles/breakpoints' as *;

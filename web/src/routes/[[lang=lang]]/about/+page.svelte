@@ -38,10 +38,8 @@
     TIFF.
   </p>
   <p>
-    El revelado se hace en tu propio dispositivo, sea un ordenador o un móvil. El programa
-    está escrito en Rust y compilado a WebAssembly, y la página lo descarga una vez, como
-    cualquier otro script. Ese código lee tus fotos directamente y no las envía a ningún
-    sitio.
+    Todo se hace en tu propio dispositivo, sea un ordenador o un móvil: Rust compilado a
+    WebAssembly, que lee tus fotos directamente y no las envía a ningún sitio.
   </p>
 
   <SectionTitle id="why">Por qué</SectionTitle>
@@ -55,8 +53,7 @@
 
   <SectionTitle id="what-it-does">Qué hace con una foto</SectionTitle>
   <p>
-    Los pasos van en orden. Casi todos parten de un ajuste automático, medido sobre esa foto,
-    que puedes dejar como está o cambiar:
+    Los pasos van en orden, y casi todos parten de un ajuste automático que puedes cambiar:
   </p>
   <ol>
     <li><strong>Encuadre.</strong> Endereza el horizonte y las verticales que convergen si
@@ -164,10 +161,8 @@
     corrections), and you download a finished JPEG, PNG or TIFF.
   </p>
   <p>
-    The developing happens on your own device, whether that's a computer or a phone. The
-    program is written in Rust and compiled to WebAssembly, which the page downloads once
-    like any other script. That code reads your photos directly and never sends them
-    anywhere.
+    It all runs on your own device, computer or phone: Rust compiled to WebAssembly, which
+    reads your photos directly and never sends them anywhere.
   </p>
 
   <SectionTitle id="why">Why</SectionTitle>
@@ -180,8 +175,7 @@
 
   <SectionTitle id="what-it-does">What it does with a photo</SectionTitle>
   <p>
-    The steps run in order. Most of them start from an automatic setting measured on that
-    photo, which you can leave alone or change:
+    The steps run in order, and most start from an automatic setting you can change:
   </p>
   <ol>
     <li><strong>Framing.</strong> Straightens a tilted horizon and converging verticals if it

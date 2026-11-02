@@ -236,66 +236,107 @@ export function nightSky(data, date, lat, lon, lang) {
 export const FULL_DARK = -18;
 const CORE_HIGH = 10;
 
+/** How far into the night a sun this deep makes it: 0 by day, 1 once the stars are all out. */
+export const nightness = (sun) => Math.max(0, Math.min(1, (-sun - 4) / 10));
+
 /**
- * The nights after `count` days from `first` (`YYYY-MM-DD`), noon to noon, each
+ * The night after `day` (`YYYY-MM-DD`) from a spot, noon to noon, every `step`
+ * minutes: `{ m, date, sun, moon, core }`, minutes from midnight on `day`, how
+ * far down the sun is, and where the moon and the Milky Way's core are. All
+ * that is said about a night is read from this, so it all agrees.
+ */
+export function nightOf({ lat, lon, day, step = 5 }) {
+  const samples = [];
+  for (let m = 720; m <= 2160; m += step) {
+    const date = atMinute(day, m);
+    const look = skyFrom(date, lat, lon);
+    const { ra, dec } = sunCoords(date);
+    samples.push({ m, date, sun: look(ra, dec).geometric, moon: moonFrom(look, date), core: look(CORE.ra, CORE.dec) });
+  }
+  return samples;
+}
+
+/** When a night is fully dark, `{ from, until }` in its minutes, or null. */
+export function darkSpan(samples) {
+  const black = samples.filter((p) => p.sun < FULL_DARK);
+  return black.length ? { from: black[0].m, until: black.at(-1).m } : null;
+}
+
+/** The core at its highest while it is dark and `clear(p)` of the land, or null. */
+export function coreBest(samples, clear = (p) => p.altitude > 0) {
+  let best = null;
+  for (const { m, sun, core } of samples) {
+    if (sun < FULL_DARK && clear(core) && (!best || core.altitude > best.altitude)) best = { m, ...core };
+  }
+  return best;
+}
+
+/** The moon's night: when it rises and sets, by its top edge, whether it starts up, and its phase in the middle of the dark. */
+export function moonOfNight(samples) {
+  const up = (p) => p.moon.altitude + 0.27 > 0;
+  let rise = null;
+  let set = null;
+  for (let i = 1; i < samples.length; i++) {
+    if (up(samples[i]) && !up(samples[i - 1])) rise ??= samples[i].m;
+    if (up(samples[i - 1]) && !up(samples[i])) set ??= samples[i].m;
+  }
+  const dark = darkSpan(samples);
+  const middle = dark ? (dark.from + dark.until) / 2 : 1440;
+  return { rise, set, up: up(samples[0]), ...moonPhase(samples.find((p) => p.m >= middle).date) };
+}
+
+/**
+ * The nights after `count` days from `first` (`YYYY-MM-DD`), each
  * `{ day, from, moonless, core, cloud, score }`: when it gets fully dark, in
- * minutes from midnight on `day`; the hours of dark without the moon;
- * the Milky Way's core at its highest then; the mean cloud cover, where
+ * minutes from midnight on `day`; the hours of dark without the moon; the
+ * Milky Way's core at its highest then; the mean cloud cover, where
  * `cloudAt(date)` knows it. `clear(p)` says whether a point stands clear of the land.
  */
 export function bestNights({ lat, lon, first, count = 30, clear = (p) => p.altitude > 0, cloudAt = () => null }) {
-  const STEP_MINUTES = 15;
   const nights = [];
   for (let i = 0; i < count; i++) {
     const start = new Date(`${first}T00:00`);
     start.setDate(start.getDate() + i);
-    const lit = moonPhase(new Date(start.valueOf() + 864e5)).lit;
-    const night = { day: localDay(start), from: null, moonless: 0, core: null, cloud: null, score: 0 };
+    const day = localDay(start);
+    const samples = nightOf({ lat, lon, day });
+    const hours = (samples[1].m - samples[0].m) / 60;
+    const { lit } = moonOfNight(samples);
+    let moonless = 0;
     let coreHours = 0;
     const covers = [];
-    for (let m = 720; m <= 2160; m += STEP_MINUTES) {
-      const date = new Date(start);
-      date.setMinutes(m);
-      const look = skyFrom(date, lat, lon);
-      const sun = sunCoords(date);
-      if (look(sun.ra, sun.dec).geometric >= FULL_DARK) continue;
-      night.from ??= m;
-      const moonFree = moonFrom(look, date).altitude < 0 || lit < 0.1;
-      if (moonFree) night.moonless += STEP_MINUTES / 60;
-      const core = look(CORE.ra, CORE.dec);
-      if (clear(core)) {
-        if (!night.core || core.altitude > night.core.altitude) night.core = core;
-        if (moonFree && core.altitude >= CORE_HIGH) coreHours += STEP_MINUTES / 60;
-      }
+    for (const { date, sun, moon, core } of samples) {
+      if (sun >= FULL_DARK) continue;
+      const moonFree = moon.altitude + 0.27 <= 0 || lit < 0.1;
+      if (moonFree) moonless += hours;
+      if (moonFree && clear(core) && core.altitude >= CORE_HIGH) coreHours += hours;
       const cover = cloudAt(date);
       if (cover != null) covers.push(cover);
     }
-    if (covers.length) night.cloud = covers.reduce((a, b) => a + b) / covers.length;
-    night.score = (night.moonless + 0.5 * coreHours) * (1 - (night.cloud ?? 0) / 100);
-    nights.push(night);
+    const cloud = covers.length ? covers.reduce((a, b) => a + b) / covers.length : null;
+    nights.push({
+      day, from: darkSpan(samples)?.from ?? null, moonless, core: coreBest(samples, clear), cloud,
+      score: (moonless + 0.5 * coreHours) * (1 - (cloud ?? 0) / 100),
+    });
   }
   return nights;
 }
 
+/** The best of `nights` that have any dark at all, best first. */
+export const topNights = (nights, count = 3) =>
+  nights.filter((night) => night.score > 0).toSorted((a, b) => b.score - a.score).slice(0, count);
+
 /**
- * How the sky looks from a spot on `day` at `minutes` from midnight, or, if the
- * sun is too high then for stars, at the darkest moment of the night after it:
+ * How the sky looks from a spot on `day` at `minutes` from midnight, or, before
+ * the stars are all out then, at the darkest moment of the night after it:
  * `{ minutes, glow, limit }`, its brightness (mag/arcsec²) and the faintest star seen.
  * `ratio` is the atlas's light pollution there.
  */
 export function skyOfNight({ lat, lon, day, minutes, ratio = 0 }) {
-  const depth = (m) => sunPosition(atMinute(day, m), lat, lon).geometric;
-  let chosen = minutes;
-  let sun = depth(chosen);
-  if (sun > -12) {
-    for (let m = 720; m <= 2160; m += 15) {
-      const down = depth(m);
-      if (m === 720 || down < sun) [chosen, sun] = [m, down];
-    }
-  }
-  const date = atMinute(day, chosen);
+  const date = atMinute(day, minutes);
+  let at = { m: minutes, date, sun: sunPosition(date, lat, lon).geometric };
+  if (nightness(at.sun) < 1) at = nightOf({ lat, lon, day }).reduce((a, b) => (b.sun < a.sun ? b : a));
   const glow = skyBrightness({
-    ratio, sun, moon: moonFrom(skyFrom(date, lat, lon), date).altitude, lit: moonPhase(date).lit,
+    ratio, sun: at.sun, moon: moonFrom(skyFrom(at.date, lat, lon), at.date).altitude, lit: moonPhase(at.date).lit,
   });
-  return { minutes: chosen, glow, limit: faintest(glow) };
+  return { minutes: at.m, glow, limit: faintest(glow) };
 }

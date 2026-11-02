@@ -19,8 +19,7 @@
   const light = $derived(list.map((h) => lightOf(sunPosition(new Date(h.at.valueOf() + 1800e3), lat, lon).geometric) ?? 'night'));
 </script>
 
-<section class="clouds" aria-labelledby="clouds-title">
-  <h3 id="clouds-title">{t('calc.sun.clouds.title')}</h3>
+<section class="clouds">
   {#if failed}
     <p class="note">{t('calc.sun.clouds.failed')}</p>
   {:else if !hours}
@@ -53,8 +52,6 @@
 </section>
 
 <style lang="scss">
-  .clouds { margin-top: 18px; }
-  h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
   .note { margin: 0; font-size: 12.5px; color: var(--color-muted); }
   .grid {
     display: grid; grid-template-columns: auto repeat(var(--hours), minmax(0, 1fr)); gap: 2px; align-items: center;

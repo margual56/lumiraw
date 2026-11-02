@@ -3,6 +3,7 @@
  *  mixes the national weather services' models for wherever it is asked. */
 
 import { round3 } from './geo.js';
+import { remoteFetch } from './remote.js';
 
 const API = 'https://api.open-meteo.com/v1/forecast';
 export const WEATHER_PAGE = 'https://open-meteo.com/';
@@ -23,7 +24,7 @@ export function clouds(lat, lon) {
   const kept = cache.get(key);
   if (kept && Date.now() - kept.asked < FRESH) return kept.loading;
   const loading = (async () => {
-    const response = await fetch(`${API}?latitude=${round3(lat)}&longitude=${round3(lon)}&forecast_days=${DAYS}&timeformat=unixtime`
+    const response = await remoteFetch(`${API}?latitude=${round3(lat)}&longitude=${round3(lon)}&forecast_days=${DAYS}&timeformat=unixtime`
       + '&hourly=cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high');
     if (!response.ok) throw new Error(String(response.status));
     const { hourly } = await response.json();

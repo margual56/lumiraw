@@ -1,6 +1,7 @@
 /** The calculators' maps: Leaflet over OpenStreetMap's tiles, loaded the
  *  first time one opens. */
 import { round3 } from './geo.js';
+import { remoteFetch } from './remote.js';
 
 /** The icons on the buttons that make a map or a view taller and back: arrows out to the corners, and in. */
 const ARROWS = (d) => `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${d}"/></svg>`;
@@ -55,6 +56,27 @@ export async function openMap(element, { centre, zoom, onpick, bigger }) {
   });
   if (bigger) new Grow({ position: 'topright' }).addTo(map);
   return { leaflet, map, relabel };
+}
+
+/** A layer of tiles that come through `remoteFetch`, so that the desktop app keeps them too. */
+export function keptTiles(leaflet, url, options) {
+  const Kept = leaflet.TileLayer.extend({
+    createTile(coords, done) {
+      const tile = document.createElement('img');
+      tile.alt = '';
+      remoteFetch(this.getTileUrl(coords))
+        .then((response) => (response.ok ? response.blob() : Promise.reject(new Error(String(response.status)))))
+        .then((blob) => {
+          const src = URL.createObjectURL(blob);
+          tile.onload = () => { URL.revokeObjectURL(src); done(null, tile); };
+          tile.onerror = (error) => { URL.revokeObjectURL(src); done(error, tile); };
+          tile.src = src;
+        })
+        .catch((error) => done(error, tile));
+      return tile;
+    },
+  });
+  return new Kept(url, options);
 }
 
 /** The spot picked, as a dot. */

@@ -6,6 +6,7 @@
  *  are pure, so `tools/check-calc.mjs` can run them. */
 
 import { RAD, between, wrap360 } from './geo.js';
+import { remoteFetch } from './remote.js';
 
 const ATLAS = 'https://djlorenz.github.io/astronomy/binary_tiles/2025';
 /** The atlas's colour overlay, for a map: tiles 1024 px across, to zoom 8. */
@@ -103,7 +104,7 @@ function tile(key) {
     return kept;
   }
   const loading = (async () => {
-    const response = await fetch(`${ATLAS}/binary_tile_${key}.dat.gz`);
+    const response = await remoteFetch(`${ATLAS}/binary_tile_${key}.dat.gz`);
     if (!response.ok) throw new Error(String(response.status));
     const unzipped = response.body.pipeThrough(new DecompressionStream('gzip'));
     return decode(new Int8Array(await new Response(unzipped).arrayBuffer()));

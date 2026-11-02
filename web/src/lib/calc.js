@@ -106,6 +106,40 @@ export function starRules({ focal, crop, aperture, megapixels }) {
   return { rule500: 500 / (focal * crop), npf: (35 * aperture + 30 * pitch) / focal, pitch };
 }
 
+/** What a lens takes in on this sensor, across a 3:2 frame's long and short sides, in degrees. */
+export function fieldOfView({ focal, crop }) {
+  const across = (side) => (2 * Math.atan(side / crop / (2 * focal))) / RAD;
+  return { width: across(36), height: across(24) };
+}
+
+/**
+ * The edge of a frame `width` by `height` degrees, looking towards `facing` and
+ * tilted up by `tilt`, as `{ bearing, altitude }` points round it from the top
+ * left corner: a rectilinear lens's straight edges, which bow on the sky.
+ */
+export function frameOutline({ facing, tilt, width, height }) {
+  const az = facing * RAD;
+  const up = tilt * RAD;
+  const forward = [Math.sin(az) * Math.cos(up), Math.cos(az) * Math.cos(up), Math.sin(up)];
+  const right = [Math.cos(az), -Math.sin(az), 0];
+  const above = [-Math.sin(az) * Math.sin(up), -Math.cos(az) * Math.sin(up), Math.cos(up)];
+  const w = Math.tan((width * RAD) / 2);
+  const h = Math.tan((height * RAD) / 2);
+  const point = (x, y) => {
+    const [a, b, c] = forward.map((f, i) => f + x * w * right[i] + y * h * above[i]);
+    return { bearing: ((Math.atan2(a, b) / RAD) + 360) % 360, altitude: Math.atan2(c, Math.hypot(a, b)) / RAD };
+  };
+  const STEPS = 16;
+  const along = Array.from({ length: STEPS }, (_, i) => -1 + (2 * i) / STEPS);
+  return [
+    ...along.map((s) => point(s, 1)),
+    ...along.map((s) => point(1, -s)),
+    ...along.map((s) => point(-s, -1)),
+    ...along.map((s) => point(-1, s)),
+    point(-1, 1),
+  ];
+}
+
 /** How far the sky turns a second, in radians: once a sidereal day. */
 const SIDEREAL = (2 * Math.PI) / 86164.1;
 

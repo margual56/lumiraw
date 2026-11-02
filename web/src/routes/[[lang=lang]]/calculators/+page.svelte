@@ -147,6 +147,7 @@
     openMap(mapElement, {
       centre: placed ? [v.lat, v.lon] : [30, 0], zoom: placed ? 9 : 2,
       onpick: (lat, lon) => { v.lat = lat; v.lon = lon; },
+      bigger: { more: t('calc.map.bigger'), less: t('calc.map.smaller') },
     }).then((opened) => {
       if (gone) return opened.map.remove();
       ({ leaflet, map } = opened);

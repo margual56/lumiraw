@@ -1,0 +1,78 @@
+<script>
+  /** The clouds forecast over the spot for the next 24 hours (lib/weather.js),
+   *  hour by hour in three layers, the higher up the thinner they tend to
+   *  be: a sky of only high cloud can still light up at sunset, while low
+   *  cloud hides it. Each hour's band under them says whether it is day or
+   *  night there, and the time picked on the slider is marked. */
+  import { t, clock } from '$lib/i18n.svelte.js';
+  import { lightOf, sunPosition } from '$lib/calc.js';
+  import { WEATHER_PAGE } from '$lib/weather.js';
+
+  /** `hours`: weather.js's clouds, null while loading, or 'failed'. */
+  let { lat, lon, hours, picked } = $props();
+
+  const LAYERS = ['high', 'mid', 'low'];
+  const list = $derived(Array.isArray(hours) ? hours : []);
+  /** Each hour's light, at its middle. */
+  const light = $derived(list.map((h) => lightOf(sunPosition(new Date(h.at.valueOf() + 1800e3), lat, lon).geometric) ?? 'night'));
+  const pickedHour = $derived(list.findIndex((h) => picked >= h.at && picked - h.at < 3600e3));
+  const hourLabel = (h) => clock(h.at);
+</script>
+
+<section class="clouds" aria-labelledby="clouds-title">
+  <h3 id="clouds-title">{t('calc.sun.clouds.title')}</h3>
+  {#if hours === 'failed'}
+    <p class="note">{t('calc.sun.clouds.failed')}</p>
+  {:else if !list.length}
+    <p class="note">{t('calc.sun.clouds.loading')}</p>
+  {:else}
+    <div class="grid" style:--hours={list.length}>
+      {#each LAYERS as layer (layer)}
+        <span class="layer">{t(`calc.sun.clouds.${layer}`)}</span>
+        {#each list as h, i (h.at.valueOf())}
+          <span class="cell" class:picked={i === pickedHour} style:--cover={h[layer] / 100}
+                title={t('calc.sun.clouds.hour', { time: hourLabel(h), total: h.total, low: h.low, mid: h.mid, high: h.high })}></span>
+        {/each}
+      {/each}
+      <span class="layer"></span>
+      {#each list as h, i (h.at.valueOf())}
+        <span class="light {light[i]}" class:picked={i === pickedHour}></span>
+      {/each}
+      <span class="layer"></span>
+      {#each list as h, i (h.at.valueOf())}
+        <span class="hour">{i % 3 === 0 ? hourLabel(h) : ''}</span>
+      {/each}
+    </div>
+    <p class="key">
+      <span class="scale" aria-hidden="true"></span> {t('calc.sun.clouds.key')}
+      <a href={WEATHER_PAGE} target="_blank" rel="noopener">{t('calc.sun.clouds.source')}</a>
+    </p>
+  {/if}
+</section>
+
+<style lang="scss">
+  .clouds { margin-top: 18px; }
+  h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+  .note { margin: 0; font-size: 12.5px; color: var(--color-muted); }
+  .grid {
+    display: grid; grid-template-columns: auto repeat(var(--hours), minmax(0, 1fr)); gap: 2px; align-items: center;
+  }
+  .layer { padding-right: 8px; font-size: 11.5px; color: var(--color-muted); white-space: nowrap; }
+  .cell {
+    height: 18px; border-radius: 3px;
+    background: color-mix(in srgb, var(--color-ink) calc(var(--cover) * 85%), var(--color-panel-2));
+  }
+  .light {
+    height: 5px; border-radius: 2px; background: #141a33;
+    &.day { background: #c9d8ee; }
+    &.golden { background: #f2a33a; }
+    &.dusk, &.blue { background: #5b78c4; }
+  }
+  .picked { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+  .hour { font-size: 10.5px; color: var(--color-muted); white-space: nowrap; overflow: visible; }
+  .key { margin: 8px 0 0; font-size: 11.5px; color: var(--color-muted); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .scale {
+    display: inline-block; width: 60px; height: 8px; border-radius: 2px;
+    background: linear-gradient(to right, var(--color-panel-2), color-mix(in srgb, var(--color-ink) 85%, var(--color-panel-2)));
+  }
+</style>

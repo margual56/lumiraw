@@ -148,6 +148,12 @@
       RawTherapee, de Pat David, Pavlov Dmitry y Michael Ezra (CC BY-SA 4.0).</li>
     <li>El espacio de color <a href="https://bottosson.github.io/posts/oklab/">Oklab</a> de
       Björn Ottosson, donde se hacen los ajustes de luminosidad, color y tono.</li>
+    <li>Para las calculadoras: las alturas de <a href="https://registry.opendata.aws/terrain-tiles/">Terrain
+      Tiles</a>, el <a href="https://djlorenz.github.io/astronomy/lp/">atlas de contaminación
+      lumínica</a> de David Lorenz, las estrellas, constelaciones y Vía Láctea de
+      <a href="https://github.com/ofrohn/d3-celestial">d3-celestial</a>, de Olaf Frohn
+      (BSD-3-Clause), y la previsión de nubes de <a href="https://open-meteo.com/">Open-Meteo</a>
+      (CC BY 4.0).</li>
     <li>Rust y WebAssembly para el motor, Svelte para la página.</li>
   </ul>
 {:else}
@@ -265,6 +271,11 @@
       by Pat David, Pavlov Dmitry and Michael Ezra (CC BY-SA 4.0).</li>
     <li>Björn Ottosson's <a href="https://bottosson.github.io/posts/oklab/">Oklab</a> colour
       space, which is where the lightness, colour and hue adjustments happen.</li>
+    <li>For the calculators: the heights from <a href="https://registry.opendata.aws/terrain-tiles/">Terrain
+      Tiles</a>, David Lorenz's <a href="https://djlorenz.github.io/astronomy/lp/">light pollution
+      atlas</a>, the stars, constellations and Milky Way of Olaf Frohn's
+      <a href="https://github.com/ofrohn/d3-celestial">d3-celestial</a> (BSD-3-Clause), and the
+      cloud forecast from <a href="https://open-meteo.com/">Open-Meteo</a> (CC BY 4.0).</li>
     <li>Rust and WebAssembly for the engine, Svelte for the page.</li>
   </ul>
 {/if}

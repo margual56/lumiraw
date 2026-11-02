@@ -1,6 +1,6 @@
 /** Do the calculators agree with the published tables and almanacs? */
 import {
-  SHUTTERS, depthOfField, starTrail, duration, lightOfDay, ndShutter, starRules, sunPosition, sunTimes,
+  SHUTTERS, cameraName, depthOfField, starTrail, duration, lightOfDay, ndShutter, starRules, sunPosition, sunTimes,
 } from '../web/src/lib/calc.js';
 import { LAYERS, STEP, landAt, skyline } from '../web/src/lib/horizon.js';
 
@@ -77,6 +77,19 @@ const angle = Math.atan2(1000 - 1.7 - 6.8, 10008) * 180 / Math.PI;
 check(`a ridge 10 km west stands ${landAt(ridge.layers.at(-1), 270).toFixed(2)}° up`,
   near(landAt(ridge.layers.at(-1), 270), angle, 0.4) && landAt(ridge.layers.at(-1), 90) < 0
   && landAt(ridge.layers[LAYERS.indexOf(5000)], 270) < 0 && ridge.layers[0].length === 360 / STEP);
+
+check('cameras go by the names on them, with lensfun\'s codes after',
+  cameraName('Sony', 'ILCE-7M3') === 'Sony A7 III (ILCE-7M3)'
+  && cameraName('Sony', 'ILCE-7RM4A') === 'Sony A7R IVA (ILCE-7RM4A)'
+  && cameraName('Sony', 'ILCE-6400') === 'Sony A6400 (ILCE-6400)'
+  && cameraName('Sony', 'DSC-RX100M5A') === 'Sony RX100 VA (DSC-RX100M5A)'
+  && cameraName('Canon', 'Canon EOS R6m2') === 'Canon EOS R6 Mark II (EOS R6m2)'
+  && cameraName('Canon', 'Canon EOS R5') === 'Canon EOS R5'
+  && cameraName('Nikon Corporation', 'Z 6_2') === 'Nikon Z 6II (Z 6_2)'
+  && cameraName('Panasonic', 'DC-GH5M2') === 'Panasonic Lumix GH5 II (DC-GH5M2)'
+  && cameraName('Panasonic', 'DMC-GM1') === 'Panasonic Lumix GM1 (DMC-GM1)'
+  && cameraName('Olympus Corporation', 'E-M1MarkII') === 'Olympus OM-D E-M1 Mark II (E-M1MarkII)'
+  && cameraName('OM Digital Solutions', 'OM-1') === 'OM System OM-1');
 
 check('durations read as a photographer writes them',
   duration(1 / 250) === '1/250 s' && duration(1 / 4) === '1/4 s' && duration(0.4) === '0.4 s'

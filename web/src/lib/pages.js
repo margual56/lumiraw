@@ -6,8 +6,12 @@ export const TOOLS = [
   { path: '/', key: 'site.develop' },
   { path: '/merge', key: 'site.merge' },
   { path: '/cull', key: 'site.cull' },
+  { path: '/sky', key: 'site.sky' },
   { path: '/calculators', key: 'site.calc' },
 ];
+
+/** The sky page's calculators, as their tabs and addresses name them (#sun…). */
+export const SKY = ['sun', 'dark', 'stars'];
 
 export const READING = [
   { path: '/guide', key: 'links.guide' },

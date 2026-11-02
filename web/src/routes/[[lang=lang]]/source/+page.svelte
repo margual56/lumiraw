@@ -164,8 +164,9 @@
     <li><strong>Política de seguridad.</strong> El sitio manda una cabecera
       Content-Security-Policy ({@render f('web/static/_headers')}) que prohíbe a la página
       conectarse a cualquier dirección que no sea la suya, salvo a Terrain Tiles (en AWS) por
-      las alturas del terreno y al atlas de contaminación lumínica de David Lorenz, para
-      las calculadoras de la hora dorada y del cielo oscuro. La hace cumplir tu navegador, no
+      las alturas del terreno, al atlas de contaminación lumínica de David Lorenz y a
+      Open-Meteo por la previsión de nubes, para las calculadoras de la hora dorada y del
+      cielo oscuro. La hace cumplir tu navegador, no
       yo, y puedes verla en las cabeceras de la respuesta. También dice quién puede mostrar
       la aplicación dentro de sus páginas: solo el blog, para que sus guías dejen probar
       cada paso con una foto de ejemplo, que les da el propio blog.</li>
@@ -194,7 +195,8 @@
   <p>
     LumiRaw es AGPL-3.0 ({@render f('LICENSE')}): puedes leerlo, modificarlo y publicarlo, y
     si ofreces una versión modificada a otros tienes que compartir su código. rawler es
-    LGPL-2.1, la base de datos de lensfun CC BY-SA 3.0 y los estilos CC BY-SA 4.0; más detalles
+    LGPL-2.1, la base de datos de lensfun CC BY-SA 3.0, los estilos CC BY-SA 4.0, los catálogos
+    del cielo de d3-celestial BSD-3-Clause y la previsión de Open-Meteo CC BY 4.0; más detalles
     en <a href={localized('/about#built-on')}>Acerca de</a>.
   </p>
 {:else}
@@ -346,8 +348,9 @@
       request carries its contents.</li>
     <li><strong>Security policy.</strong> The site sends a Content-Security-Policy header
       ({@render f('web/static/_headers')}) that forbids the page from connecting to any address
-      but its own, save Terrain Tiles (on AWS) for the terrain's heights and David Lorenz's light
-      pollution atlas, for the golden hour and dark skies calculators. Your browser enforces it, not me, and you can see it in the response
+      but its own, save Terrain Tiles (on AWS) for the terrain's heights, David Lorenz's light
+      pollution atlas and Open-Meteo for the cloud forecast, for the golden hour and dark skies
+      calculators. Your browser enforces it, not me, and you can see it in the response
       headers. It also says who may show the app inside their pages: only the blog, so its
       guides can let you try each step on a sample photo, which the blog itself hands over.</li>
     <li><strong>Run it yourself.</strong> If you'd rather not trust my server, you don't have
@@ -375,7 +378,8 @@
   <p>
     LumiRaw is AGPL-3.0 ({@render f('LICENSE')}): you can read it, change it and publish it, and
     if you offer a modified version to others you have to share its code. rawler is LGPL-2.1,
-    the lensfun database CC BY-SA 3.0 and the looks CC BY-SA 4.0; more on the
+    the lensfun database CC BY-SA 3.0, the looks CC BY-SA 4.0, d3-celestial's sky catalogues
+    BSD-3-Clause and Open-Meteo's forecast CC BY 4.0; more on the
     <a href={localized('/about#built-on')}>About</a> page.
   </p>
 {/if}

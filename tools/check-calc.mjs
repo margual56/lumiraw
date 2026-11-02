@@ -1,8 +1,9 @@
 /** Do the calculators agree with the published tables and almanacs? */
 import {
   EXPOSURES, SHUTTERS, cameraName, depthOfField, duration, lightOf, lightOfDay, ndShutter, nearestStep, starRules,
-  starTrail, sunPosition, sunTimes,
+  skyFrom, starTrail, sunPosition, sunTimes,
 } from '../web/src/lib/calc.js';
+import { faintest, moonCoords, moonPhase, planets, skyBrightness } from '../web/src/lib/night.js';
 import { LAYERS, STEP, landAt, skyline } from '../web/src/lib/horizon.js';
 import { decode, pickSpots, zoneOf } from '../web/src/lib/darksky.js';
 
@@ -120,6 +121,31 @@ check('durations read as a photographer writes them',
   duration(1 / 250) === '1/250 s' && duration(1 / 4) === '1/4 s' && duration(0.4) === '0.4 s'
   && duration(0.8) === '0.8 s' && duration(2.5) === '2.5 s' && duration(256) === '4 min 16 s'
   && duration(4080) === '1 h 8 min' && duration(17.07) === '17 s');
+
+// 2 November 2026 at 22:00 UTC, as JPL's Horizons gives it (astrometric,
+// from the earth's centre): the moon 38 % lit and waning, and the planets.
+const night = new Date('2026-11-02T22:00:00Z');
+const moon = moonCoords(night);
+const phase = moonPhase(night);
+check(`the moon (${moon.ra.toFixed(2)}°, ${moon.dec.toFixed(2)}°, ${Math.round(phase.lit * 100)} % lit)`,
+  near(moon.ra, 146.11, 1) && near(moon.dec, 13.86, 1) && near(phase.lit, 0.384, 0.03) && !phase.waxing);
+const HORIZONS = {
+  mercury: [221.24, -16.94, 5.01], venus: [201.49, -13.76, -4.31], mars: [142.16, 16.62, 0.82],
+  jupiter: [146.72, 14.12, -2.01], saturn: [9.13, 1.02, 0.47],
+};
+check('the planets, to a fifth of a degree and their brightness to half a magnitude',
+  planets(night).every((p) => {
+    const [ra, dec, mag] = HORIZONS[p.name];
+    return near(p.ra, ra, 0.2) && near(p.dec, dec, 0.2) && near(p.mag, mag, 0.5);
+  }));
+const polaris = skyFrom(night, 40.4, -3.7)(37.95, 89.26);
+check(`the pole star stands as high as the place is north (${polaris.altitude.toFixed(2)}°)`,
+  near(polaris.altitude, 40.4, 1) && (polaris.bearing < 2 || polaris.bearing > 358));
+check('a natural sky shows stars to 6.6, a town\'s to 4',
+  near(faintest(skyBrightness({ sun: -30, moon: -10, lit: 1 })), 6.62, 0.05) && near(faintest(18), 3.97, 0.05));
+check('twilight and the moon brighten the sky',
+  skyBrightness({ sun: -12, moon: -10, lit: 0 }) < 19 && skyBrightness({ sun: -30, moon: 60, lit: 1 }) < 19.5
+  && skyBrightness({ sun: -30, moon: 60, lit: 0.1 }) > 21.9);
 
 if (failures) {
   console.error(`\n${failures} check(s) failed`);

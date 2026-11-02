@@ -3,6 +3,8 @@
  *  `tools/check-calc.mjs` can run them. Lengths in millimetres unless named
  *  otherwise, distances in metres, times in seconds. */
 
+import { wrap360 } from './geo.js';
+
 /** Common sensors by crop factor, against 35 mm film (36 × 24 mm). */
 export const SENSORS = [
   { id: 'medium', crop: 0.79 },
@@ -139,9 +141,23 @@ function refraction(h) {
 }
 
 /**
+ * Which light the sun gives at `altitude` (as `sunTimes` reckons it, before
+ * the air's lift): `day`, `golden`, `dusk` (set, before the blue), `blue`,
+ * or null for night.
+ */
+export function lightOf(altitude) {
+  if (altitude > ANGLES.golden) return 'day';
+  if (altitude > ANGLES.horizon) return 'golden';
+  if (altitude > ANGLES.blueStart) return 'dusk';
+  if (altitude > ANGLES.blueEnd) return 'blue';
+  return null;
+}
+
+/**
  * Where the sun is at `date`, seen from a place: its bearing in degrees
- * clockwise from north, and its altitude in degrees above the horizon, as
- * the eye sees it (the air's lift included).
+ * clockwise from north, its altitude in degrees above the horizon as the eye
+ * sees it (the air's lift included), and `geometric`, without the lift, as
+ * `ANGLES` and `lightOf` take it.
  */
 export function sunPosition(date, lat, lon) {
   const lw = RAD * -lon;
@@ -154,8 +170,9 @@ export function sunPosition(date, lat, lon) {
   // From the south, westwards, as the formulas give it; turned to a compass bearing.
   const azimuth = Math.atan2(Math.sin(h), Math.cos(h) * Math.sin(phi) - Math.tan(dec) * Math.cos(phi));
   return {
-    bearing: ((azimuth / RAD + 180) % 360 + 360) % 360,
+    bearing: wrap360(azimuth / RAD + 180),
     altitude: (altitude + refraction(altitude)) / RAD,
+    geometric: altitude / RAD,
   };
 }
 

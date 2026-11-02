@@ -1,6 +1,6 @@
 /** Do the calculators agree with the published tables and almanacs? */
 import {
-  SHUTTERS, depthOfField, duration, lightOfDay, ndShutter, starRules, sunPosition, sunTimes,
+  SHUTTERS, depthOfField, duration, lightOfDay, ndShutter, lightOf, starRules, sunPosition, sunTimes,
 } from '../web/src/lib/calc.js';
 import { LAYERS, STEP, landAt, skyline } from '../web/src/lib/horizon.js';
 
@@ -60,6 +60,9 @@ const dusk = sunPosition(madrid.horizon.set, 40.4168, -3.7038);
 check(`the sun sets in Madrid at ${dusk.bearing.toFixed(1)}°, on the horizon`,
   near(dusk.bearing, 302.1, 1) && near(dusk.altitude, -0.27, 0.3));
 const high = sunPosition(madrid.noon, 40.4168, -3.7038);
+check('at sunset the sun is where the times put it, and the light turns golden to blue',
+  near(dusk.geometric, -0.833, 0.2) && lightOf(3) === 'golden' && lightOf(-2) === 'dusk'
+  && lightOf(-5) === 'blue' && lightOf(-7) === null && lightOf(20) === 'day');
 check(`noon in Madrid, ${high.altitude.toFixed(1)}° up, due south`,
   near(high.altitude, 90 - 40.4168 + 23.44, 0.3) && near(high.bearing, 180, 1));
 

@@ -1,7 +1,7 @@
 /** A golden hour's spot, day, time and view packed into a short code, for
  *  sharing: `/sky#1aZ09xQkLm2Pz0w`. Nothing is stored anywhere: the code is the
  *  settings, and it sits after the `#`, so it does not reach the site's host. */
-import { isPlace } from './geo.js';
+import { round3, wrap360 } from './geo.js';
 
 const ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 const VERSION = '1';
@@ -16,9 +16,6 @@ const eastOfUtc = (day) => -new Date(`${day}T12:00`).getTimezoneOffset();
 const dayNumber = (day) => Date.parse(`${day}T00:00Z`) / 864e5 - 10957;
 const dayName = (number) => new Date((number + 10957) * 864e5).toISOString().slice(0, 10);
 
-/** What identifies an opening of the view: a new one starts on the golden hour again. */
-export const spotKey = (lat, lon, day) => `${lat},${lon},${day}`;
-
 /** The address's hash for these settings. */
 export function writeLink({ lat, lon, day, minutes, facing, around, dome }) {
   const fields = {
@@ -27,7 +24,7 @@ export function writeLink({ lat, lon, day, minutes, facing, around, dome }) {
     day: dayNumber(day),
     minutes: Math.round(minutes),
     tz: Math.round(eastOfUtc(day) / 15) + 48,
-    facing: ((Math.round(facing) % 360) + 360) % 360,
+    facing: wrap360(Math.round(facing)),
     around: around ? 1 : 0,
     dome: dome ? 1 : 0,
   };
@@ -52,16 +49,14 @@ export function readLink(hash) {
     fields[name] = Number(packed % BigInt(radix));
     packed /= BigInt(radix);
   }
-  const lat = fields.lat / 1000 - 90;
-  const lon = fields.lon / 1000 - 180;
-  if (packed !== 0n || !isPlace(lat, lon)) return { tool: 'sun' };
+  if (packed !== 0n) return { tool: 'sun' };
   const day = dayName(fields.day);
   // The same moment in the time zone it is read in.
   const shift = eastOfUtc(day) - (fields.tz - 48) * 15;
   return {
     tool: 'sun',
-    lat: Math.round(lat * 1000) / 1000,
-    lon: Math.round(lon * 1000) / 1000,
+    lat: round3(fields.lat / 1000 - 90),
+    lon: round3(fields.lon / 1000 - 180),
     day,
     minutes: Math.max(0, Math.min(LAST_MINUTE, fields.minutes + shift)),
     facing: fields.facing,

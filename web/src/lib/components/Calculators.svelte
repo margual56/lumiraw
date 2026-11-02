@@ -12,11 +12,11 @@
   import StarPreview from '$lib/components/StarPreview.svelte';
   import DarkSky from '$lib/components/DarkSky.svelte';
   import { i18n, t, n, clock } from '$lib/i18n.svelte.js';
-  import { RAD, isPlace, localDay, round3 } from '$lib/geo.js';
+  import { RAD, atMinute, isPlace, localDay, round3, spotKey } from '$lib/geo.js';
   import { openMap, spotMarker } from '$lib/map.js';
-  import { readLink, spotKey, writeLink } from '$lib/spotlink.js';
+  import { readLink, writeLink } from '$lib/spotlink.js';
   import { skyOfNight } from '$lib/night.js';
-  import { skyAt } from '$lib/darksky.js';
+  import { skyOrUnlit } from '$lib/darksky.js';
   import {
     EXPOSURES, SENSORS, FILTERS, SHUTTERS, cameraName, confusion, depthOfField, duration, lightOfDay,
     ndShutter, nearestStep, starRules, starTrail,
@@ -149,15 +149,13 @@
     atlas = null;
     if (tool !== 'stars' || !placed) return;
     let stale = false;
-    const unlit = { ratio: 0, zone: null };
-    skyAt(v.lat, v.lon).then((found) => stale || (atlas = found ?? unlit), () => stale || (atlas = unlit));
+    skyOrUnlit(v.lat, v.lon).then((found) => stale || (atlas = found));
     return () => (stale = true);
   });
   const starSky = $derived(atlas && day ? skyOfNight({ lat: v.lat, lon: v.lon, day, minutes: look.minutes, ratio: atlas.ratio }) : null);
   const starClock = $derived.by(() => {
     if (!starSky) return '';
-    const date = new Date(`${day}T00:00`);
-    date.setMinutes(starSky.minutes);
+    const date = atMinute(day, starSky.minutes);
     return `${date.toLocaleDateString(i18n.locale, { day: 'numeric', month: 'short' })}, ${clock(date)}`;
   });
 

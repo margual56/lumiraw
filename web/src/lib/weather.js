@@ -42,4 +42,4 @@ export function clouds(lat, lon) {
 }
 
 /** The hour of a forecast `date` falls in, or null outside it. */
-export const hourOf = (hours, date) => hours?.find((h) => date >= h.at && date - h.at < 3600e3) ?? null;
+export const hourOf = (hours, date) => (hours?.length ? hours[Math.floor((date - hours[0].at) / 3600e3)] ?? null : null);

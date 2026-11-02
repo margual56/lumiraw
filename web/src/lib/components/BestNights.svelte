@@ -9,7 +9,6 @@
   let { nights, day, onpick } = $props();
 
   const dateOf = (night) => new Date(`${night.day}T12:00`);
-  const top = $derived(Math.max(...nights.map((night) => night.score), 0));
   const best = $derived(nights.filter((night) => night.score > 0).toSorted((a, b) => b.score - a.score).slice(0, 3));
   /** Blank cells before the first night, the week starting on Monday. */
   const blanks = $derived((dateOf(nights[0]).getDay() + 6) % 7);
@@ -25,7 +24,8 @@
       night.cloud != null && t('calc.sun.nights.cloud', { cloud: Math.round(night.cloud) }),
     ].filter(Boolean).join(' · ');
   }
-  const long = (night) => dateOf(night).toLocaleDateString(i18n.locale, { weekday: 'short', day: 'numeric', month: 'short' });
+  const longDate = $derived(new Intl.DateTimeFormat(i18n.locale, { weekday: 'short', day: 'numeric', month: 'short' }));
+  const long = (night) => longDate.format(dateOf(night));
 </script>
 
 <section class="nights" aria-labelledby="nights-title">
@@ -35,8 +35,9 @@
       {#each WEEK as letter, i (i)}<span class="week">{letter}</span>{/each}
       {#each { length: blanks } as _, i (i)}<span></span>{/each}
       {#each nights as night (night.day)}
-        <button type="button" class:on={night.day === day} class:best={best.includes(night)} style:--good={top ? night.score / top : 0}
-                title={`${long(night)}: ${facts(night)}`} aria-label={`${long(night)}: ${facts(night)}`} onclick={() => onpick(night)}>
+        {@const label = `${long(night)}: ${facts(night)}`}
+        <button type="button" class:on={night.day === day} class:best={best.includes(night)} style:--good={night.score / best[0].score}
+                title={label} aria-label={label} onclick={() => onpick(night)}>
           {dateOf(night).getDate()}
         </button>
       {/each}

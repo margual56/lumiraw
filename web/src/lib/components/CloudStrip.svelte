@@ -8,19 +8,20 @@
   import { lightOf, sunPosition } from '$lib/calc.js';
   import { DAYS, WEATHER_PAGE } from '$lib/weather.js';
 
-  /** `hours`: those of weather.js's clouds to show, null while loading, or
-   *  'failed'; `picked`: the one of them picked, if any; `far`: over a week ahead. */
-  let { lat, lon, hours, picked, far = false } = $props();
+  /** `hours`: those of weather.js's clouds to show, null while loading;
+   *  `failed`: they could not be had; `picked`: the one of them picked, if
+   *  any; `far`: over a week ahead. */
+  let { lat, lon, hours, failed = false, picked, far = false } = $props();
 
   const LAYERS = ['high', 'mid', 'low'];
-  const list = $derived(Array.isArray(hours) ? hours : []);
+  const list = $derived(hours ?? []);
   /** Each hour's light, at its middle. */
   const light = $derived(list.map((h) => lightOf(sunPosition(new Date(h.at.valueOf() + 1800e3), lat, lon).geometric) ?? 'night'));
 </script>
 
 <section class="clouds" aria-labelledby="clouds-title">
   <h3 id="clouds-title">{t('calc.sun.clouds.title')}</h3>
-  {#if hours === 'failed'}
+  {#if failed}
     <p class="note">{t('calc.sun.clouds.failed')}</p>
   {:else if !hours}
     <p class="note">{t('calc.sun.clouds.loading')}</p>

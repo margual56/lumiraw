@@ -16,6 +16,16 @@ export const isPlace = (lat, lon) => Number.isFinite(lat) && Number.isFinite(lon
 export const localDay = (date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
+/** `minutes` from midnight on `day` (`YYYY-MM-DD`), on this device's clock. */
+export function atMinute(day, minutes) {
+  const date = new Date(`${day}T00:00`);
+  date.setMinutes(minutes);
+  return date;
+}
+
+/** What identifies an opening of the golden hour's view: a new one starts on the golden hour again. */
+export const spotKey = (lat, lon, day) => `${lat},${lon},${day}`;
+
 /** Degrees to three places, some 100 m: as close as a click on a map means. */
 export const round3 = (degrees) => Math.round(degrees * 1000) / 1000;
 

@@ -9,14 +9,13 @@
   import { untrack } from 'svelte';
   import { i18n, t, n, clock } from '$lib/i18n.svelte.js';
   import { lightOf, skyFrom, sunCoords, sunPosition } from '$lib/calc.js';
-  import { compassPoint, localDay, wrap360 } from '$lib/geo.js';
+  import { atMinute, compassPoint, localDay, spotKey, wrap360 } from '$lib/geo.js';
   import { STEP, horizonFrom, landAt } from '$lib/horizon.js';
-  import { CORE, bestNights, faintest, moonFrom, moonPhase, nightSky, skyBrightness } from '$lib/night.js';
+  import { CORE, FULL_DARK, bestNights, faintest, moonFrom, moonPhase, nightSky, skyBrightness } from '$lib/night.js';
   import { drawSky } from '$lib/drawsky.js';
-  import { skyAt } from '$lib/darksky.js';
+  import { skyOrUnlit } from '$lib/darksky.js';
   import { clouds, hourOf } from '$lib/weather.js';
   import { GROW, SHRINK } from '$lib/map.js';
-  import { spotKey } from '$lib/spotlink.js';
   import '$lib/map.css';
   import SkyDome from './SkyDome.svelte';
   import CloudStrip from './CloudStrip.svelte';
@@ -29,8 +28,8 @@
    *  last opened on, so coming back or following a link leaves all that as it
    *  is. `link`: the address's hash for all of this, to share. */
   let {
-    lat, lon, day = $bindable(), light, link, opened = $bindable(null), minutes = $bindable(18 * 60),
-    facing = $bindable(270), around = $bindable(false), dome = $bindable(false), shown = $bindable(100),
+    lat, lon, day = $bindable(), light, link, opened = $bindable(), minutes = $bindable(),
+    facing = $bindable(), around = $bindable(), dome = $bindable(), shown = $bindable(),
   } = $props();
   const fov = $derived(around ? 360 : 100);
 
@@ -87,11 +86,7 @@
 
   /** A minute of the day picked, as a Date in this device's time zone. */
   const midnight = $derived(new Date(`${day}T00:00`).valueOf());
-  const at = (m) => {
-    const date = new Date(midnight);
-    date.setMinutes(m);
-    return date;
-  };
+  const at = (m) => atMinute(day, m);
   const hm = (m) => clock(at(m));
   const minuteOf = (date) => date.getHours() * 60 + date.getMinutes();
 
@@ -141,20 +136,20 @@
   $effect(() => {
     if (!nightly) return;
     pollution = null;
-    // Outside the atlas, as if unlit.
-    return forSpot(skyAt, (found) => (pollution = found ?? { ratio: 0, zone: null }));
+    return forSpot(skyOrUnlit, (found) => (pollution = found));
   });
 
   /** The clouds over the next days. */
   let forecast = $state.raw(null);
+  let noForecast = $state(false);
   $effect(() => {
     forecast = null;
-    return forSpot(clouds, (hours) => (forecast = hours), () => (forecast = 'failed'));
+    noForecast = false;
+    return forSpot(clouds, (hours) => (forecast = hours), () => (noForecast = true));
   });
-  const cloudNow = $derived(Array.isArray(forecast) ? hourOf(forecast, at(minutes)) : null);
-  /** The forecast's hours along the slider, or as it stands while there are none to show. */
-  const cloudHours = $derived(Array.isArray(forecast)
-    ? forecast.filter((h) => h.at >= midnight && h.at - midnight < END * 60e3) : forecast);
+  const cloudNow = $derived(hourOf(forecast, at(minutes)));
+  /** The forecast's hours along the slider. */
+  const cloudHours = $derived(forecast?.filter((h) => h.at >= midnight && h.at - midnight < END * 60e3) ?? null);
   const today = localDay(new Date());
 
   const sky = $derived(data && nightly ? nightSky(data, at(minutes), lat, lon, i18n.locale) : null);
@@ -177,12 +172,9 @@
       const date = at(m);
       const look = skyFrom(date, lat, lon);
       const s = sunCoords(date);
-      const moonAt = moonFrom(look, date);
       out.push({
         m, sun: look(s.ra, s.dec).geometric,
-        // Its top edge.
-        moon: moonAt.altitude + 0.27,
-        moonAt,
+        moon: moonFrom(look, date),
         core: look(CORE.ra, CORE.dec),
       });
     }
@@ -191,29 +183,31 @@
 
   /** When the sky is fully dark that night, the sun 18° down. */
   const fullDark = $derived.by(() => {
-    const black = overnight.filter((p) => p.sun < -18);
+    const black = overnight.filter((p) => p.sun < FULL_DARK);
     return black.length ? { from: black[0].m, until: black.at(-1).m } : null;
   });
 
   /** The moon that night: when it rises and sets, and how much of it is lit. */
   const moonNight = $derived.by(() => {
+    // By its top edge.
+    const up = (p) => p.moon.altitude + 0.27 > 0;
     let rise = null;
     let set = null;
     for (let i = 1; i < overnight.length; i++) {
-      const was = overnight[i - 1].moon > 0;
-      const is = overnight[i].moon > 0;
+      const was = up(overnight[i - 1]);
+      const is = up(overnight[i]);
       if (is && !was) rise ??= overnight[i].m;
       if (was && !is) set ??= overnight[i].m;
     }
     const middle = at(fullDark ? (fullDark.from + fullDark.until) / 2 : 1440);
-    return { rise, set, up: overnight[0].moon > 0, ...moonPhase(middle) };
+    return { rise, set, up: up(overnight[0]), ...moonPhase(middle) };
   });
 
   /** The galaxy's core while it is dark: when it stands highest above the land, and how high. */
   const core = $derived.by(() => {
     let best = null;
     for (const { m, sun: down, core: p } of overnight) {
-      if (down >= -18 || p.altitude <= (skyline ? landAt(skyline, p.bearing) : 0)) continue;
+      if (down >= FULL_DARK || p.altitude <= (skyline ? landAt(skyline, p.bearing) : 0)) continue;
       if (!best || p.altitude > best.altitude) best = { m, ...p };
     }
     return best;
@@ -229,8 +223,7 @@
 
   /** The coming month's nights at this spot, the best marked, and going to one on a click. */
   const nights = $derived(bestNights({
-    lat, lon, first: today, clear: (p) => above(p),
-    cloudAt: (date) => (Array.isArray(forecast) ? hourOf(forecast, date)?.total ?? null : null),
+    lat, lon, first: today, clear: above, cloudAt: (date) => hourOf(forecast, date)?.total,
   }));
   function pickNight(night) {
     if (night.from != null) {
@@ -241,16 +234,34 @@
     day = night.day;
   }
 
+  /** The moon every five minutes, from noon the day before to noon two days on. */
+  const moonTrack = $derived(Array.from({ length: 865 }, (_, i) => {
+    const m = -720 + i * 5;
+    const date = at(m);
+    return { m, ...moonFrom(skyFrom(date, lat, lon), date) };
+  }));
+  /** The moon's pass across the sky, rise to set: the one under way at the time picked, or else the next. */
+  const moonPass = $derived.by(() => {
+    const up = (i) => moonTrack[i]?.altitude > -1;
+    let from = Math.round((minutes + 720) / 5);
+    while (from < moonTrack.length && !up(from)) from++;
+    let to = from;
+    while (up(from - 1)) from--;
+    while (up(to + 1)) to++;
+    return moonTrack.slice(from, to + 1);
+  });
+
   /** Where the moon is at the time picked. */
   const moonNow = $derived(moonFrom(skyFrom(at(minutes), lat, lon), at(minutes)));
 
   /** This device's time zone, as every time here is in it. */
+  const ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone.replaceAll('_', ' ');
   const zone = $derived.by(() => {
     const east = -at(minutes).getTimezoneOffset();
     const whole = Math.floor(Math.abs(east) / 60);
     const part = Math.abs(east) % 60;
     const offset = `UTC${east < 0 ? '−' : '+'}${whole}${part ? `:${String(part).padStart(2, '0')}` : ''}`;
-    return `${Intl.DateTimeFormat().resolvedOptions().timeZone.replaceAll('_', ' ')}, ${offset}`;
+    return `${ZONE}, ${offset}`;
   });
 
   /** The colour of the sky by the sun's altitude, at the top and at the horizon. */
@@ -454,18 +465,18 @@
     }
     finish();
 
-    // The moon's path through the night, dotted, fainter behind the land.
+    // The moon's pass, dotted, fainter behind the land.
     g.lineWidth = 2;
     g.setLineDash([1, 6]);
     for (const behind of [true, false]) {
       g.strokeStyle = `rgba(214,224,246,${behind ? 0.3 : 0.9})`;
       g.beginPath();
-      for (let i = 1; i < overnight.length; i++) {
-        const a = overnight[i - 1].moonAt;
-        const b = overnight[i].moonAt;
+      for (let i = 1; i < moonPass.length; i++) {
+        const a = moonPass[i - 1];
+        const b = moonPass[i];
         const xa = xOf(a.bearing);
         const xb = xOf(b.bearing);
-        if (b.altitude < -1 || Math.abs(xa - xb) > width / 2 || above(b) === behind) continue;
+        if (Math.max(xa, xb) < 0 || Math.min(xa, xb) > width || Math.abs(xa - xb) > width / 2 || above(b) === behind) continue;
         g.moveTo(xa, yOf(a.altitude));
         g.lineTo(xb, yOf(b.altitude));
       }
@@ -475,8 +486,6 @@
     if (!sky || dark <= 0) {
       const mx = xOf(moonNow.bearing);
       if (moonNow.altitude > -1 && mx > 0 && mx < width) {
-        g.strokeStyle = 'rgba(214,224,246,.9)';
-        g.lineWidth = 2;
         g.beginPath();
         g.arc(mx, yOf(moonNow.altitude), 6, 0, 2 * Math.PI);
         g.stroke();
@@ -502,15 +511,15 @@
     // The moon's hours, every other one, and its name where it stands highest.
     g.fillStyle = 'rgb(214,224,246)';
     let topmost = null;
-    for (const { m, moonAt } of overnight) {
-      const x = xOf(moonAt.bearing);
-      if (moonAt.altitude < 0 || x < 0 || x > width) continue;
-      if (!topmost || moonAt.altitude > topmost.altitude) topmost = { x, altitude: moonAt.altitude };
-      if (m % 120) continue;
+    for (const moon of moonPass) {
+      const x = xOf(moon.bearing);
+      if (moon.altitude < 0 || x < 0 || x > width) continue;
+      if (!topmost || moon.altitude > topmost.altitude) topmost = { x, altitude: moon.altitude };
+      if (moon.m % 120) continue;
       g.beginPath();
-      g.arc(x, yOf(moonAt.altitude), 2, 0, 2 * Math.PI);
+      g.arc(x, yOf(moon.altitude), 2, 0, 2 * Math.PI);
       g.fill();
-      g.fillText(hm(m), x, yOf(moonAt.altitude) + 16);
+      g.fillText(hm(moon.m), x, yOf(moon.altitude) + 16);
     }
     if (topmost) g.fillText(t('calc.sun.view.moon'), topmost.x, yOf(topmost.altitude) - 10);
     g.fillStyle = '#fff';
@@ -676,7 +685,7 @@
     </div>
   {/if}
 </dl>
-<CloudStrip {lat} {lon} hours={cloudHours} picked={cloudNow} far={midnight - new Date(`${today}T00:00`) > 7 * 864e5} />
+<CloudStrip {lat} {lon} hours={cloudHours} failed={noForecast} picked={cloudNow} far={midnight - new Date(`${today}T00:00`) > 7 * 864e5} />
 <BestNights {nights} {day} onpick={pickNight} />
 <p class="note">
   {status === 'failed' ? t('calc.sun.view.failed') : t('calc.sun.view.note', { ground: n(land?.ground ?? 0, 0) })}

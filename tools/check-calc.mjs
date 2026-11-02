@@ -3,6 +3,7 @@ import {
   SHUTTERS, depthOfField, starTrail, duration, lightOfDay, ndShutter, starRules, sunPosition, sunTimes,
 } from '../web/src/lib/calc.js';
 import { LAYERS, STEP, landAt, skyline } from '../web/src/lib/horizon.js';
+import { decode, pickSpots, zoneOf } from '../web/src/lib/darksky.js';
 
 let failures = 0;
 const check = (what, ok) => {
@@ -77,6 +78,24 @@ const angle = Math.atan2(1000 - 1.7 - 6.8, 10008) * 180 / Math.PI;
 check(`a ridge 10 km west stands ${landAt(ridge.layers.at(-1), 270).toFixed(2)}° up`,
   near(landAt(ridge.layers.at(-1), 270), angle, 0.4) && landAt(ridge.layers.at(-1), 90) < 0
   && landAt(ridge.layers[LAYERS.indexOf(5000)], 270) < 0 && ridge.layers[0].length === 360 / STEP);
+
+// The light pollution atlas: a tile of one value, 100 (the brightness ratio
+// 0.15), rising by one a point east along the bottom row.
+const flat = new Int8Array(600 * 600 + 1);
+flat[1] = 100;
+for (let col = 1; col < 600; col++) flat[1 + col] = 1;
+const ratios = decode(flat);
+check('an atlas tile decodes as its own page reads it',
+  near(ratios[0], (5 / 195) * (Math.exp(1.95) - 1), 1e-6) && near(ratios[599], (5 / 195) * (Math.exp(0.0195 * 699) - 1), 1e-3)
+  && ratios[600] === ratios[0]);
+check('a natural sky is 22 mag/arcsec², Bortle 1; a city\'s white, Bortle 9',
+  near(zoneOf(0).sqm, 22, 1e-9) && zoneOf(0).bortle === 1 && zoneOf(50).zone === '7b' && zoneOf(2).bortle === 5);
+const spots = pickSpots([
+  { lat: 40, lon: -3, ratio: 0.05, km: 30 }, { lat: 40.01, lon: -3, ratio: 0.05, km: 29 },
+  { lat: 40.5, lon: -3, ratio: 0.05, km: 20 }, { lat: 41, lon: -3, ratio: 3, km: 5 },
+], { count: 3, apart: 5 });
+check('dark spots: the darkest first, the nearest of equals, none on top of another',
+  spots.length === 3 && spots[0].km === 20 && spots[1].km === 29 && spots[2].ratio === 3);
 
 check('durations read as a photographer writes them',
   duration(1 / 250) === '1/250 s' && duration(1 / 4) === '1/4 s' && duration(0.4) === '0.4 s'

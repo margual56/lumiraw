@@ -482,6 +482,17 @@
             onpointerdown={grab} onpointermove={drag} onpointerup={() => (dragged = null)}
             onpointercancel={() => (dragged = null)} onkeydown={keys}></canvas>
   {/if}
+  <!-- Which view: the horizon from the spot, or the whole sky overhead. -->
+  <div class="mode" role="group" aria-label={t('calc.sun.view.mode')}>
+    <button type="button" aria-pressed={!dome} onclick={() => (dome = false)}>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 18l6-7 4 4 3-3 7 6M2 21h20"/></svg>
+      {t('calc.sun.view.horizon')}
+    </button>
+    <button type="button" aria-pressed={dome} onclick={() => (dome = true)}>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M12 6.5l1.2 2.6 2.8.3-2.1 1.9.6 2.8L12 12.7l-2.5 1.4.6-2.8L8 9.4l2.8-.3zM7 16.5h.01M17 16h.01M16.5 7h.01"/></svg>
+      {t('calc.sun.view.starMap')}
+    </button>
+  </div>
   {#if cloudNow}
     <p class="cloudy">{t('calc.sun.clouds.now', { total: cloudNow.total, low: cloudNow.low })}</p>
   {/if}
@@ -503,7 +514,6 @@
     <button type="button" class="ghost" disabled={!light?.sunset} onclick={() => goTo(light.sunset)}>{t('calc.sun.view.sunset')}</button>
     <button type="button" class="ghost" disabled={!fullDark} onclick={tonight}>{t('calc.sun.night.tonight')}</button>
     <button type="button" class="ghost" aria-pressed={fov === 360} onclick={() => (fov = fov === 360 ? 100 : 360)}>{t('calc.sun.view.around')}</button>
-    <button type="button" class="ghost" aria-pressed={dome} onclick={() => (dome = !dome)}>{t('calc.sun.night.whole')}</button>
   </div>
 </div>
 <p class="sunline">
@@ -567,12 +577,29 @@
     &:active { cursor: grabbing; }
     &:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
   }
-  .view.dome { height: min(560px, 92vw); }
+  .view.dome {
+    height: calc(min(560px, 92vw) + 44px);
+    /* The chart is round: the corners under it are free. */
+    .cloudy { top: auto; bottom: 8px; }
+  }
   .view.tall { height: min(82vh, 960px); }
   /* Drawn as the maps' is (map.css). */
   .grow { position: absolute; top: 8px; right: 8px; border-radius: 4px; box-shadow: 0 1px 5px rgba(0, 0, 0, .4); }
+  .mode {
+    position: absolute; top: 8px; left: 8px; display: flex; padding: 3px; gap: 2px; border-radius: 9px;
+    background: rgba(10, 14, 28, .72); box-shadow: 0 1px 5px rgba(0, 0, 0, .4);
+    button {
+      display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 4px 11px; border: 0; border-radius: 7px;
+      font: 600 12.5px var(--font-sans, system-ui, sans-serif); color: rgba(255, 255, 255, .78);
+      background: transparent; box-shadow: none; cursor: pointer;
+      &:hover { color: #fff; }
+      &[aria-pressed='true'] { color: #10131c; background: #f2c46a; }
+      &:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+    }
+    svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  }
   .cloudy {
-    position: absolute; top: 8px; left: 8px; margin: 0; padding: 3px 8px; border-radius: 6px;
+    position: absolute; top: 54px; left: 8px; margin: 0; padding: 3px 8px; border-radius: 6px;
     font-size: 12px; color: #fff; background: rgba(0, 0, 0, .45); pointer-events: none;
   }
   .night {

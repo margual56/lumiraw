@@ -1,7 +1,7 @@
 /** Do the calculators agree with the published tables and almanacs? */
 import {
   EXPOSURES, SHUTTERS, cameraName, depthOfField, duration, lightOf, lightOfDay, ndShutter, nearestStep, starRules,
-  skyFrom, starTrail, sunCoords, sunPosition, sunTimes,
+  skyFrom, starTrail, sunPosition, sunTimes,
 } from '../web/src/lib/calc.js';
 import { faintest, moonCoords, moonPhase, planets, skyBrightness } from '../web/src/lib/night.js';
 import { LAYERS, STEP, landAt, skyline } from '../web/src/lib/horizon.js';
@@ -126,7 +126,7 @@ check('durations read as a photographer writes them',
 // from the earth's centre): the moon 38 % lit and waning, and the planets.
 const night = new Date('2026-11-02T22:00:00Z');
 const moon = moonCoords(night);
-const phase = moonPhase(night, sunCoords(night));
+const phase = moonPhase(night);
 check(`the moon (${moon.ra.toFixed(2)}°, ${moon.dec.toFixed(2)}°, ${Math.round(phase.lit * 100)} % lit)`,
   near(moon.ra, 146.11, 1) && near(moon.dec, 13.86, 1) && near(phase.lit, 0.384, 0.03) && !phase.waxing);
 const HORIZONS = {

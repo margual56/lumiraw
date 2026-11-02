@@ -4,15 +4,25 @@
 
 import { RAD } from './geo.js';
 
-/** A star's colour by its B−V index: blue-white to orange. */
+/** A star's colour by its B−V index, blue-white to orange: as `r,g,b`, kept
+ *  by index (sky-data rounds them to tenths, so there are a few dozen). */
 const COLOURS = [[-0.3, [170, 191, 255]], [0, [205, 218, 255]], [0.6, [255, 246, 236]], [1, [255, 222, 182]], [1.6, [255, 188, 128]]];
+const colours = new Map();
 function colourOf(bv) {
-  const i = COLOURS.findIndex(([b]) => b > bv);
-  if (i <= 0) return COLOURS[i === 0 ? 0 : COLOURS.length - 1][1];
-  const [b0, c0] = COLOURS[i - 1];
-  const [b1, c1] = COLOURS[i];
-  const k = (bv - b0) / (b1 - b0);
-  return c0.map((x, j) => Math.round(x + (c1[j] - x) * k));
+  let colour = colours.get(bv);
+  if (!colour) {
+    const i = COLOURS.findIndex(([b]) => b > bv);
+    if (i <= 0) colour = COLOURS[i === 0 ? 0 : COLOURS.length - 1][1];
+    else {
+      const [b0, c0] = COLOURS[i - 1];
+      const [b1, c1] = COLOURS[i];
+      const k = (bv - b0) / (b1 - b0);
+      colour = c0.map((x, j) => Math.round(x + (c1[j] - x) * k));
+    }
+    colour = colour.join(',');
+    colours.set(bv, colour);
+  }
+  return colour;
 }
 
 /** How big a star is drawn by its magnitude, in pixels across from the centre. */

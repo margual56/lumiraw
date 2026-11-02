@@ -6,6 +6,7 @@
    *  goes behind a hill first. Dragged sideways to look round. By night,
    *  the stars, the planets, the moon and the Milky Way, as many as the sky
    *  there lets through; and the clouds forecast for the next day. */
+  import { untrack } from 'svelte';
   import { i18n, t, n, clock } from '$lib/i18n.svelte.js';
   import { lightOf, skyFrom, sunCoords, sunPosition } from '$lib/calc.js';
   import { compassPoint, wrap360 } from '$lib/geo.js';
@@ -20,8 +21,10 @@
   import CloudStrip from './CloudStrip.svelte';
 
   /** `facing` and `shown`: which way the view looks, and how wide it is, in
-   *  degrees; bound, so the map can show them. */
-  let { lat, lon, day, light, facing = $bindable(270), shown = $bindable(100) } = $props();
+   *  degrees; bound, so the map can show them. `minutes`: the time picked,
+   *  from midnight on `day`; `held` when it came with a link, so the next
+   *  opening leaves it. `link`: the address's hash for all of this, to share. */
+  let { lat, lon, day, light, link, held = $bindable(false), minutes = $bindable(18 * 60), facing = $bindable(270), shown = $bindable(100) } = $props();
   /** How wide a view was asked for: the usual, or all round. */
   let fov = $state(100);
 
@@ -34,8 +37,14 @@
   let land = $state.raw(null);
   let width = $state(0);
   let height = $state(0);
-  let minutes = $state(18 * 60);
   let canvas = $state(null);
+  /** Counted once a new canvas reaches its first frame, to draw it again there. */
+  let framed = $state(0);
+  $effect(() => {
+    if (!canvas) return;
+    const frame = requestAnimationFrame(() => framed++);
+    return () => cancelAnimationFrame(frame);
+  });
   /** The panorama, or the whole sky overhead. */
   let dome = $state(false);
   /** Taller, as the maps can be. */
@@ -103,7 +112,8 @@
   // Each new day or place opens facing the sunset, on the evening's golden hour.
   $effect(() => {
     const start = light?.eveningGolden?.from ?? light?.sunset ?? light?.noon;
-    if (start) minutes = minuteOf(start);
+    if (start && !untrack(() => held)) minutes = minuteOf(start);
+    held = false;
     const set = light?.sunset ?? light?.noon;
     if (set) facing = path[minuteOf(set)].bearing;
   });
@@ -261,6 +271,7 @@
   const yOf = (altitude) => level - altitude * scale;
 
   $effect(() => {
+    void framed;
     if (!canvas || !width || !height || dome) return;
     const ratio = devicePixelRatio || 1;
     // Resized only when it changes: setting the size clears and reallocates it.
@@ -471,6 +482,28 @@
     minutes = Math.min(END - 1, fullDark.from);
     facing = core?.bearing ?? (lat >= 0 ? 180 : 0);
   }
+  /** Through the device's own sharing where it has one, and to the clipboard where not. */
+  let shared = $state('');
+  let sharedWait = null;
+  async function share() {
+    const url = location.origin + location.pathname + link;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: document.title, url });
+        return;
+      } catch (error) {
+        if (error.name === 'AbortError') return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      shared = 'copied';
+    } catch {
+      shared = 'failed';
+    }
+    clearTimeout(sharedWait);
+    sharedWait = setTimeout(() => (shared = ''), 4000);
+  }
   const street = $derived(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lon}&heading=${Math.round(facing)}`);
 </script>
 
@@ -514,8 +547,10 @@
     <button type="button" class="ghost" disabled={!light?.sunset} onclick={() => goTo(light.sunset)}>{t('calc.sun.view.sunset')}</button>
     <button type="button" class="ghost" disabled={!fullDark} onclick={tonight}>{t('calc.sun.night.tonight')}</button>
     <button type="button" class="ghost" aria-pressed={fov === 360} onclick={() => (fov = fov === 360 ? 100 : 360)}>{t('calc.sun.view.around')}</button>
+    <button type="button" class="ghost" onclick={share}>{t(shared === 'copied' ? 'calc.sun.view.copied' : 'calc.sun.view.share')}</button>
   </div>
 </div>
+{#if shared === 'failed'}<p class="sunline" role="status">{t('calc.sun.view.shareFailed')}</p>{/if}
 <p class="sunline">
   {t(sun.altitude >= 0 ? 'calc.sun.view.up' : 'calc.sun.view.down', {
     altitude: n(Math.abs(sun.altitude), Math.abs(sun.altitude) < 10 ? 1 : 0), bearing: n(sun.bearing, 0), side: compassPoint(sun.bearing, POINTS) })}

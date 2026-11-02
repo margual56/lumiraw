@@ -4,7 +4,7 @@
    *  distance of it, for a night of stars (lib/darksky.js). The spot is the
    *  same as the golden hour's. */
   import { untrack } from 'svelte';
-  import { t, n } from '$lib/i18n.svelte.js';
+  import { i18n, t, n } from '$lib/i18n.svelte.js';
   import { ATLAS_PAGE, BORTLE_PAGE, OVERLAY, ZONES, darkSpots, skyAt } from '$lib/darksky.js';
   import { compassPoint, isPlace, round3 } from '$lib/geo.js';
   import { heightsAround } from '$lib/horizon.js';
@@ -31,23 +31,26 @@
   let marker = null;
   let circle = null;
   let pins = [];
+  let relabel = null;
   /** A spot put by clicking this map is in view already; any other is flown to. */
   let clicked = false;
 
   $effect(() => {
     if (!element) return;
     let gone = false;
+    // Opened once for each element: where it opens, read but not followed.
+    const start = untrack(() => (placed ? { centre: [lat, lon], zoom: 8 } : { centre: [40, -3.7], zoom: 5 }));
     openMap(element, {
-      centre: placed ? [lat, lon] : [40, -3.7], zoom: placed ? 8 : 5,
+      ...start,
       onpick: (la, lo) => {
         clicked = true;
         lat = la;
         lon = lo;
       },
-      bigger: { more: t('calc.map.bigger'), less: t('calc.map.smaller') },
+      bigger: () => ({ more: t('calc.map.bigger'), less: t('calc.map.smaller') }),
     }).then((opened) => {
       if (gone) return opened.map.remove();
-      ({ leaflet, map } = opened);
+      ({ leaflet, map, relabel } = opened);
       leaflet.tileLayer(OVERLAY, {
         minZoom: 2, maxNativeZoom: 8, maxZoom: 18, tileSize: 1024, zoomOffset: -2, opacity: 0.5,
         attribution: `<a href="${ATLAS_PAGE}">Light Pollution Atlas</a> &copy; David Lorenz`,
@@ -58,9 +61,13 @@
     return () => {
       gone = true;
       map?.remove();
-      map = marker = circle = null;
+      map = marker = circle = relabel = null;
       pins = [];
     };
+  });
+  $effect(() => {
+    void i18n.locale;
+    relabel?.();
   });
 
   /** The spot and the circle searched, on the map. */

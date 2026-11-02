@@ -6,7 +6,9 @@
   /** Remember the choice, and go to the same page in that language. */
   function choose(id) {
     setLocale(id);
-    goto(localized(unlocalized(page.url.pathname), id) + page.url.search + page.url.hash,
+    // From the address itself: the calculators keep their tab and spot in its
+    // hash without telling the router.
+    goto(localized(unlocalized(page.url.pathname), id) + location.search + location.hash,
          { noScroll: true, keepFocus: true });
   }
 </script>

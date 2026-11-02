@@ -9,6 +9,7 @@
   import SiteHeader from '$lib/components/SiteHeader.svelte';
   import Meta from '$lib/components/Meta.svelte';
   import SunView from '$lib/components/SunView.svelte';
+  import SavedSpots from '$lib/components/SavedSpots.svelte';
   import StarPreview from '$lib/components/StarPreview.svelte';
   import DarkSky from '$lib/components/DarkSky.svelte';
   import { i18n, t, n, clock } from '$lib/i18n.svelte.js';
@@ -18,7 +19,7 @@
   import { skyOfNight } from '$lib/night.js';
   import { skyOrUnlit } from '$lib/darksky.js';
   import {
-    EXPOSURES, SENSORS, FILTERS, SHUTTERS, cameraName, confusion, depthOfField, duration, lightOfDay,
+    EXPOSURES, SENSORS, FILTERS, SHUTTERS, cameraName, confusion, depthOfField, duration, fieldOfView, lightOfDay,
     ndShutter, nearestStep, starRules, starTrail,
   } from '$lib/calc.js';
   import camerasUrl from '$lib/wasm/lenses/cameras.json?url';
@@ -47,7 +48,8 @@
   /** Every input, in one object, so remembering them is one line. */
   const v = $state({
     crop: 1, camera: '', focal: 35, aperture: 8, distance: 3, base: 1 / 60, stops: 10,
-    starFocal: 20, starAperture: 2.8, megapixels: 24, lat: null, lon: null, ...saved,
+    starFocal: 20, starAperture: 2.8, megapixels: 24, lat: null, lon: null,
+    frame: false, portrait: false, tilt: 20, spots: [], ...saved,
     ...(link.lat === undefined ? {} : { lat: link.lat, lon: link.lon }),
   });
   let day = $state(link.day ?? localDay(new Date()));
@@ -203,6 +205,15 @@
     ? { minutes: 18 * 60, facing: 270, around: false, dome: false, opened: null }
     : viewOf(link));
   let shown = $state(100);
+  /** What the lens takes in, if it is marked on the view. */
+  const field = $derived(valid(v.starFocal, v.crop) ? fieldOfView({ focal: v.starFocal, crop: v.crop }) : null);
+  const frame = $derived(v.frame && field ? {
+    focal: v.starFocal, tilt: v.tilt,
+    width: v.portrait ? field.height : field.width,
+    height: v.portrait ? field.width : field.height,
+  } : null);
+  /** How wide the wedge on the map is: the lens, if marked, or the view. */
+  const across = $derived(frame?.width ?? shown);
   let wedge = null;
   let relabel = null;
 
@@ -260,11 +271,11 @@
     }
     const R = 70;
     const point = (bearing) => `${R + R * Math.sin(bearing * RAD)},${R - R * Math.cos(bearing * RAD)}`;
-    const from = look.facing - shown / 2;
-    const to = look.facing + shown / 2;
-    const shape = shown >= 360
+    const from = look.facing - across / 2;
+    const to = look.facing + across / 2;
+    const shape = across >= 360
       ? `<circle cx="${R}" cy="${R}" r="${R}"/>`
-      : `<path d="M${R},${R} L${point(from)} A${R},${R} 0 ${shown > 180 ? 1 : 0} 1 ${point(to)} Z"/>`;
+      : `<path d="M${R},${R} L${point(from)} A${R},${R} 0 ${across > 180 ? 1 : 0} 1 ${point(to)} Z"/>`;
     const icon = leaflet.divIcon({
       className: 'wedge', iconSize: [2 * R, 2 * R],
       html: `<svg viewBox="0 0 ${2 * R} ${2 * R}" fill="rgba(232,163,61,.25)" stroke="#e8a33d" stroke-width="1.5">${shape}</svg>`,
@@ -280,7 +291,7 @@
   });
   $effect(() => {
     void look.facing;
-    void shown;
+    void across;
     void light;
     aim();
   });
@@ -469,10 +480,23 @@
             </button>
           </div>
           {#if located}<p class="note warn">{located}</p>{/if}
+          <SavedSpots bind:spots={v.spots} lat={v.lat} lon={v.lon} {placed}
+                      onpick={(spot) => { recentre = true; v.lat = spot.lat; v.lon = spot.lon; }} />
           <p class="note map-note">{t('calc.sun.mapNote')}</p>
           <div class="map" bind:this={mapElement}></div>
           {#if light}
-            <SunView lat={v.lat} lon={v.lon} bind:day {light} link={here} bind:opened={look.opened} bind:minutes={look.minutes}
+            <div class="lens">
+              <label class="switch"><input type="checkbox" bind:checked={v.frame} /> {t('calc.sun.frame')}</label>
+              {#if v.frame}
+                <label><span>{t('calc.focal')}</span>
+                  <span class="unit"><input type="number" min="1" max="2000" step="1" bind:value={v.starFocal} /><em>mm</em></span></label>
+                <label class="switch"><input type="checkbox" bind:checked={v.portrait} /> {t('calc.sun.frame.portrait')}</label>
+                <label class="tilt"><span>{t('calc.sun.frame.tilt')} <strong>{v.tilt}°</strong></span>
+                  <input type="range" min="-10" max="80" step="1" bind:value={v.tilt} /></label>
+                {#if frame}<p class="note">{t('calc.sun.frame.size', { width: n(frame.width, 0), height: n(frame.height, 0), crop: n(v.crop, 2) })}</p>{/if}
+              {/if}
+            </div>
+            <SunView lat={v.lat} lon={v.lon} bind:day {light} link={here} {frame} bind:opened={look.opened} bind:minutes={look.minutes}
                      bind:facing={look.facing} bind:around={look.around} bind:dome={look.dome} bind:shown />
             <div class="day">
               <div class="half">
@@ -648,6 +672,14 @@
     :global(.wedge svg) { display: block; width: 100%; height: 100%; }
   }
   .map-note { margin: 10px 0 8px; }
+  .lens {
+    display: flex; flex-wrap: wrap; align-items: end; gap: 10px 16px; margin-top: 12px; font-size: 13px;
+    .switch { display: flex; align-items: center; gap: 6px; min-height: 36px; cursor: pointer; }
+    .switch input { width: auto; margin: 0; accent-color: var(--color-accent); }
+    .unit { width: 110px; }
+    .tilt { flex: 1 1 160px; }
+    .note { flex-basis: 100%; margin: 0; }
+  }
 
   .where {
     display: grid; grid-template-columns: 1.2fr 1fr 1fr auto; gap: 12px; align-items: end;

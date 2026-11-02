@@ -1,9 +1,9 @@
 /** Do the calculators agree with the published tables and almanacs? */
 import {
-  EXPOSURES, SHUTTERS, cameraName, depthOfField, duration, lightOf, lightOfDay, ndShutter, nearestStep, starRules,
+  EXPOSURES, SHUTTERS, cameraName, depthOfField, duration, fieldOfView, frameOutline, lightOf, lightOfDay, ndShutter, nearestStep, starRules,
   skyFrom, starTrail, sunPosition, sunTimes,
 } from '../web/src/lib/calc.js';
-import { bestNights, faintest, moonCoords, moonPhase, planets, skyBrightness, skyOfNight } from '../web/src/lib/night.js';
+import { bestNights, coreBest, darkSpan, faintest, moonCoords, moonPhase, nightOf, planets, skyBrightness, skyOfNight } from '../web/src/lib/night.js';
 import { LAYERS, STEP, landAt, skyline } from '../web/src/lib/horizon.js';
 import { decode, pickSpots, zoneOf } from '../web/src/lib/darksky.js';
 import { readLink, writeLink } from '../web/src/lib/spotlink.js';
@@ -173,6 +173,23 @@ const town = skyOfNight({ lat: 40.4, lon: -3.7, day: '2026-12-08', minutes: 720,
 const wild = skyOfNight({ lat: 40.4, lon: -3.7, day: '2026-12-08', minutes: 720, ratio: 0 });
 check(`from noon, a sky taken at its darkest; a town shows fewer stars (${town.limit.toFixed(1)}, ${wild.limit.toFixed(1)})`,
   town.minutes > 1200 && wild.limit > 6 && town.limit < wild.limit - 1);
+
+const sameNight = bestNights({ lat: 40.4, lon: -3.7, first: '2026-08-10', count: 1 })[0];
+const samples = nightOf({ lat: 40.4, lon: -3.7, day: '2026-08-10' });
+check('the calendar says what the night\'s own facts say',
+  sameNight.from === darkSpan(samples).from && sameNight.core.altitude === coreBest(samples).altitude);
+
+const twenty = fieldOfView({ focal: 20, crop: 1 });
+check(`a 20 mm lens on full frame takes in 84° by 62° (${twenty.width.toFixed(1)}°, ${twenty.height.toFixed(1)}°)`,
+  near(twenty.width, 84, 0.1) && near(twenty.height, 61.9, 0.1));
+const level = frameOutline({ facing: 180, tilt: 0, ...twenty });
+const middleTop = level[8];
+check('a level frame looks where it is told, centred, half its height up',
+  near(middleTop.bearing, 180, 0.01) && near(middleTop.altitude, twenty.height / 2, 0.01));
+const firstCorner = level[0];
+check('straight edges bow on the sky: a corner stands lower than the top\'s middle',
+  firstCorner.altitude < middleTop.altitude && near(firstCorner.bearing, 180 - twenty.width / 2, 0.01));
+check('the outline closes', level[0].bearing === level.at(-1).bearing && level[0].altitude === level.at(-1).altitude);
 
 if (failures) {
   console.error(`\n${failures} check(s) failed`);

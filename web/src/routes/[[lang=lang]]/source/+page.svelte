@@ -148,10 +148,11 @@
   <ul>
     <li>En el <code>localStorage</code> del navegador: los ajustes de cada archivo, identificado
       por nombre, tamaño y fecha de modificación, hasta 300 archivos
-      ({@render f('web/src/lib/memory.js')}); el idioma; y si quieres enderezar
-      automáticamente.</li>
+      ({@render f('web/src/lib/memory.js')}); el idioma; si quieres enderezar automáticamente;
+      y lo que escribes en las calculadoras, con tus sitios guardados.</li>
     <li>En la caché del service worker ({@render f('web/src/service-worker.js')}): los archivos
-      de la propia aplicación, para que funcione sin conexión.</li>
+      de la propia aplicación, para que funcione sin conexión, y hasta 500 archivos de previsión,
+      relieve y atlas de las calculadoras, para no volver a pedirlos.</li>
     <li>Ni un píxel de tus fotos, en ningún sitio.</li>
   </ul>
 
@@ -334,9 +335,11 @@
   <ul>
     <li>In your browser's <code>localStorage</code>: the settings for each file, identified by
       name, size and modification date, up to 300 files ({@render f('web/src/lib/memory.js')});
-      the language; and whether to straighten automatically.</li>
+      the language; whether to straighten automatically; and what you type in the calculators,
+      with your saved spots.</li>
     <li>In the service worker's cache ({@render f('web/src/service-worker.js')}): the app's own
-      files, so it works offline.</li>
+      files, so it works offline, and up to 500 forecast, terrain and atlas files from the
+      calculators, so they aren't asked for again.</li>
     <li>Not a single pixel of your photos, anywhere.</li>
   </ul>
 

@@ -11,8 +11,9 @@
 
   /** `sky`: night.js's nightSky, or null by day; `night`: drawSky's limit,
    *  dark, milky and planetName; `tone` the sky's colours `{ top, horizon }`
-   *  and `ground` the land's; `path` the sun's for the day, `sun` where it is. */
-  let { sky, night, tone, ground, skyline, path, sun, facing = $bindable(), fov } = $props();
+   *  and `ground` the land's; `path` the sun's for the day, `sun` where it is;
+   *  `outline` what the lens takes in, or null. */
+  let { sky, night, tone, ground, skyline, path, sun, facing = $bindable(), fov, outline = null } = $props();
 
   let width = $state(0);
   let height = $state(0);
@@ -114,6 +115,20 @@
       }
       g.stroke();
       g.setLineDash([]);
+    }
+
+    if (outline) {
+      g.strokeStyle = '#f2c46a';
+      g.lineWidth = 2;
+      g.beginPath();
+      let drawing = false;
+      for (const p of outline) {
+        const at = place(p.bearing, p.altitude);
+        if (at && drawing) g.lineTo(...at);
+        else if (at) g.moveTo(...at);
+        drawing = !!at;
+      }
+      g.stroke();
     }
 
     g.strokeStyle = 'rgba(255,255,255,.35)';

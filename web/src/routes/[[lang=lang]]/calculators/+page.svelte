@@ -5,11 +5,13 @@
   import SiteHeader from '$lib/components/SiteHeader.svelte';
   import Meta from '$lib/components/Meta.svelte';
   import SunView from '$lib/components/SunView.svelte';
+  import StarPreview from '$lib/components/StarPreview.svelte';
   import { t, n, clock } from '$lib/i18n.svelte.js';
   import { RAD, isPlace, round3 } from '$lib/geo.js';
   import { openMap, spotMarker } from '$lib/map.js';
   import {
-    SENSORS, FILTERS, SHUTTERS, confusion, depthOfField, duration, lightOfDay, ndShutter, starRules,
+    EXPOSURES, SENSORS, FILTERS, SHUTTERS, cameraName, confusion, depthOfField, duration, lightOfDay,
+    ndShutter, nearestStep, starRules, starTrail,
   } from '$lib/calc.js';
   import camerasUrl from '$lib/wasm/lenses/cameras.json?url';
 
@@ -61,7 +63,7 @@
       // Some models are listed once per mount; one entry each is enough here.
       const seen = new Map();
       for (const c of data.cameras) {
-        const label = `${c.maker} ${c.model}`;
+        const label = cameraName(c.maker, c.model);
         if (c.crop > 0 && !seen.has(label)) seen.set(label, { label, crop: c.crop });
       }
       cameras = [...seen.values()];
@@ -83,6 +85,19 @@
   const stars = $derived(valid(v.starFocal, v.starAperture, v.megapixels, v.crop)
     ? starRules({ focal: v.starFocal, crop: v.crop, aperture: v.starAperture,
                   megapixels: v.megapixels }) : null);
+  // The stars' preview: the exposure on the slider's steps, opening on what
+  // NPF allows for each lens and sensor; the rules marked on the same steps,
+  // so each rule's button reads as that rule.
+  const marks = $derived(stars ? { npf: nearestStep(EXPOSURES, stars.npf), rule500: nearestStep(EXPOSURES, stars.rule500) } : null);
+  let starTime = $state(0);
+  let declination = $state(0);
+  $effect(() => {
+    if (marks) starTime = marks.npf;
+  });
+  const trail = $derived(stars ? starTrail({ focal: v.starFocal, seconds: EXPOSURES[starTime], pitch: stars.pitch, declination }) : 0);
+  const verdict = $derived(!marks ? null : starTime <= marks.npf ? 'sharp' : starTime <= marks.rule500 ? 'soft' : 'trails');
+  /** Where a step falls along the slider. */
+  const onSlider = (step) => `${(step / (EXPOSURES.length - 1)) * 100}%`;
   const placed = $derived(isPlace(v.lat, v.lon));
   const light = $derived(placed && day ? lightOfDay(new Date(`${day}T12:00`), v.lat, v.lon) : null);
 
@@ -317,6 +332,34 @@
               {/if}
             </div>
           </div>
+          {#if stars}
+            <StarPreview aperture={v.starAperture} pitch={stars.pitch} {trail} />
+            <div class="exposure">
+              <label>
+                <span>{t('calc.stars.preview.exposure')} <strong>{duration(EXPOSURES[starTime])}</strong></span>
+                <span class="slider">
+                  <input type="range" min="0" max={EXPOSURES.length - 1} step="1" bind:value={starTime} />
+                  <i class="npf" style:left={onSlider(marks.npf)}></i>
+                  <i class="r500" style:left={onSlider(marks.rule500)}></i>
+                </span>
+              </label>
+              <div class="chips">
+                <button type="button" class="chip npf" class:on={starTime === marks.npf}
+                        onclick={() => (starTime = marks.npf)}>{t('calc.stars.npf')}</button>
+                <button type="button" class="chip r500" class:on={starTime === marks.rule500}
+                        onclick={() => (starTime = marks.rule500)}>{t('calc.stars.rule500')}</button>
+              </div>
+              <label>
+                <span>{t('calc.stars.preview.where')}</span>
+                <select bind:value={declination}>
+                  <option value={0}>{t('calc.stars.preview.equator')}</option>
+                  <option value={45}>{t('calc.stars.preview.mid')}</option>
+                  <option value={80}>{t('calc.stars.preview.pole')}</option>
+                </select>
+              </label>
+            </div>
+            <p class="verdict {verdict}">{t(`calc.stars.preview.${verdict}`, { pixels: n(trail, 1) })}</p>
+          {/if}
           <p class="note">{t('calc.stars.note')}</p>
 
         {:else}
@@ -411,7 +454,7 @@
     display: grid; gap: 5px; min-width: 0;
     > span:first-child { font-size: 12.5px; color: var(--color-muted); }
   }
-  input, select {
+  input:not([type='range']), select {
     width: 100%; min-width: 0; padding: 8px 11px; border-radius: 8px;
     border: 1px solid var(--color-line); background-color: var(--color-panel-2);
     color: var(--color-ink); font: inherit; font-size: 14.5px;
@@ -475,6 +518,29 @@
   .note {
     margin: 18px 0 0; font-size: 12.5px; line-height: 1.55; color: var(--color-muted);
     &.warn { color: var(--color-accent); }
+  }
+
+  /* The stars' preview: the exposure and where the camera points, under the patch of sky. */
+  .exposure {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto 210px; gap: 12px 16px; align-items: end;
+    margin-top: 14px;
+    @include phone { grid-template-columns: 1fr; }
+    strong { color: var(--color-ink); font-variant-numeric: tabular-nums; }
+    .chips { padding-bottom: 2px; }
+  }
+  /* NPF and the 500 rule marked where they fall on the slider. */
+  .slider {
+    position: relative; display: block; padding-bottom: 10px;
+    i {
+      position: absolute; bottom: 0; width: 2px; height: 8px; margin-left: -1px; border-radius: 1px;
+      &.npf { background: var(--color-accent); }
+      &.r500 { background: var(--color-muted); }
+    }
+  }
+  .verdict {
+    margin: 12px 0 0; font-size: 13.5px; line-height: 1.5;
+    &.soft { color: #e0a43a; }
+    &.trails { color: #e0705a; }
   }
 
   .map {

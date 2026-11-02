@@ -15,6 +15,37 @@ export const SENSORS = [
   { id: 'inch', crop: 2.7 },
 ];
 
+const MARK = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];
+
+/**
+ * A camera as people know it, from lensfun's maker and model: the maker
+ * short ("Nikon", not "Nikon Corporation") and said once, and the name on
+ * the body where lensfun keeps the model code (Sony's ILCE-7M3 is the
+ * A7 III), with the code after it, so either finds it.
+ */
+export function cameraName(maker, model) {
+  const brand = /^OM Digital/i.test(maker) ? 'OM System' : maker.split(/[ ,]/)[0];
+  const name = model.replace(new RegExp(`^${brand}\\s+`, 'i'), '');
+  let known = null;
+  let m;
+  if (brand === 'Sony' && (m = name.match(/^(?:ILCE-|ILCA-|DSLR-A|SLT-A)(\d+)([RSC]?)(?:M(\d))?(A?)V?$/))) {
+    known = `A${m[1]}${m[2]}${m[3] ? ` ${MARK[m[3]]}` : ''}${m[4]}`;
+  } else if (brand === 'Sony' && (m = name.match(/^DSC-(RX\d+R?)(?:M(\d))?(A?)$/))) {
+    known = `${m[1]}${m[2] ? ` ${MARK[m[2]]}` : ''}${m[3]}`;
+  } else if (brand === 'Sony' && (m = name.match(/^ILME-(.+)$/))) {
+    known = m[1];
+  } else if (brand === 'Canon' && (m = name.match(/^(.*\d)m(\d)$/))) {
+    known = `${m[1]} Mark ${MARK[m[2]]}`;
+  } else if (brand === 'Nikon' && (m = name.match(/^(.*)_(\d)$/))) {
+    known = `${m[1]}${MARK[m[2]]}`;
+  } else if (brand === 'Panasonic' && (m = name.match(/^(?:DC|DMC)-(.*?)(?:(?<=\d)M(\d))?$/))) {
+    known = `Lumix ${m[1]}${m[2] ? ` ${MARK[m[2]]}` : ''}`;
+  } else if (brand === 'Olympus' && (m = name.match(/^(E-M\d+)\s*(?:Mark\s*([IVX]+)(S?))?$/))) {
+    known = `OM-D ${m[1]}${m[2] ? ` Mark ${m[2]}${m[3]}` : ''}`;
+  }
+  return known && known !== name ? `${brand} ${known} (${name})` : `${brand} ${name}`;
+}
+
 /** The circle of confusion: the largest blur that still looks sharp in a
  *  print seen whole. 0.03 mm on full frame, smaller on smaller sensors. */
 export const confusion = (crop) => 0.03 / crop;
@@ -53,6 +84,13 @@ export const SHUTTERS = [
   10, 13, 15, 20, 25, 30,
 ];
 
+/** The exposures the stars' preview offers: a dial's, from 1/30 s, and bulb past 30 s. */
+export const EXPOSURES = [...SHUTTERS.filter((s) => s >= 1 / 30), 40, 50, 60, 90, 120, 180, 240];
+
+/** Which of `steps` (times, in order) is nearest `seconds`, as the eye judges it: by ratio. */
+export const nearestStep = (steps, seconds) => steps.reduce((best, s, i) =>
+  (Math.abs(Math.log(s / seconds)) < Math.abs(Math.log(steps[best] / seconds)) ? i : best), 0);
+
 /**
  * The longest exposure before stars trail, two ways. The 500 rule is the
  * old one, from film: 500 over the full-frame focal length. NPF (Frédéric
@@ -67,6 +105,18 @@ export function starRules({ focal, crop, aperture, megapixels }) {
   const pitch = (width / pixels) * 1000;
   return { rule500: 500 / (focal * crop), npf: (35 * aperture + 30 * pitch) / focal, pitch };
 }
+
+/** How far the sky turns a second, in radians: once a sidereal day. */
+const SIDEREAL = (2 * Math.PI) / 86164.1;
+
+/**
+ * How long a star's trail is on the sensor, in pixels, over `seconds` with
+ * a lens of `focal` mm and pixels `pitch` µm across, for a star `declination`
+ * degrees from the celestial equator: there the sky moves fastest, and at the
+ * poles not at all.
+ */
+export const starTrail = ({ focal, seconds, pitch, declination = 0 }) =>
+  (focal * 1000 * SIDEREAL * seconds * Math.cos((declination * Math.PI) / 180)) / pitch;
 
 // --- the sun ---------------------------------------------------------------------
 // After Vladimir Agafonkin's SunCalc (BSD), itself after the formulas at

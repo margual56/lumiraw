@@ -498,26 +498,26 @@
               {/if}
             </div>
             <SunView lat={v.lat} lon={v.lon} bind:day {light} link={here} {frame} bind:opened={look.opened} bind:minutes={look.minutes}
-                     bind:facing={look.facing} bind:around={look.around} bind:dome={look.dome} bind:shown />
-            <div class="day">
-              <div class="half">
-                <h3>{t('calc.sun.morning')}</h3>
-                <dl>
-                  <div class="blue"><dt>{t('calc.sun.blue')}</dt><dd>{span(light.morningBlue)}</dd></div>
-                  <div class="golden"><dt>{t('calc.sun.golden')}</dt><dd>{span(light.morningGolden)}</dd></div>
-                  <div><dt>{t('calc.sun.sunrise')}</dt><dd>{clock(light.sunrise)}</dd></div>
-                </dl>
+                     bind:facing={look.facing} bind:around={look.around} bind:dome={look.dome} bind:shown>
+              <div class="day">
+                <div class="half">
+                  <h3>{t('calc.sun.morning')}</h3>
+                  <dl>
+                    <div class="blue"><dt>{t('calc.sun.blue')}</dt><dd>{span(light.morningBlue)}</dd></div>
+                    <div class="golden"><dt>{t('calc.sun.golden')}</dt><dd>{span(light.morningGolden)}</dd></div>
+                    <div><dt>{t('calc.sun.sunrise')}</dt><dd>{clock(light.sunrise)}</dd></div>
+                  </dl>
+                </div>
+                <div class="half">
+                  <h3>{t('calc.sun.evening')}</h3>
+                  <dl>
+                    <div><dt>{t('calc.sun.sunset')}</dt><dd>{clock(light.sunset)}</dd></div>
+                    <div class="golden"><dt>{t('calc.sun.golden')}</dt><dd>{span(light.eveningGolden)}</dd></div>
+                    <div class="blue"><dt>{t('calc.sun.blue')}</dt><dd>{span(light.eveningBlue)}</dd></div>
+                  </dl>
+                </div>
               </div>
-              <div class="half">
-                <h3>{t('calc.sun.evening')}</h3>
-                <dl>
-                  <div><dt>{t('calc.sun.sunset')}</dt><dd>{clock(light.sunset)}</dd></div>
-                  <div class="golden"><dt>{t('calc.sun.golden')}</dt><dd>{span(light.eveningGolden)}</dd></div>
-                  <div class="blue"><dt>{t('calc.sun.blue')}</dt><dd>{span(light.eveningBlue)}</dd></div>
-                </dl>
-              </div>
-            </div>
-            <p class="note">{t('calc.sun.note', { noon: clock(light.noon) })}</p>
+            </SunView>
           {:else}
             <p class="note">{t('calc.sun.ask')}</p>
           {/if}
@@ -694,6 +694,7 @@
 
   /* The day as two halves, morning and evening, each in the order it comes. */
   .day {
+    margin-bottom: 16px;
     display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 22px;
     @include phone { grid-template-columns: 1fr; }
     .half { padding: 14px 16px; border-radius: 12px; background: var(--color-panel-2); }

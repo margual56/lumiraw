@@ -4,12 +4,13 @@
    *  click goes to that night, fully dark, facing the Milky Way's core. */
   import { compassPoint } from '$lib/geo.js';
   import { i18n, n, t } from '$lib/i18n.svelte.js';
+  import { topNights } from '$lib/night.js';
 
   /** `day`: the one picked; `onpick(night)`: one chosen. */
   let { nights, day, onpick } = $props();
 
   const dateOf = (night) => new Date(`${night.day}T12:00`);
-  const best = $derived(nights.filter((night) => night.score > 0).toSorted((a, b) => b.score - a.score).slice(0, 3));
+  const best = $derived(topNights(nights));
   /** Blank cells before the first night, the week starting on Monday. */
   const blanks = $derived((dateOf(nights[0]).getDay() + 6) % 7);
   const POINTS = $derived(t('calc.sun.points').split(','));
@@ -28,8 +29,7 @@
   const long = (night) => longDate.format(dateOf(night));
 </script>
 
-<section class="nights" aria-labelledby="nights-title">
-  <h3 id="nights-title">{t('calc.sun.nights.title')}</h3>
+<section class="nights">
   {#if best.length}
     <div class="grid">
       {#each WEEK as letter, i (i)}<span class="week">{letter}</span>{/each}
@@ -54,8 +54,6 @@
 </section>
 
 <style lang="scss">
-  .nights { margin-top: 18px; }
-  h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
   .grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; max-width: 380px; }
   .week { font-size: 11px; text-align: center; color: var(--color-muted); }
   .grid button {

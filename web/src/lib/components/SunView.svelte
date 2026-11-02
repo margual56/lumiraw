@@ -11,7 +11,7 @@
   import { frameOutline, lightOf, skyFrom, sunPosition } from '$lib/calc.js';
   import { atMinute, compassPoint, localDay, spotKey, wrap360 } from '$lib/geo.js';
   import { STEP, horizonFrom, landAt } from '$lib/horizon.js';
-  import { bestNights, coreBest, darkSpan, faintest, moonFrom, moonOfNight, nightOf, nightSky, nightness, skyBrightness } from '$lib/night.js';
+  import { bestNights, coreBest, darkSpan, faintest, moonFrom, moonOfNight, nightOf, nightSky, nightness, skyBrightness, topNights } from '$lib/night.js';
   import { drawSky } from '$lib/drawsky.js';
   import { skyOrUnlit } from '$lib/darksky.js';
   import { clouds, hourOf } from '$lib/weather.js';
@@ -20,6 +20,7 @@
   import SkyDome from './SkyDome.svelte';
   import CloudStrip from './CloudStrip.svelte';
   import BestNights from './BestNights.svelte';
+  import Fold from './Fold.svelte';
 
   /** `facing` and `shown`: which way the view looks, and how wide it is, in
    *  degrees; bound, so the map can show them. `minutes`: the time picked,
@@ -27,10 +28,12 @@
    *  the whole sky overhead, not the panorama. `opened`: the spotKey this was
    *  last opened on, so coming back or following a link leaves all that as it
    *  is. `link`: the address's hash for all of this, to share. `frame`: the
-   *  lens's `{ focal, width, height, tilt }` to mark on the view, or null. */
+   *  lens's `{ focal, width, height, tilt }` to mark on the view, or null.
+   *  `children`: what always shows under the controls, over the sections. */
   let {
     lat, lon, day = $bindable(), light, link, frame = null, opened = $bindable(), minutes = $bindable(),
     facing = $bindable(), around = $bindable(), dome = $bindable(), shown = $bindable(),
+    children,
   } = $props();
   const fov = $derived(around ? 360 : 100);
 
@@ -211,6 +214,17 @@
 
   /** What the lens takes in, looking the way the view does. */
   const outline = $derived(frame ? frameOutline({ facing, ...frame }) : null);
+
+  /** What each closed section says in its heading. */
+  const peeks = $derived({
+    sky: [
+      fullDark ? t('calc.sun.fold.dark', { from: hm(fullDark.from), until: hm(fullDark.until) }) : t('calc.sun.night.never'),
+      t('calc.sun.fold.moon', { lit: Math.round(moonNight.lit * 100) }),
+    ].join(' · '),
+    clouds: noForecast ? t('calc.sun.fold.noClouds') : cloudNow ? t('calc.sun.fold.clouds', { total: cloudNow.total }) : '',
+    nights: topNights(nights, 1).map((night) => new Date(`${night.day}T12:00`)
+      .toLocaleDateString(i18n.locale, { weekday: 'short', day: 'numeric', month: 'short' }))[0] ?? '',
+  });
 
   /** Where the moon is at the time picked. */
   const moonNow = $derived(moonFrom(skyFrom(at(minutes), lat, lon), at(minutes)));
@@ -624,6 +638,8 @@
   </div>
 </div>
 {#if shared === 'failed'}<p class="sunline" role="status">{t('calc.sun.view.shareFailed')}</p>{/if}
+{@render children?.()}
+<Fold id="sky" title={t('calc.sun.fold.sky')} peek={peeks.sky}>
 <p class="sunline">
   {t(sun.altitude >= 0 ? 'calc.sun.view.up' : 'calc.sun.view.down', {
     altitude: n(Math.abs(sun.altitude), Math.abs(sun.altitude) < 10 ? 1 : 0), bearing: n(sun.bearing, 0), side: compassPoint(sun.bearing, POINTS) })}
@@ -664,12 +680,20 @@
     </div>
   {/if}
 </dl>
-<CloudStrip {lat} {lon} hours={cloudHours} failed={noForecast} picked={cloudNow} far={midnight - new Date(`${today}T00:00`) > 7 * 864e5} />
-<BestNights {nights} {day} onpick={pickNight} />
-<p class="note">
-  {status === 'failed' ? t('calc.sun.view.failed') : t('calc.sun.view.note', { ground: n(land?.ground ?? 0, 0) })}
-  <a href={street} target="_blank" rel="noopener">{t('calc.sun.view.street')}</a>
-</p>
+</Fold>
+<Fold id="clouds" title={t('calc.sun.clouds.title')} peek={peeks.clouds}>
+  <CloudStrip {lat} {lon} hours={cloudHours} failed={noForecast} picked={cloudNow} far={midnight - new Date(`${today}T00:00`) > 7 * 864e5} />
+</Fold>
+<Fold id="nights" title={t('calc.sun.nights.title')} peek={peeks.nights}>
+  <BestNights {nights} {day} onpick={pickNight} />
+</Fold>
+<Fold id="notes" title={t('calc.sun.fold.notes')}>
+  <p class="note">{t('calc.sun.note', { noon: clock(light.noon) })}</p>
+  <p class="note">
+    {status === 'failed' ? t('calc.sun.view.failed') : t('calc.sun.view.note', { ground: n(land?.ground ?? 0, 0) })}
+    <a href={street} target="_blank" rel="noopener">{t('calc.sun.view.street')}</a>
+  </p>
+</Fold>
 
 <style lang="scss">
   @use '../../styles/breakpoints' as *;

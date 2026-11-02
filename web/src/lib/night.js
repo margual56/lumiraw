@@ -321,6 +321,10 @@ export function bestNights({ lat, lon, first, count = 30, clear = (p) => p.altit
   return nights;
 }
 
+/** The best of `nights` that have any dark at all, best first. */
+export const topNights = (nights, count = 3) =>
+  nights.filter((night) => night.score > 0).toSorted((a, b) => b.score - a.score).slice(0, count);
+
 /**
  * How the sky looks from a spot on `day` at `minutes` from midnight, or, before
  * the stars are all out then, at the darkest moment of the night after it:

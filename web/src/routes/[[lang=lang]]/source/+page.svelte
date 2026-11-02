@@ -152,7 +152,8 @@
       y lo que escribes en las calculadoras, con tus sitios guardados.</li>
     <li>En la caché del service worker ({@render f('web/src/service-worker.js')}): los archivos
       de la propia aplicación, para que funcione sin conexión, y hasta 500 archivos de previsión,
-      relieve y atlas de las calculadoras, para no volver a pedirlos.</li>
+      relieve y atlas de las calculadoras, para no volver a pedirlos. La aplicación de escritorio
+      guarda esos archivos en su carpeta de caché ({@render f('desktop/src-tauri/src/cache.rs')}).</li>
     <li>Ni un píxel de tus fotos, en ningún sitio.</li>
   </ul>
 
@@ -339,7 +340,8 @@
       with your saved spots.</li>
     <li>In the service worker's cache ({@render f('web/src/service-worker.js')}): the app's own
       files, so it works offline, and up to 500 forecast, terrain and atlas files from the
-      calculators, so they aren't asked for again.</li>
+      calculators, so they aren't asked for again. The desktop app keeps those files in its
+      cache folder ({@render f('desktop/src-tauri/src/cache.rs')}).</li>
     <li>Not a single pixel of your photos, anywhere.</li>
   </ul>
 

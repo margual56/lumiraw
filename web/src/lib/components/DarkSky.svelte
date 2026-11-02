@@ -8,7 +8,7 @@
   import { ATLAS_PAGE, BORTLE_PAGE, OVERLAY, ZONES, darkSpots, skyAt } from '$lib/darksky.js';
   import { compassPoint, isPlace, round3 } from '$lib/geo.js';
   import { heightsAround } from '$lib/horizon.js';
-  import { openMap, spotMarker } from '$lib/map.js';
+  import { keptTiles, openMap, spotMarker } from '$lib/map.js';
 
   /** `onpick`: a spot's golden hour asked for. */
   let { lat = $bindable(), lon = $bindable(), locate, locating, onpick } = $props();
@@ -51,7 +51,7 @@
     }).then((opened) => {
       if (gone) return opened.map.remove();
       ({ leaflet, map, relabel } = opened);
-      leaflet.tileLayer(OVERLAY, {
+      keptTiles(leaflet, OVERLAY, {
         minZoom: 2, maxNativeZoom: 8, maxZoom: 18, tileSize: 1024, zoomOffset: -2, opacity: 0.5,
         attribution: `<a href="${ATLAS_PAGE}">Light Pollution Atlas</a> &copy; David Lorenz`,
       }).addTo(map);

@@ -1,6 +1,7 @@
 /// <reference types="@sveltejs/kit" />
 /** Offline, and installable: the whole application kept on this machine. */
 import { build, files, prerendered, version } from '$service-worker';
+import { ruleFor } from './lib/remote.js';
 
 const CACHE = `lumiraw-${version}`;
 const IMMUTABLE = new Set(build);
@@ -11,21 +12,11 @@ const ALL = [...build, ...files.filter(served), ...prerendered];
 const onDemand = (path) =>
   /\/(lens-[^/]*|lensfun-[^/]*)\.json$|\/((look|nima|face)-[^/]*|segmenter|denoiser)\.bin$/.test(path);
 
-// -- other hosts' data ---------------------------------------------------------
-// Kept here too, so a reload does not ask again and a host that is down does
-// not leave the page empty. OpenStreetMap's tiles are left to the browser: its
-// policy is that clients follow its cache headers, and they are generous.
+// -- other hosts' data (see lib/remote.js) --------------------------------------
 const REMOTE = 'lumiraw-remote-v1';
 const SAVED = 'x-lumiraw-saved';
-const HOUR = 3600e3;
 /** Enough for many spots; the oldest go first. */
 const REMOTE_ENTRIES = 500;
-/** How long a copy needs no asking, and how long it may stand in when the host fails. */
-const RULES = [
-  ['https://api.open-meteo.com/v1/forecast', { fresh: HOUR, stale: 24 * HOUR }],
-  ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/', { fresh: 720 * HOUR, stale: Infinity }],
-  ['https://djlorenz.github.io/astronomy/', { fresh: 720 * HOUR, stale: Infinity }],
-];
 
 async function remote(url, { fresh, stale }) {
   const cache = await caches.open(REMOTE);
@@ -86,8 +77,8 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) {
-    const rule = RULES.find(([prefix]) => request.url.startsWith(prefix));
-    if (rule) event.respondWith(remote(request.url, rule[1]));
+    const rule = ruleFor(request.url);
+    if (rule) event.respondWith(remote(request.url, rule));
     return;
   }
 

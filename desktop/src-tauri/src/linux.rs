@@ -8,7 +8,7 @@
 //! AppImage, and only when something has changed.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// The app id GTK gives the window; see `enableGTKAppId` in tauri.conf.json.
 const APP_ID: &str = "app.lumiraw.LumiRaw";
@@ -19,14 +19,6 @@ const ICONS: [(&str, &[u8]); 4] = [
     ("256x256", include_bytes!("../icons/128x128@2x.png")),
     ("512x512", include_bytes!("../icons/icon.png")),
 ];
-
-/// Where desktop entries and icons for this user go.
-fn data_home() -> Option<PathBuf> {
-    match std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
-        Some(dir) => Some(PathBuf::from(dir)),
-        None => std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")),
-    }
-}
 
 /// The desktop entry for an AppImage at `appimage`.
 fn entry(appimage: &Path) -> String {
@@ -59,7 +51,7 @@ fn install(data: &Path, appimage: &Path) -> std::io::Result<()> {
 /// Tell the desktop about this AppImage. A failure costs the icon and nothing
 /// else, so it is not worth stopping the app over.
 pub fn integrate() {
-    let (Some(appimage), Some(data)) = (std::env::var_os("APPIMAGE"), data_home()) else { return };
+    let (Some(appimage), Some(data)) = (std::env::var_os("APPIMAGE"), dirs::data_dir()) else { return };
     let _ = install(&data, Path::new(&appimage));
 }
 

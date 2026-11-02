@@ -17,6 +17,13 @@
   let width = $state(0);
   let height = $state(0);
   let canvas = $state(null);
+  /** Counted once a new canvas reaches its first frame, to draw it again there. */
+  let framed = $state(0);
+  $effect(() => {
+    if (!canvas) return;
+    const frame = requestAnimationFrame(() => framed++);
+    return () => cancelAnimationFrame(frame);
+  });
 
   const rgb = (c) => `rgb(${c.join(',')})`;
   const SHORT = $derived(t('calc.sun.points').split(','));
@@ -35,6 +42,7 @@
   };
 
   $effect(() => {
+    void framed;
     if (!canvas || !width || !height) return;
     const ratio = devicePixelRatio || 1;
     if (canvas.width !== Math.round(width * ratio)) canvas.width = Math.round(width * ratio);

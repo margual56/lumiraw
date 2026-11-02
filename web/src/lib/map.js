@@ -10,9 +10,9 @@ export const SHRINK = ARROWS('M20 10h-6V4M4 14h6v6M14 10l7-7M10 14l-7 7');
 /**
  * A map in `element` at `centre` and `zoom`, calling `onpick(lat, lon)` for
  * a click, with a button in its corner that makes it much taller and back,
- * named for screen readers and on hover by `bigger` (`{ more, less }`).
- * Gives `{ leaflet, map }`, for the caller to add its own layers and to
- * remove the map when done.
+ * named for screen readers and on hover by what `bigger` gives (`{ more, less }`).
+ * Gives `{ leaflet, map, relabel }`, for the caller to add its own layers, to
+ * name the button again when the language changes and to remove the map when done.
  */
 export async function openMap(element, { centre, zoom, onpick, bigger }) {
   const leaflet = (await import('leaflet')).default;
@@ -27,6 +27,7 @@ export async function openMap(element, { centre, zoom, onpick, bigger }) {
     const p = e.latlng.wrap();
     onpick(round3(p.lat), round3(p.lng));
   });
+  let relabel = () => {};
   const Grow = leaflet.Control.extend({
     onAdd() {
       const button = leaflet.DomUtil.create('button', 'map-grow leaflet-bar');
@@ -34,10 +35,11 @@ export async function openMap(element, { centre, zoom, onpick, bigger }) {
       const label = () => {
         const big = element.classList.contains('big');
         button.innerHTML = big ? SHRINK : GROW;
-        button.title = big ? bigger.less : bigger.more;
+        button.title = big ? bigger().less : bigger().more;
         button.setAttribute('aria-label', button.title);
       };
       label();
+      relabel = label;
       leaflet.DomEvent.disableClickPropagation(button);
       leaflet.DomEvent.on(button, 'click', () => {
         const middle = map.getCenter();
@@ -52,7 +54,7 @@ export async function openMap(element, { centre, zoom, onpick, bigger }) {
     },
   });
   if (bigger) new Grow({ position: 'topright' }).addTo(map);
-  return { leaflet, map };
+  return { leaflet, map, relabel };
 }
 
 /** The spot picked, as a dot. */

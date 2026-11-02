@@ -5,14 +5,16 @@
    *  dark skies, sharp stars). `tools` are the page's, in order; `page` its
    *  name in the strings (`calc` or `sky`) and `path` its address. What is
    *  typed is shared between them. */
+  import { untrack } from 'svelte';
   import SiteHeader from '$lib/components/SiteHeader.svelte';
   import Meta from '$lib/components/Meta.svelte';
   import SunView from '$lib/components/SunView.svelte';
   import StarPreview from '$lib/components/StarPreview.svelte';
   import DarkSky from '$lib/components/DarkSky.svelte';
-  import { t, n, clock } from '$lib/i18n.svelte.js';
+  import { i18n, t, n, clock } from '$lib/i18n.svelte.js';
   import { RAD, isPlace, round3 } from '$lib/geo.js';
   import { openMap, spotMarker } from '$lib/map.js';
+  import { readLink, writeLink } from '$lib/spotlink.js';
   import {
     EXPOSURES, SENSORS, FILTERS, SHUTTERS, cameraName, confusion, depthOfField, duration, lightOfDay,
     ndShutter, nearestStep, starRules, starTrail,
@@ -32,12 +34,25 @@
       return {};
     }
   })();
+  /** A spot, day and time the address asks for, over what was remembered. */
+  const link = (() => {
+    try {
+      return readLink(location.hash);
+    } catch {
+      return {};
+    }
+  })();
   /** Every input, in one object, so remembering them is one line. */
   const v = $state({
     crop: 1, camera: '', focal: 35, aperture: 8, distance: 3, base: 1 / 60, stops: 10,
     starFocal: 20, starAperture: 2.8, megapixels: 24, lat: null, lon: null, ...saved,
+    ...(link.lat === undefined ? {} : { lat: link.lat, lon: link.lon }),
   });
-  let day = $state(new Date().toISOString().slice(0, 10));
+  let day = $state(link.day ?? new Date().toISOString().slice(0, 10));
+  /** The minute on the golden hour's slider, from midnight on `day`. */
+  let minute = $state(link.minutes ?? 18 * 60);
+  /** The minute came with a link: the view keeps it when it next opens on a day or place. */
+  let held = $state(link.minutes !== undefined);
   let locating = $state(false);
   let located = $state('');
 
@@ -51,7 +66,7 @@
 
   // The calculator shown is in the address, so a link can open any of them.
   $effect(() => {
-    const hash = location.hash.slice(1);
+    const hash = readLink(location.hash).tool;
     if (tools.includes(hash)) asked = hash;
   });
   function show(next) {
@@ -106,6 +121,32 @@
   const placed = $derived(isPlace(v.lat, v.lon));
   const light = $derived(placed && day ? lightOfDay(new Date(`${day}T12:00`), v.lat, v.lon) : null);
 
+  // The golden hour's spot, day and time in the address, a moment after they
+  // stop changing: browsers limit how often it can be written.
+  const here = $derived(light ? writeLink('sun', { lat: v.lat, lon: v.lon, day, minutes: minute }) : '');
+  $effect(() => {
+    if (tool !== 'sun' || !here) return;
+    const hash = here;
+    const wait = setTimeout(() => history.replaceState(history.state, '', hash), 250);
+    return () => clearTimeout(wait);
+  });
+  /** A link pasted over this page's address changes only the hash. Taken as
+   *  it is, not by reloading: Firefox would put the old values back in the inputs. */
+  function followed() {
+    const next = readLink(location.hash);
+    if (next.lat === undefined) return;
+    if (tools.includes(next.tool)) asked = next.tool;
+    const moved = next.lat !== v.lat || next.lon !== v.lon || (next.day && next.day !== day);
+    if (next.minutes !== undefined) {
+      minute = next.minutes;
+      held = !!moved;
+    }
+    if (next.day) day = next.day;
+    recentre = true;
+    v.lat = next.lat;
+    v.lon = next.lon;
+  }
+
   /** Metres as a photographer reads them: centimetres up close, ∞ far off. */
   function metres(v) {
     if (v === Infinity) return '∞';
@@ -144,17 +185,25 @@
   /** Which way the view under the map looks, and how wide (SunView), drawn on the map as a wedge. */
   let look = $state({ facing: 270, fov: 100 });
   let wedge = null;
+  let relabel = null;
 
   $effect(() => {
     if (!mapElement) return;
     let gone = false;
+    // Opened once for each element: where it opens, read but not followed.
+    const start = untrack(() => (placed ? { centre: [v.lat, v.lon], zoom: 9 } : { centre: [30, 0], zoom: 2 }));
     openMap(mapElement, {
-      centre: placed ? [v.lat, v.lon] : [30, 0], zoom: placed ? 9 : 2,
-      onpick: (lat, lon) => { v.lat = lat; v.lon = lon; },
-      bigger: { more: t('calc.map.bigger'), less: t('calc.map.smaller') },
+      ...start,
+      onpick: (lat, lon) => {
+        // Picked from far out: closer, to see where it landed.
+        recentre = map.getZoom() < 6;
+        v.lat = lat;
+        v.lon = lon;
+      },
+      bigger: () => ({ more: t('calc.map.bigger'), less: t('calc.map.smaller') }),
     }).then((opened) => {
       if (gone) return opened.map.remove();
-      ({ leaflet, map } = opened);
+      ({ leaflet, map, relabel } = opened);
       // Under the spot's dot, which sits in the overlay pane.
       map.createPane('wedge').style.zIndex = 350;
       place();
@@ -162,8 +211,12 @@
     return () => {
       gone = true;
       map?.remove();
-      map = marker = wedge = null;
+      map = marker = wedge = relabel = null;
     };
+  });
+  $effect(() => {
+    void i18n.locale;
+    relabel?.();
   });
 
   function place() {
@@ -213,6 +266,8 @@
     aim();
   });
 </script>
+
+<svelte:window onhashchange={followed} />
 
 <Meta title={t(`seo.${page}.title`)} description={t(`seo.${page}.description`)} {path} />
 
@@ -378,10 +433,10 @@
             <label><span>{t('calc.sun.date')}</span><input type="date" bind:value={day} /></label>
             <label><span>{t('calc.sun.lat')}</span>
               <input type="number" min="-90" max="90" step="0.001" bind:value={v.lat} placeholder="40.417"
-                     onchange={() => (recentre = true)} /></label>
+                     onchange={() => { recentre = true; place(); }} /></label>
             <label><span>{t('calc.sun.lon')}</span>
               <input type="number" min="-180" max="180" step="0.001" bind:value={v.lon} placeholder="-3.704"
-                     onchange={() => (recentre = true)} /></label>
+                     onchange={() => { recentre = true; place(); }} /></label>
             <button type="button" class="ghost" onclick={locate} disabled={locating}>
               {locating ? t('calc.sun.locating') : t('calc.sun.here')}
             </button>
@@ -390,7 +445,8 @@
           <p class="note map-note">{t('calc.sun.mapNote')}</p>
           <div class="map" bind:this={mapElement}></div>
           {#if light}
-            <SunView lat={v.lat} lon={v.lon} {day} {light} bind:facing={look.facing} bind:shown={look.fov} />
+            <SunView lat={v.lat} lon={v.lon} {day} {light} bind:minutes={minute} bind:held
+                     link={here} bind:facing={look.facing} bind:shown={look.fov} />
             <div class="day">
               <div class="half">
                 <h3>{t('calc.sun.morning')}</h3>

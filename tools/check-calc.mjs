@@ -6,6 +6,7 @@ import {
 import { faintest, moonCoords, moonPhase, planets, skyBrightness } from '../web/src/lib/night.js';
 import { LAYERS, STEP, landAt, skyline } from '../web/src/lib/horizon.js';
 import { decode, pickSpots, zoneOf } from '../web/src/lib/darksky.js';
+import { readLink, writeLink } from '../web/src/lib/spotlink.js';
 
 let failures = 0;
 const check = (what, ok) => {
@@ -146,6 +147,16 @@ check('a natural sky shows stars to 6.6, a town\'s to 4',
 check('twilight and the moon brighten the sky',
   skyBrightness({ sun: -12, moon: -10, lit: 0 }) < 19 && skyBrightness({ sun: -30, moon: 60, lit: 1 }) < 19.5
   && skyBrightness({ sun: -30, moon: 60, lit: 0.1 }) > 21.9);
+
+const linked = readLink(writeLink('sun', { lat: 40.4, lon: -3.7, day: '2026-11-02', minutes: 1605 }));
+check('a shared link gives back its spot, day and time, past midnight too',
+  linked.tool === 'sun' && linked.lat === 40.4 && linked.lon === -3.7 && linked.day === '2026-11-02' && linked.minutes === 1605);
+const elsewhere = -new Date('2026-11-02T12:00').getTimezoneOffset() - 120;
+check('a link read in another time zone means the same moment',
+  readLink(`#sun&lat=1&lon=1&date=2026-11-02&time=18:00&tz=${elsewhere}`).minutes === 18 * 60 + 120);
+const odd = readLink('#sun&lat=95&lon=1&date=soon&time=18:00');
+check('a link with nonsense in it asks for none of it', odd.tool === 'sun' && odd.lat === undefined && odd.day === undefined && odd.minutes === undefined);
+check('an old link, the tab alone, still opens the tab', readLink('#dark').tool === 'dark');
 
 if (failures) {
   console.error(`\n${failures} check(s) failed`);

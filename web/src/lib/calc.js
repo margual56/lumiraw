@@ -3,6 +3,8 @@
  *  `tools/check-calc.mjs` can run them. Lengths in millimetres unless named
  *  otherwise, distances in metres, times in seconds. */
 
+import { wrap360 } from './geo.js';
+
 /** Common sensors by crop factor, against 35 mm film (36 × 24 mm). */
 export const SENSORS = [
   { id: 'medium', crop: 0.79 },
@@ -81,6 +83,13 @@ export const SHUTTERS = [
   1 / 8, 1 / 6, 1 / 5, 1 / 4, 0.3, 0.4, 0.5, 0.6, 0.8, 1, 1.3, 1.6, 2, 2.5, 3.2, 4, 5, 6, 8,
   10, 13, 15, 20, 25, 30,
 ];
+
+/** The exposures the stars' preview offers: a dial's, from 1/30 s, and bulb past 30 s. */
+export const EXPOSURES = [...SHUTTERS.filter((s) => s >= 1 / 30), 40, 50, 60, 90, 120, 180, 240];
+
+/** Which of `steps` (times, in order) is nearest `seconds`, as the eye judges it: by ratio. */
+export const nearestStep = (steps, seconds) => steps.reduce((best, s, i) =>
+  (Math.abs(Math.log(s / seconds)) < Math.abs(Math.log(steps[best] / seconds)) ? i : best), 0);
 
 /**
  * The longest exposure before stars trail, two ways. The 500 rule is the
@@ -182,9 +191,23 @@ function refraction(h) {
 }
 
 /**
+ * Which light the sun gives at `altitude` (as `sunTimes` reckons it, before
+ * the air's lift): `day`, `golden`, `dusk` (set, before the blue), `blue`,
+ * or null for night.
+ */
+export function lightOf(altitude) {
+  if (altitude > ANGLES.golden) return 'day';
+  if (altitude > ANGLES.horizon) return 'golden';
+  if (altitude > ANGLES.blueStart) return 'dusk';
+  if (altitude > ANGLES.blueEnd) return 'blue';
+  return null;
+}
+
+/**
  * Where the sun is at `date`, seen from a place: its bearing in degrees
- * clockwise from north, and its altitude in degrees above the horizon, as
- * the eye sees it (the air's lift included).
+ * clockwise from north, its altitude in degrees above the horizon as the eye
+ * sees it (the air's lift included), and `geometric`, without the lift, as
+ * `ANGLES` and `lightOf` take it.
  */
 export function sunPosition(date, lat, lon) {
   const lw = RAD * -lon;
@@ -197,8 +220,9 @@ export function sunPosition(date, lat, lon) {
   // From the south, westwards, as the formulas give it; turned to a compass bearing.
   const azimuth = Math.atan2(Math.sin(h), Math.cos(h) * Math.sin(phi) - Math.tan(dec) * Math.cos(phi));
   return {
-    bearing: ((azimuth / RAD + 180) % 360 + 360) % 360,
+    bearing: wrap360(azimuth / RAD + 180),
     altitude: (altitude + refraction(altitude)) / RAD,
+    geometric: altitude / RAD,
   };
 }
 

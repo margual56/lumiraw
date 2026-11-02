@@ -1,6 +1,7 @@
 /** Do the calculators agree with the published tables and almanacs? */
 import {
-  SHUTTERS, cameraName, depthOfField, starTrail, duration, lightOfDay, ndShutter, starRules, sunPosition, sunTimes,
+  EXPOSURES, SHUTTERS, cameraName, depthOfField, duration, lightOf, lightOfDay, ndShutter, nearestStep, starRules,
+  starTrail, sunPosition, sunTimes,
 } from '../web/src/lib/calc.js';
 import { LAYERS, STEP, landAt, skyline } from '../web/src/lib/horizon.js';
 import { decode, pickSpots, zoneOf } from '../web/src/lib/darksky.js';
@@ -39,6 +40,8 @@ check('the 500 rule for 14 mm', near(stars.rule500, 35.71, 0.01));
 check('a star trails 3.4 pixels in 20 s at 14 mm on the equator',
   near(starTrail({ focal: 14, seconds: 20, pitch: 6 }), 3.40, 0.02)
   && near(starTrail({ focal: 14, seconds: 20, pitch: 6, declination: 90 }), 0, 1e-9));
+check('exposures snap to the nearest step by ratio, 25 s to 25 s and 35 s to 40 s',
+  EXPOSURES[nearestStep(EXPOSURES, 25)] === 25 && EXPOSURES[nearestStep(EXPOSURES, 35.7)] === 40);
 check('the 500 rule shortens with the crop',
   near(starRules({ focal: 14, crop: 1.5, aperture: 2.8, megapixels: 24 }).rule500, 23.81, 0.01));
 
@@ -66,6 +69,9 @@ const dusk = sunPosition(madrid.horizon.set, 40.4168, -3.7038);
 check(`the sun sets in Madrid at ${dusk.bearing.toFixed(1)}°, on the horizon`,
   near(dusk.bearing, 302.1, 1) && near(dusk.altitude, -0.27, 0.3));
 const high = sunPosition(madrid.noon, 40.4168, -3.7038);
+check('at sunset the sun is where the times put it, and the light turns golden to blue',
+  near(dusk.geometric, -0.833, 0.2) && lightOf(3) === 'golden' && lightOf(-2) === 'dusk'
+  && lightOf(-5) === 'blue' && lightOf(-7) === null && lightOf(20) === 'day');
 check(`noon in Madrid, ${high.altitude.toFixed(1)}° up, due south`,
   near(high.altitude, 90 - 40.4168 + 23.44, 0.3) && near(high.bearing, 180, 1));
 

@@ -8,9 +8,10 @@
   /** `trail`: how far a star moves over the exposure, in pixels (starTrail in calc.js). */
   let { aperture, pitch, trail } = $props();
 
-  /** Sensor pixels across the patch, and how many screen pixels each takes. */
+  /** How many screen pixels a sensor pixel takes. */
   const ZOOM = 8;
   let width = $state(0);
+  /** Sensor pixels across the patch and down it. */
   const cols = $derived(Math.max(24, Math.floor(width / ZOOM)));
   const ROWS = 30;
 
@@ -80,7 +81,6 @@
     canvas.height = h;
     canvas.getContext('2d').putImageData(image, 0, 0);
   });
-
 </script>
 
 <div class="patch" bind:clientWidth={width}>

@@ -184,23 +184,22 @@ impl Lut {
             for c in 0..3 {
                 let t = ((enc[c] - self.min[c]) / (self.max[c] - self.min[c])).clamp(0.0, 1.0)
                     * n as f32;
-                let i = (t as usize).min(n.saturating_sub(1));
+                let i = (t as usize).min(n - 1);
                 base[c] = i;
                 frac[c] = t - i as f32;
             }
             let (i, j, k) = (base[0], base[1], base[2]);
             let (fr, fg, fb) = (frac[0], frac[1], frac[2]);
-            let step = if n == 0 { 0 } else { 1 };
             for c in 0..3 {
                 // Trilinear: eight corners, three lerps.
                 let c000 = self.sample(i, j, k, c);
-                let c100 = self.sample(i + step, j, k, c);
-                let c010 = self.sample(i, j + step, k, c);
-                let c110 = self.sample(i + step, j + step, k, c);
-                let c001 = self.sample(i, j, k + step, c);
-                let c101 = self.sample(i + step, j, k + step, c);
-                let c011 = self.sample(i, j + step, k + step, c);
-                let c111 = self.sample(i + step, j + step, k + step, c);
+                let c100 = self.sample(i + 1, j, k, c);
+                let c010 = self.sample(i, j + 1, k, c);
+                let c110 = self.sample(i + 1, j + 1, k, c);
+                let c001 = self.sample(i, j, k + 1, c);
+                let c101 = self.sample(i + 1, j, k + 1, c);
+                let c011 = self.sample(i, j + 1, k + 1, c);
+                let c111 = self.sample(i + 1, j + 1, k + 1, c);
                 let c00 = c000 + (c100 - c000) * fr;
                 let c10 = c010 + (c110 - c010) * fr;
                 let c01 = c001 + (c101 - c001) * fr;

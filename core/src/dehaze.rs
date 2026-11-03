@@ -65,9 +65,12 @@ fn dark_channel(img: &Image, air: [f32; 3], r: usize) -> Plane {
 pub fn air_light(thumb: &Image) -> [f32; 3] {
     let r = (thumb.w.max(thumb.h) / 60).max(2);
     let dark = dark_channel(thumb, [1.0; 3], r);
+    // Haziest first, ties in pixel order. Only the head is needed sorted.
+    let haziest = |a: &usize, b: &usize| dark.d[*b].partial_cmp(&dark.d[*a]).unwrap().then(a.cmp(b));
     let mut order: Vec<usize> = (0..dark.d.len()).collect();
-    order.sort_by(|a, b| dark.d[*b].partial_cmp(&dark.d[*a]).unwrap());
     let take = (order.len() / 1000).max(1);
+    order.select_nth_unstable_by(take - 1, haziest);
+    order[..take].sort_unstable_by(haziest);
     let mut sum = [0f32; 3];
     for &i in &order[..take] {
         for c in 0..3 {
@@ -94,8 +97,7 @@ pub fn apply(img: &mut Image, air: [f32; 3], amount: f32, long_edge: usize) {
         // He et al. leave a little haze in (0.95), so distance still reads.
         *t = 1.0 - 0.95 * t.clamp(0.0, 1.0);
     }
-    let mut guide = kit::luminance(img);
-    guide.d.iter_mut().for_each(|v| *v = v.max(0.0).sqrt());
+    let guide = crate::analyze::sqrt_luminance(img);
     let radius = (long_edge / 120).max(4);
     // A small epsilon: the transmission has to step where an edge does, or a
     // building against the sky wears a halo of haze.

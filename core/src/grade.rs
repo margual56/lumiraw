@@ -538,9 +538,7 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
         analyze::auto_tone_compression(thumb, p.comfortable_stops, 0.45)
     };
     d.tone.0 = factor;
-    // Clarity is this same split between the broad light of the scene and its
-    // fine structure, with the photographer setting how much of the structure
-    // is kept.
+    // Clarity scales the fine-structure layer of this same split.
     let detail_boost = p.detail_boost * (1.0 + 0.6 * s.clarity);
     let info = with(info, json!({"detail_boost": round_to(detail_boost, 3),
                                  "clarity": round_to(s.clarity, 2)}));
@@ -561,7 +559,7 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
     let radius = ((long_edge as f32 / 45.0).round() as usize).max(8);
     let base = kit::guided_filter(&log_y, &log_y, radius, 0.15, 4);
 
-    // anchor = 55th percentile of the base layer, sampled every 4th pixel
+    // Anchor on the 55th percentile of the base layer, every 4th pixel.
     let anchor = if frozen {
         d.tone.1
     } else {
@@ -603,8 +601,8 @@ pub fn filmic(img: &mut Image) {
             for c in 0..3 {
                 out[c] = hue_preserving[c] * (1.0 - w) + curve(px[c]) * w;
             }
-            // The per-channel curve is what bleaches a bright colour toward
-            // white, and it is worth having.
+            // Keep the per-channel curve's lightness and chroma (it bleaches
+            // bright colours toward white) but the hue-preserving curve's hue.
             let (_, a0, b0) = kit::rgb_to_oklab_px(hue_preserving[0], hue_preserving[1],
                                                    hue_preserving[2]);
             let c0 = a0.hypot(b0);
@@ -616,8 +614,7 @@ pub fn filmic(img: &mut Image) {
             }
         }
         for c in 0..3 {
-            // Bounded only far outside anything a real colour reaches, so a
-            // stray value cannot run away through the stages that follow.
+            // A loose bound, only so a stray value cannot run away downstream.
             px[c] = out[c].clamp(-1.0, 2.0);
         }
     }
@@ -732,8 +729,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     };
     d.contrast = (amount, pivot);
     if s.on("contrast") {
-        // One curve for the whole frame, so it is tabulated once rather than
-        // evaluated with two `powf` per pixel.
+        // Tabulated: the curve costs two `powf` per evaluation.
         let table: Vec<f32> = (0..=CURVE_STEPS + 1)
             .map(|i| s_curve((i as f32 / CURVE_STEPS as f32).min(1.0), amount, pivot))
             .collect();
@@ -759,8 +755,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
         report.skipped("tone zones", "not_needed", json!({}));
     }
 
-    // Lifting shadows leaves their colour behind; track the lightness change so
-    // saturation stays proportional instead of going grey.
+    // Scale chroma with the lightness change, or lifted shadows go grey.
     for i in 0..n {
         let ratio = (light_new.d[i].max(0.0) + 1e-3) / (lightness.d[i].max(0.0) + 1e-3);
         let comp = kit::fast_exp2(0.35 * kit::fast_log2(ratio)).clamp(0.6, 1.8);
@@ -769,16 +764,14 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     }
     drop(lightness);
 
-    // Colour noise.
-    // The photographer's amount works from the measured one rather than
-    // replacing it, so "a little more" means a little more for this frame.
+    // Colour noise. The slider moves the measured amount rather than
+    // replacing it.
     let auto_chroma = if p.denoise { ((noise - 0.18) / 0.5).clamp(0.0, 1.0) * 0.85 } else { 0.0 };
     let chroma_blend = with_user(auto_chroma, s.denoise, 0.95);
     if s.on("denoise_chroma") && chroma_blend > 0.01 {
         let radius = ((long_edge as f32 / 350.0).round() as usize).max(3);
         let blend = chroma_blend;
-        let fa = kit::guided_filter(&light_new, &a, radius, 4e-4, 2);
-        let fb = kit::guided_filter(&light_new, &b, radius, 4e-4, 2);
+        let [fa, fb] = kit::guided_filter_each(&light_new, [&a, &b], radius, 4e-4, 2);
         for i in 0..n {
             a.d[i] = a.d[i] * (1.0 - blend) + fa.d[i] * blend;
             b.d[i] = b.d[i] * (1.0 - blend) + fb.d[i] * blend;
@@ -791,10 +784,8 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
                        json!({"noise": round_to(noise, 3)}));
     }
 
-    // Luminance noise.
-    // Allowed further than the automation goes on its own (0.85 against 0.55),
-    // because the photographer can see what it costs in texture and the
-    // automation cannot.
+    // Luminance noise. The slider may go further than the automation does
+    // on its own (0.85 against 0.55): only a person can judge the texture lost.
     let auto_luma = if p.denoise { ((noise - 0.30) / 0.6).clamp(0.0, 1.0) * 0.55 } else { 0.0 };
     let luma_blend = with_user(auto_luma, s.denoise, 0.85);
     if s.on("denoise_luma") && luma_blend > 0.01 {
@@ -853,9 +844,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     }
     drop(chroma);
 
-    // Focus recovery.
-    // Before sharpening, because the two are not the same thing and the order
-    // matters.
+    // Focus recovery, before sharpening.
     if s.refocus > 0.0 && s.on("refocus") && focus_sigma > 0.0 {
         let iterations = recover_focus(&mut light_new, focus_sigma, s.refocus, noise);
         report.add("focus recovery", json!({"applied": true,
@@ -968,7 +957,6 @@ pub fn process(mut img: Image, settings: &Settings, args: ProcessArgs, report: &
     let frozen = args.decided.is_some();
     let mut d = args.decided.unwrap_or_default();
     let long_edge = args.window.long_edge();
-    // Where the frame is, for the stages that place things in it.
     let frame = args.stats_rect.or(args.window.frame(&img));
     // Healing before anything is measured; see `local`.
     crate::local::heal(&mut img, &settings.spots, frame);
@@ -1025,8 +1013,7 @@ pub fn process(mut img: Image, settings: &Settings, args: ProcessArgs, report: &
 mod tests {
     use super::*;
 
-    /// A photograph nobody has measured protects skin exactly as before there
-    /// was any measuring; a measured skin is a narrower target.
+    /// Unmeasured skin keeps the broad default target; measured skin is narrower.
     #[test]
     fn skin_is_protected_as_measured() {
         let typical = Skin::default();
@@ -1067,7 +1054,7 @@ mod tests {
             }
         }
         assert_eq!(got, want);
-        // With no frame in play the box is the canvas's own, as before.
+        // With no frame the box is in canvas fractions.
         let whole = sample_rect(&img, (0.0, 0.0, 0.25, 0.25), None).unwrap();
         assert_eq!(whole, vec![img.px()[0], img.px()[1], img.px()[8], img.px()[9]]);
     }
@@ -1124,7 +1111,6 @@ mod tests {
         }
     }
 
-    /// The whole point of capping ZONE_RANGE.
     #[test]
     fn tone_zones_stay_monotonic() {
         let steps = [-1.0f32, -0.5, 0.0, 0.5, 1.0];
@@ -1160,8 +1146,7 @@ mod tests {
         }
     }
 
-    /// Zero has to mean *exactly* untouched, not nearly: every frame is
-    /// developed through this path whether or not the sliders were moved.
+    /// Zero must be exactly untouched: every frame goes through this path.
     #[test]
     fn zero_zones_are_the_identity() {
         for i in 0..=100 {
@@ -1170,8 +1155,7 @@ mod tests {
         }
     }
 
-    /// Each slider has to own its end of the range and leave the other alone,
-    /// which is what "isolate the parts of the picture" means in practice.
+    /// Each slider owns its end of the range and leaves the other alone.
     #[test]
     fn zones_isolate_their_own_tones() {
         let (dark, mid, bright) = (0.08f32, 0.5, 0.92);

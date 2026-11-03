@@ -10,6 +10,7 @@ use crate::profile::{self, CaptureProfile};
 use crate::effects;
 use crate::straighten;
 use serde_json::{json, Map, Value};
+use std::borrow::Cow;
 
 pub struct Development {
     pub filename: String,
@@ -105,10 +106,9 @@ impl Development {
         let d = decode::decode_with(bytes, denoiser)?;
         let mut dev = Self::from_frame(filename, d.img, d.meta, decode::collect_exif(bytes), db);
         dev.deep_denoise = asked.then_some(d.denoised);
-        // The ISO says how noisy the sensor was, which is no longer how noisy
-        // the frame is: from here the noise measured on the cleaned frame
-        // decides alone, or the usual noise reduction smears what the network
-        // has already cleaned, and the usual caution darkens it for nothing.
+        // The ISO no longer says how noisy the frame is. Only the noise
+        // measured on the cleaned frame decides from here, or the usual noise
+        // reduction would smear what the network already cleaned.
         if d.denoised.is_some() {
             dev.profile.noise_prior = 0.0;
         }
@@ -206,25 +206,27 @@ impl Development {
         }
         let mut infos: Map<String, Value> = Map::new();
 
+        // Borrowed until a stage has to write to it, so a full-size frame
+        // is only copied when nothing else makes a new one.
         let mut src = match long_edge {
-            None => self.linear.clone(),
-            Some(e) => kit::thumbnail(&self.linear, e),
+            None => Cow::Borrowed(&self.linear),
+            Some(e) => Cow::Owned(kit::thumbnail(&self.linear, e)),
         };
-        if let Some(m) = self.lens_match.clone() {
+        if let Some(m) = &self.lens_match {
             if s.on("lens_vignetting") {
                 if let Some(cb) = progress.as_mut() {
                     cb(0.02, "vignetting");
                 }
-                let info = lensdb::apply_vignetting(&mut src, &m);
+                let info = lensdb::apply_vignetting(src.to_mut(), m);
                 infos.insert("vignetting".into(), info);
             }
             if s.on("lens_distortion") || s.on("lens_tca") {
                 if let Some(cb) = progress.as_mut() {
                     cb(0.05, "geometry");
                 }
-                let (out, geo) = lensdb::apply_geometry(&src, &m, s.on("lens_distortion"),
+                let (out, geo) = lensdb::apply_geometry(&src, m, s.on("lens_distortion"),
                                                         s.on("lens_tca"));
-                src = out;
+                src = Cow::Owned(out);
                 infos.insert("distortion".into(), geo.clone());
                 infos.insert("chromatic aberration".into(), geo);
             }
@@ -234,8 +236,9 @@ impl Development {
         // levels only ever see the picture that will actually be kept.
         let eff = geometry::effective_crop(src.w, src.h, &s.framing);
         if !s.framing.is_identity() {
-            src = geometry::apply(&src, &s.framing, crop);
+            src = Cow::Owned(geometry::apply(&src, &s.framing, crop));
         }
+        let src = src.into_owned();
         if long_edge.is_some() {
             if self.cache.len() > 6 {
                 self.cache.clear();
@@ -279,37 +282,18 @@ impl Development {
         // When the canvas is shown uncropped, the estimators must still measure
         // only the rectangle being kept, see geometry::stats_view.
         let stats_rect = if crop { None } else { eff_crop };
-        let tuned = profile::tune(&settings.preset_obj(), &self.profile);
 
-        // Lens work is the first quarter of a render; grading is the rest.
-        let mut graded_progress = progress.map(|cb| {
-            let f: Box<dyn FnMut(f32, &str) + '_> =
-                Box::new(move |f: f32, code: &str| cb(0.25 + 0.75 * f, code));
-            f
-        });
-
-        let native_noise_floor = self.native_noise_floor();
-        // The width was measured at a fixed working size, so the blur it
-        // describes is that many pixels *there*.
+        let mut graded_progress = after_lens(progress);
         let measured_width = self.focus_width();
-        let focus_sigma = self.focus_sigma_at(src.w.max(src.h));
         let args = ProcessArgs {
-            iso: self.profile.iso,
-            sharpen_sigma: self.profile.sharpen_sigma,
-            noise_prior: self.profile.noise_prior,
             stats_rect,
             render_scale: scale,
-            preset: tuned,
-            native_noise_floor,
-            focus_sigma,
-            window: Window::whole(&src),
-            decided: None,
-            masks: &masks,
+            focus_sigma: self.focus_sigma_at(src.w.max(src.h)),
             progress: graded_progress.as_mut().map(|f| &mut **f as &mut dyn FnMut(f32, &str)),
+            ..self.process_args(settings, &masks, Window::whole(&src))
         };
         let (rgb, _) = grade::process(src, settings, args, &mut report);
 
-        // What the frame measured, said out loud whichever way it came out.
         report.add("focus", match measured_width {
             None => json!({"measured": false, "verdict": "unknown"}),
             Some(w) => json!({"measured": true,
@@ -320,9 +304,7 @@ impl Development {
                 "blur_px": kit::round_to(crate::analyze::focus_sigma(w), 2)}),
         });
 
-        // Framing is the one step that had nothing of its own to propose, so
-        // the measurement rides along with the preview it was taken from,
-        // against the graded frame rather than the linear one.
+        // The straightening proposal is measured on the graded preview.
         if long_edge.is_some() {
             if let Some(hint) = straighten::propose(&rgb, stats_rect) {
                 report.add("framing", hint.to_json());
@@ -350,7 +332,17 @@ impl Development {
         }
         let proxy = kit::thumbnail(full, 1024);
         let masks = self.masks_for(settings);
-        let args = ProcessArgs {
+        let args = self.process_args(settings, &masks, Window::whole(&proxy));
+        let (_, decided) = grade::process(proxy, settings, args, &mut Report::new());
+        self.decided_full = Some((settings.clone(), decided.clone()));
+        decided
+    }
+
+    /// What every development hands `grade::process`, for a full-size render
+    /// with nothing decided yet.
+    fn process_args<'a>(&mut self, settings: &Settings, masks: &'a crate::masks::Masks,
+                        window: Window) -> ProcessArgs<'a> {
+        ProcessArgs {
             iso: self.profile.iso,
             sharpen_sigma: self.profile.sharpen_sigma,
             noise_prior: self.profile.noise_prior,
@@ -359,18 +351,16 @@ impl Development {
             preset: profile::tune(&settings.preset_obj(), &self.profile),
             native_noise_floor: self.native_noise_floor(),
             focus_sigma: 0.0,
-            window: Window::whole(&proxy),
+            window,
             decided: None,
-            masks: &masks,
+            masks,
             progress: None,
-        };
-        let (_, decided) = grade::process(proxy, settings, args, &mut Report::new());
-        self.decided_full = Some((settings.clone(), decided.clone()));
-        decided
+        }
     }
 
     /// The blur focus recovery aims at, in pixels of a render `long` pixels on
-    /// its long edge.
+    /// its long edge. The width was measured at a fixed working size, so it is
+    /// scaled from there.
     fn focus_sigma_at(&mut self, long: usize) -> f32 {
         match self.focus_width() {
             Some(w) if w >= crate::analyze::FOCUS_SOFT => {
@@ -411,29 +401,23 @@ impl Development {
         let window = Window { x: x0, y: y0, w: fw, h: fh };
         let masks = self.masks_for(settings);
         let mut report = Report::new();
-        let mut graded_progress = progress.map(|cb| {
-            let f: Box<dyn FnMut(f32, &str) + '_> =
-                Box::new(move |f: f32, code: &str| cb(0.25 + 0.75 * f, code));
-            f
-        });
+        let mut graded_progress = after_lens(progress);
         let args = ProcessArgs {
-            iso: self.profile.iso,
-            sharpen_sigma: self.profile.sharpen_sigma,
-            noise_prior: self.profile.noise_prior,
-            stats_rect: None,
-            render_scale: 1.0,
-            preset: profile::tune(&settings.preset_obj(), &self.profile),
-            native_noise_floor: self.native_noise_floor(),
             focus_sigma: self.focus_sigma_at(fw.max(fh)),
-            window,
             decided: Some(decided),
-            masks: &masks,
             progress: graded_progress.as_mut().map(|f| &mut **f as &mut dyn FnMut(f32, &str)),
+            ..self.process_args(settings, &masks, window)
         };
         let (rgb, _) = grade::process(piece, &healed, args, &mut report);
         let rgb = finish(rgb, settings, window, &mut report);
         Region { image: rgb.crop(x - x0, y - y0, w, h), x, y, full_w: fw, full_h: fh }
     }
+}
+
+/// Lens work is the first quarter of a render; grading is the rest.
+fn after_lens<'a>(progress: Option<&'a mut dyn FnMut(f32, &str)>)
+                  -> Option<Box<dyn FnMut(f32, &str) + 'a>> {
+    progress.map(|cb| Box::new(move |f: f32, code: &str| cb(0.25 + 0.75 * f, code)) as Box<_>)
 }
 
 /// What a lens-corrected, framed frame depends on, and nothing else.
@@ -451,51 +435,46 @@ fn corrected_key(s: &Settings, long_edge: Option<usize>, crop: bool) -> String {
 
 /// Taste, after the pipeline's own work.
 fn finish(mut rgb: Image, settings: &Settings, window: Window, report: &mut Report) -> Image {
-    {
-        // Taste, in the order the darkroom had it.
-        if !settings.mixer.is_identity() {
-            rgb = crate::mixer::apply(&rgb, &settings.mixer);
-        }
-        report.add("mixer", json!({"applied": !settings.mixer.is_identity()}));
-
-        effects::monochrome(&mut rgb, settings.monochrome);
-
-        // After monochrome, so the wheels can tone a black-and-white frame.
-        let wheels = &settings.wheels;
-        if !wheels.is_identity() {
-            let (skin, protect) = (settings.skin, settings.skin_protect);
-            rgb = crate::wheels::apply(&rgb, wheels, |hue, chroma| protect * skin.likeness(hue, chroma));
-        }
-        report.add("wheels", json!({"applied": !wheels.is_identity()}));
-
-        let counts = settings.curves.counts();
-        report.add("curves", if settings.curves.is_identity() {
-            json!({"applied": false})
-        } else {
-            rgb = settings.curves.apply(&rgb);
-            json!({"applied": true, "points": {"rgb": counts[0], "r": counts[1],
-                                               "g": counts[2], "b": counts[3]}})
-        });
-
-        // The 3D table is the end of the colour stack and runs after the
-        // curves, which is both where the format expects to sit and the only
-        // place it can sit.
-        let lut_applied = crate::lut::apply_current(&mut rgb, settings.lut);
-        report.add("lut", json!({"applied": lut_applied,
-                                 "strength": kit::round_to(settings.lut, 3)}));
-
-        effects::vignette_in(&mut rgb, settings.vignette, window);
-        effects::grain_in(&mut rgb, settings.grain, window);
-        report.add("effects", json!({
-            "monochrome": kit::round_to(settings.monochrome, 3),
-            "vignette": kit::round_to(settings.vignette, 3),
-            "grain": kit::round_to(settings.grain, 3)}));
+    if !settings.mixer.is_identity() {
+        rgb = crate::mixer::apply(&rgb, &settings.mixer);
     }
+    report.add("mixer", json!({"applied": !settings.mixer.is_identity()}));
+
+    effects::monochrome(&mut rgb, settings.monochrome);
+
+    // After monochrome, so the wheels can tone a black-and-white frame.
+    let wheels = &settings.wheels;
+    if !wheels.is_identity() {
+        let (skin, protect) = (settings.skin, settings.skin_protect);
+        rgb = crate::wheels::apply(&rgb, wheels, |hue, chroma| protect * skin.likeness(hue, chroma));
+    }
+    report.add("wheels", json!({"applied": !wheels.is_identity()}));
+
+    let counts = settings.curves.counts();
+    report.add("curves", if settings.curves.is_identity() {
+        json!({"applied": false})
+    } else {
+        settings.curves.apply_to(&mut rgb);
+        json!({"applied": true, "points": {"rgb": counts[0], "r": counts[1],
+                                           "g": counts[2], "b": counts[3]}})
+    });
+
+    // The 3D table ends the colour stack, after the curves, where the format
+    // expects to sit.
+    let lut_applied = crate::lut::apply_current(&mut rgb, settings.lut);
+    report.add("lut", json!({"applied": lut_applied,
+                             "strength": kit::round_to(settings.lut, 3)}));
+
+    effects::vignette_in(&mut rgb, settings.vignette, window);
+    effects::grain_in(&mut rgb, settings.grain, window);
+    report.add("effects", json!({
+        "monochrome": kit::round_to(settings.monochrome, 3),
+        "vignette": kit::round_to(settings.vignette, 3),
+        "grain": kit::round_to(settings.grain, 3)}));
     rgb
 }
 
 impl Development {
-
     /// The same frame with every automatic correction switched off.
     pub fn baseline(&mut self, settings: &Settings, long_edge: Option<usize>) -> Image {
         let mut flat = settings.clone();
@@ -513,8 +492,6 @@ impl Development {
             };
             flat.enabled.insert(key.to_string(), if keep { settings.on(key) } else { false });
         }
-        // Cached on everything the render reads, compared whole rather than
-        // listed field by field.
         let lut = crate::lut::generation();
         if let Some((s, edge, g, img)) = &self.baseline {
             if *s == flat && *edge == long_edge && *g == lut {

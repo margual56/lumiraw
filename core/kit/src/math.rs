@@ -87,9 +87,24 @@ pub fn percentile_sorted(sorted: &[f32], q: f64) -> f32 {
 }
 
 pub fn percentiles(values: &[f32], qs: &[f64]) -> Vec<f32> {
+    let cmp = |a: &f32, b: &f32| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal);
     let mut v: Vec<f32> = values.to_vec();
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    qs.iter().map(|q| percentile_sorted(&v, *q)).collect()
+    // A selection per quantile beats sorting while there are only a few.
+    if qs.len() > 3 || v.is_empty() {
+        v.sort_by(cmp);
+        return qs.iter().map(|q| percentile_sorted(&v, *q)).collect();
+    }
+    qs.iter().map(|q| {
+        let pos = (q / 100.0) * (v.len() - 1) as f64;
+        let (lo, hi) = (pos.floor() as usize, pos.ceil() as usize);
+        let (_, at_lo, above) = v.select_nth_unstable_by(lo, cmp);
+        if lo == hi {
+            return *at_lo;
+        }
+        let at_hi = above.iter().copied().min_by(cmp).unwrap_or(*at_lo);
+        let frac = (pos - lo as f64) as f32;
+        *at_lo * (1.0 - frac) + at_hi * frac
+    }).collect()
 }
 
 pub fn percentile(values: &[f32], q: f64) -> f32 {

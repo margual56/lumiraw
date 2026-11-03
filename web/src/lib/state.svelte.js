@@ -1,6 +1,7 @@
 /** The whole wizard's state, as runes. */
 
 import { fileKey, recall } from './memory.js';
+import { foldTableLook } from './looks.js';
 
 export const STEPS = ['step.upload', 'step.framing', 'step.refocus', 'step.brightness',
                       'step.wb', 'step.vibrance', 'step.local', 'step.compare', 'step.looks',
@@ -38,11 +39,11 @@ export const defaultSettings = () => ({
   tint: 0,
   vibrance: 0,
   preset: 'natural',
-  // A named look (core/src/looks.rs), by id, and how much of it; '' for none.
-  // Its table is fetched by the worker the first time it is asked for.
+  // The named look the grade was started from (core/src/looks.rs), by id; ''
+  // for none. Only a name: choosing a look fills in the curves, mixer, wheels
+  // and monochrome below (lib/looks.js), and those are what is developed.
   look: '',
-  look_strength: 1,
-  // The photographer's own curves, drawn on top of the look.
+  // The photographer's curves.
   curves: { strength: 1, rgb: [], r: [], g: [], b: [] },
   // Eight hue bands, each with a hue, a saturation and a lightness. Only the
   // bands that have been touched are here; the rest are absent and mean zero.
@@ -66,7 +67,7 @@ export const defaultSettings = () => ({
 });
 
 /** The part of the settings that is a grade rather than a correction. */
-export const GRADE_KEYS = ['preset', 'look', 'look_strength', 'curves', 'mixer', 'wheels', 'lut', 'lut_id',
+export const GRADE_KEYS = ['preset', 'look', 'curves', 'mixer', 'wheels', 'lut', 'lut_id',
                            'monochrome', 'vignette', 'grain'];
 
 /** Whether these settings carry any grade at all. */
@@ -114,6 +115,9 @@ export const app = $state({
 
   // What is happening right now, for the progress bar.
   busy: false,
+  // A control is being dragged and the picture should follow it as it moves:
+  // previews go out as fast as they come back rather than after a pause.
+  live: false,
   busyKey: '',            // translation key for what is running
   busyParams: {},
   progress: null,     // { fraction, code } straight from the pipeline
@@ -153,7 +157,7 @@ export function settingsFor(index) {
 /** Remembered settings as they can be used now. */
 export function usable(saved) {
   if (!saved) return null;
-  const out = { ...defaultSettings(), ...saved };
+  const out = { ...defaultSettings(), ...foldTableLook(saved) };
   if (!app.lut || app.lut.id !== out.lut_id) {
     out.lut = 0;
     out.lut_id = '';

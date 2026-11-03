@@ -14,7 +14,6 @@ const session = {
   stacked: null,   // { mode, align, files } when the photograph is a finished stack
   gathering: null, // the same, for a stack still being gathered
   lut: null,       // the loaded .cube's bytes
-  looks: {},       // look id -> its table's bytes, as each was first asked for
   models: {},      // network name -> its bytes, as each was first needed
 };
 
@@ -30,26 +29,6 @@ import camerasUrl from './lenses/cameras.json?url';
 // The lens calibrations come in pieces (see tools/split_lensfun.py).
 const LENS_FILES = import.meta.glob('./lenses/lens-*.json',
                                     { query: '?url', import: 'default', eager: true });
-
-// The named looks' tables, one small file each (see tools/looks.py), fetched
-// the first time a look is asked for rather than on every first visit.
-const LOOK_FILES = import.meta.glob('./looks/look-*.bin',
-                                    { query: '?url', import: 'default', eager: true });
-
-/** Make sure the look these settings ask for is in the module before they are developed. */
-async function ensureLook(settings) {
-  const id = settings?.look;
-  if (!id || session.looks[id]) return;
-  const url = LOOK_FILES[`./looks/look-${id}.bin`];
-  if (!url) return;
-  try {
-    const bytes = await fetchBytes(url);
-    loadLook(id, bytes);
-    session.looks[id] = bytes;
-  } catch {
-    // Not reachable now; asked again with the next request that wants it.
-  }
-}
 
 // The networks the developer runs (see core/darkroom/src/models.rs), fetched
 // the first time something needs one. They share the culling page's files.
@@ -68,12 +47,6 @@ async function ensureModel(name) {
 function loadModel(name, bytes) {
   const rc = withString(name, (ip, il) =>
     withBytes(new Uint8Array(bytes), (p, n) => wasm.ar_model_load(ip, il, p, n)));
-  if (rc !== 0) fail(readJson());
-}
-
-function loadLook(id, bytes) {
-  const rc = withString(id, (ip, il) =>
-    withBytes(new Uint8Array(bytes), (p, n) => wasm.ar_look_load(ip, il, p, n)));
   if (rc !== 0) fail(readJson());
 }
 
@@ -291,7 +264,6 @@ async function recover() {
   await ready;
   try {
     if (saved.lut) withBytes(new Uint8Array(saved.lut), (p, n) => wasm.ar_lut_load(p, n));
-    for (const [id, bytes] of Object.entries(saved.looks)) loadLook(id, bytes);
     for (const [name, bytes] of Object.entries(saved.models)) loadModel(name, bytes);
     if (saved.frames.length || saved.merged) await replayMerge();
     if (!saved.merged) await restorePhoto();
@@ -301,7 +273,7 @@ async function recover() {
     ready = init();
     await ready;
     Object.assign(session, { photo: null, frames: [], merged: null, stacked: null,
-                             gathering: null, lut: null, looks: {}, models: {} });
+                             gathering: null, lut: null, models: {} });
   }
 }
 
@@ -309,13 +281,15 @@ function settingsPointer(settings, fn) {
   return withString(JSON.stringify(settings ?? {}), fn);
 }
 
-async function render({ settings, size, uncropped }) {
+async function render({ settings, size, uncropped, live }) {
   const rc = settingsPointer(settings, (sp, sl) =>
     wasm.ar_render(sp, sl, size ?? 1300, uncropped ? 0 : 1));
   const info = readJson();
   if (rc !== 0) fail(info);
   const { w, h, pixels } = primary();
-  const blob = await toBlob(pixels, w, h);
+  // While a control is dragged, a frame is on screen for a moment only, and
+  // JPEG encodes several times faster than WebP.
+  const blob = await (live ? toBlob(pixels, w, h, 'image/jpeg', 0.85) : toBlob(pixels, w, h));
   return {
     image: blob,
     width: w,
@@ -594,7 +568,6 @@ async function handle({ type, id, ...rest }) {
     const handler = HANDLERS[type];
     if (!handler) throw new Error(`unknown request: ${type}`);
     current = id;
-    await ensureLook(rest.settings);
     await ensureMasks(rest.settings);
     const data = await handler(rest);
     // A handler that returns something large marks what may be moved rather

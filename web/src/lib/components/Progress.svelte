@@ -4,7 +4,9 @@
   import { t, n } from '$lib/i18n.svelte.js';
   import { stageText } from '$lib/format.js';
 
-  const active = $derived(Boolean(app.job) || app.busy);
+  // A picture following a dragged control is not worth a bar flickering on
+  // and off a few times a second.
+  const active = $derived(Boolean(app.job) || (app.busy && !app.live));
   // The pipeline reports its own stages now that it runs here, so even a
   // preview gets a real bar instead of a shuttle.
   const reporting = $derived(Boolean(app.job) || Boolean(app.progress));

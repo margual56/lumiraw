@@ -13,8 +13,14 @@ use serde_json::{json, Value};
 /// The furthest a wheel at full amount moves a colour, in Oklab chroma.
 pub const MAX_PUSH: f32 = 0.06;
 
-/// The furthest a wheel's lightness moves a lightness.
-pub const LUM_RANGE: f32 = 0.12;
+/// How far a wheel's lightness slider, all the way over, moves the lightness
+/// in the middle of its zone. Black and white themselves never move: a lifted
+/// black or a dimmed white is a curve's job, and the wheels' colour is held
+/// off black for the same reason (see `reach`).
+pub const LUM_RANGE: f32 = 0.10;
+
+/// How finely the lightness change is tabulated over 0..1.
+const TONE_STEPS: usize = 1024;
 
 /// One wheel: where the point is (an Oklab hue in degrees and how far out,
 /// 0..1) and the slider under it (-1..1).
@@ -54,7 +60,7 @@ impl Wheel {
     }
 
     fn to_json(self) -> Value {
-        let r = |v: f32, d: f32| (v * d).round() / d;
+        let r = |v: f32, d: f64| (v as f64 * d).round() / d;
         json!({"hue": r(self.hue, 10.0), "amount": r(self.amount, 1000.0),
                "lum": r(self.lum, 1000.0)})
     }
@@ -105,16 +111,65 @@ impl Wheels {
                "balance": self.balance, "blending": self.blending})
     }
 
+    /// The lightness where shadows give way to highlights.
+    fn pivot(&self) -> f32 {
+        0.5 - 0.25 * self.balance
+    }
+
     /// How much of a display lightness each zone owns: shadows, midtones,
     /// highlights, summing to one.
     #[inline]
     fn zones(&self, l: f32) -> (f32, f32, f32) {
-        let pivot = 0.5 - 0.25 * self.balance;
+        let pivot = self.pivot();
         let width = 0.2 + 0.6 * self.blending;
         let shadow = 1.0 - kit::smoothstep(pivot - width, pivot, l);
         let highlight = kit::smoothstep(pivot, pivot + width, l);
         (shadow, 1.0 - shadow - highlight, highlight)
     }
+}
+
+/// How each slider's lightness change is spread over a lightness `u` that has
+/// been warped so the balance's pivot sits at a half: shadows, midtones,
+/// highlights and everything, each zero at black and at white and peaking at
+/// one in the middle of its zone (a third, a half, two thirds; the whole
+/// range's middle for everything). Smooth all the way, so there is no step
+/// where one zone gives way to the next, however little they blend.
+#[inline]
+fn tone_shapes(u: f32) -> [f32; 4] {
+    let v = 1.0 - u;
+    [6.75 * u * v * v, 4.0 * u * v, 6.75 * u * u * v, 4.0 * u * v]
+}
+
+/// The wheels' lightness as a table over 0..1, or `None` when the sliders are
+/// all at zero. The table never runs downhill, so no combination of sliders
+/// can turn a tone darker than the one under it.
+fn tone_table(w: &Wheels) -> Option<Vec<f32>> {
+    let lums = [w.shadows.lum, w.midtones.lum, w.highlights.lum, w.global.lum];
+    if lums.iter().all(|v| v.abs() < 1e-4) {
+        return None;
+    }
+    // u = l^k puts the pivot at a half.
+    let k = 0.5f32.ln() / w.pivot().clamp(0.05, 0.95).ln();
+    let mut floor = 0.0f32;
+    Some((0..=TONE_STEPS).map(|i| {
+        let u = (i as f32 / TONE_STEPS as f32).powf(k);
+        let d: f32 = tone_shapes(u).iter().zip(lums).map(|(s, v)| s * v).sum();
+        floor = floor.max((u + d * LUM_RANGE).clamp(0.0, 1.0).powf(1.0 / k));
+        floor
+    }).collect())
+}
+
+/// A lightness through `tone_table`'s table; anything outside 0..1 is left
+/// where it is, as black and white are.
+#[inline]
+fn tone(table: &[f32], l: f32) -> f32 {
+    if !(l > 0.0 && l < 1.0) {
+        return l;
+    }
+    let x = l * TONE_STEPS as f32;
+    let i = (x as usize).min(TONE_STEPS - 1);
+    let t = x - i as f32;
+    table[i] + (table[i + 1] - table[i]) * t
 }
 
 /// How much a colour is pushed at a lightness, before the zones: black stays
@@ -133,7 +188,7 @@ pub fn apply(img: &Image, w: &Wheels, protect: impl Fn(f32, f32) -> f32) -> Imag
     }
     let pushes = [w.shadows.push(), w.midtones.push(), w.highlights.push()];
     let global = w.global.push();
-    let lums = [w.shadows.lum, w.midtones.lum, w.highlights.lum];
+    let table = tone_table(w);
     let mut l = Plane::new(img.w, img.h);
     let mut pa = Plane::new(img.w, img.h);
     let mut pb = Plane::new(img.w, img.h);
@@ -143,15 +198,16 @@ pub fn apply(img: &Image, w: &Wheels, protect: impl Fn(f32, f32) -> f32) -> Imag
         let weights = [s, m, h];
         let mut da = global.0;
         let mut db = global.1;
-        let mut dl = w.global.lum;
         for z in 0..3 {
             da += pushes[z].0 * weights[z];
             db += pushes[z].1 * weights[z];
-            dl += lums[z] * weights[z];
         }
         let held = 1.0 - protect(b.atan2(a), a.hypot(b));
         let k = reach(ll) * held;
-        l.d[i] = (ll + dl * LUM_RANGE).clamp(0.0, 1.0);
+        l.d[i] = match &table {
+            Some(t) => tone(t, ll),
+            None => ll,
+        };
         pa.d[i] = a + da * k;
         pb.d[i] = b + db * k;
     }
@@ -361,6 +417,68 @@ mod tests {
         b.midtones = Wheel { hue: 0.0, amount: 0.2, lum: -0.1 };
         let sum = add(&a, &b);
         assert!((sum.midtones.amount - 0.5).abs() < 1e-4 && (sum.midtones.lum - 0.1).abs() < 1e-4);
+    }
+
+    fn lightness_of(w: &Wheels, level: f32) -> f32 {
+        lab(&apply(&grey(level), w, |_, _| 0.0)).0
+    }
+
+    /// Black and white stay where they are, however the sliders are set.
+    #[test]
+    fn lightness_leaves_black_and_white_alone() {
+        for lum in [-1.0, 1.0] {
+            for zone in 0..4 {
+                let mut w = Wheels::default();
+                match zone {
+                    0 => w.shadows.lum = lum,
+                    1 => w.midtones.lum = lum,
+                    2 => w.highlights.lum = lum,
+                    _ => w.global.lum = lum,
+                }
+                assert!(lightness_of(&w, 0.0).abs() < 1e-4, "zone {zone} at {lum} moved black");
+                assert!((lightness_of(&w, 1.0) - 1.0).abs() < 1e-3, "zone {zone} at {lum} moved white");
+            }
+        }
+    }
+
+    /// No setting of the sliders, however extreme, makes a darker tone come
+    /// out lighter than a brighter one.
+    #[test]
+    fn lightness_never_runs_downhill() {
+        let ends = [-1.0, 0.0, 1.0];
+        for &s in &ends { for &m in &ends { for &h in &ends { for &g in &ends {
+            for balance in [-1.0, 0.0, 1.0] {
+                let mut w = Wheels { balance, ..Wheels::default() };
+                w.shadows.lum = s;
+                w.midtones.lum = m;
+                w.highlights.lum = h;
+                w.global.lum = g;
+                let t = tone_table(&w).unwrap_or_else(|| vec![0.0; 2]);
+                assert!(t.windows(2).all(|p| p[1] >= p[0]), "{s} {m} {h} {g} {balance}");
+            }
+        }}}}
+    }
+
+    /// The shadows slider moves the shadows and barely the highlights, and the
+    /// highlights slider the other way round.
+    #[test]
+    fn each_lightness_keeps_to_its_zone() {
+        // Display-linear greys at about a quarter and three quarters of
+        // Oklab lightness.
+        let (dark, bright) = (0.016, 0.42);
+        let base = Wheels::default();
+        let mut up = Wheels::default();
+        up.shadows.lum = 1.0;
+        let lift = lightness_of(&up, dark) - lightness_of(&base, dark);
+        let spill = lightness_of(&up, bright) - lightness_of(&base, bright);
+        assert!(lift > 0.07, "the shadows barely moved: {lift}");
+        assert!(spill < lift * 0.4, "the shadows slider reached the highlights: {spill}");
+        let mut down = Wheels::default();
+        down.highlights.lum = -1.0;
+        let drop = lightness_of(&base, bright) - lightness_of(&down, bright);
+        let spill = lightness_of(&base, dark) - lightness_of(&down, dark);
+        assert!(drop > 0.07, "the highlights barely moved: {drop}");
+        assert!(spill < drop * 0.4, "the highlights slider reached the shadows: {spill}");
     }
 
     #[test]

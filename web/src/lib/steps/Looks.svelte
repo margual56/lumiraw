@@ -4,24 +4,31 @@
   import Viewer from '$lib/components/Viewer.svelte';
   import Compare from '$lib/components/Compare.svelte';
   import Slider from '$lib/components/Slider.svelte';
-  import CurvePlot, { moves } from '$lib/components/CurvePlot.svelte';
   import CurveEditor from '$lib/components/CurveEditor.svelte';
   import CubeLoader from '$lib/components/CubeLoader.svelte';
   import ColourMixer from '$lib/components/ColourMixer.svelte';
   import ColourGrading from '$lib/components/ColourGrading.svelte';
+  import Section from '$lib/components/Section.svelte';
   import { app } from '$lib/state.svelte.js';
-  import { t, n } from '$lib/i18n.svelte.js';
+  import { t } from '$lib/i18n.svelte.js';
   import { lookLabel, lookDescription } from '$lib/format.js';
+  import { lookControls } from '$lib/looks.js';
 
   /** The picture with and without the grade, or the picture alone, which
    *  is where the 100 % view and the histogram are. */
   let wipe = $state(true);
 
-  /** A look is named, not copied in: its table stays in the worker, and the
-   *  curves below stay the photographer's own, drawn on top of it. */
+  /** A look is a setting of the controls below: choosing one fills in the
+   *  curves, the mixer, the wheels and monochrome, and from there they are
+   *  the photographer's to move. "None" puts them back to nothing. */
   function choose(look) {
-    app.settings.look = look.id === 'none' ? '' : look.id;
+    const id = look.id === 'none' ? '' : look.id;
+    app.settings = { ...app.settings, ...lookControls(id), look: id };
   }
+
+  const chosen = $derived(app.looks.find((l) => l.id === (app.settings.look || 'none')));
+  const effected = $derived(app.settings.monochrome > 0 || app.settings.vignette > 0
+                            || app.settings.grain > 0);
 
   const percent = (v) => `${Math.round(v * 100)}%`;
   const amount = (v) => (v > 0 ? percent(v) : t('grade.off'));
@@ -30,10 +37,10 @@
 <div class="stage">
   <div class="view">
     {#if wipe}
-      <Compare before={app.ungraded.image} after={app.preview.image} busy={app.busy}
+      <Compare before={app.ungraded.image} after={app.preview.image} busy={app.busy && !app.live}
                beforeLabel={t('grade.without')} afterLabel={t('grade.with')} />
     {:else}
-      <Viewer src={app.preview.image} busy={app.busy} />
+      <Viewer src={app.preview.image} busy={app.busy && !app.live} />
     {/if}
     <div class="mode" role="radiogroup" aria-label={t('grade.view')}>
       <button type="button" role="radio" aria-checked={wipe} onclick={() => (wipe = true)}>
@@ -46,52 +53,32 @@
     <h2>{t('grade.title')}<GuideLink /></h2>
     <p class="lede">{@html t('grade.lede')}</p>
 
-    <!-- An empty grid with only the diagonal in it reads as something that
-         failed to load; the plot appears once there is a curve to show. -->
-    {#if app.curve && ['rgb', 'r', 'g', 'b'].some((k) => moves(app.curve[k]))}
-      <CurvePlot curve={app.curve} />
-    {/if}
-
-    <div class="list" role="radiogroup" aria-label={t('grade.title')}>
+    <div class="looks" role="radiogroup" aria-label={t('grade.looks')}>
       {#each app.looks as look (look.id)}
         <button type="button" role="radio" aria-checked={(app.settings.look || 'none') === look.id}
-                onclick={() => choose(look)}>
-          <b>{lookLabel(look.id, look.label)}</b>
-          <span>{lookDescription(look.id, look.description)}</span>
+                title={lookDescription(look.id, look.description)} onclick={() => choose(look)}>
+          {lookLabel(look.id, look.label)}
         </button>
       {/each}
     </div>
-
-    {#if app.settings.look}
-      <Slider label={t('grade.strength')} bind:value={app.settings.look_strength}
-              min={0} max={1} step={0.05} format={percent} />
+    {#if chosen}
+      <p class="about">{lookDescription(chosen.id, chosen.description)}</p>
     {/if}
 
-    <CurveEditor />
-
-    <ColourMixer />
-
-    <ColourGrading />
-
-    <CubeLoader />
-
-    <h3>{t('grade.effects')}</h3>
-    <p class="lede small">{t('grade.effects.why')}</p>
-    <Slider label={t('grade.monochrome')} bind:value={app.settings.monochrome}
-            min={0} max={1} step={0.05} format={amount} />
-    <Slider label={t('grade.vignette')} bind:value={app.settings.vignette}
-            min={0} max={1} step={0.05} format={amount} />
-    <Slider label={t('grade.grain')} bind:value={app.settings.grain}
-            min={0} max={1} step={0.05} format={amount} />
-
-    <p class="points">
-      {#if app.curve?.identity}
-        {t('grade.nocurve')}
-      {:else}
-        {t('grade.points', { count: n(app.curve?.points
-            ? Object.values(app.curve.points).reduce((a, b) => a + b, 0) : 0, 0) })}
-      {/if}
-    </p>
+    <div class="tools">
+      <CurveEditor />
+      <ColourMixer />
+      <ColourGrading />
+      <Section title={t('grade.effects')} edited={effected}>
+        <Slider label={t('grade.monochrome')} bind:value={app.settings.monochrome}
+                min={0} max={1} step={0.05} format={amount} />
+        <Slider label={t('grade.vignette')} bind:value={app.settings.vignette}
+                min={0} max={1} step={0.05} format={amount} />
+        <Slider label={t('grade.grain')} bind:value={app.settings.grain}
+                min={0} max={1} step={0.05} format={amount} />
+      </Section>
+      <CubeLoader />
+    </div>
   </aside>
 </div>
 
@@ -108,24 +95,18 @@
       &[aria-checked='true'] { color: var(--color-ink); border-color: var(--color-accent); }
     }
   }
-  h3 {
-    margin: 18px 0 4px; @include section-label;
+  .looks {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 12px 0 0;
+    button {
+      padding: 7px 8px; min-width: 0; text-align: left; font: inherit; font-size: 12px;
+      font-weight: 500; color: var(--color-muted); cursor: pointer;
+      background: var(--color-panel-2); border: 1px solid var(--color-line); border-radius: 7px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      @include phone { padding: 10px; font-size: 13.5px; }
+      &:hover { color: var(--color-ink); border-color: var(--color-muted); filter: none; }
+      &[aria-checked='true'] { color: var(--color-ink); border-color: var(--color-accent); }
+    }
   }
-  .small { @include small(11.8px); margin-bottom: 10px; }
-  .list { display: flex; flex-direction: column; gap: 6px; margin: 14px 0; }
-  .list button {
-    display: flex; flex-direction: column; gap: 1px; text-align: left;
-    background: var(--color-panel-2); border: 1px solid var(--color-line); border-radius: 8px;
-    padding: 8px 10px; cursor: pointer; color: var(--color-ink); font: inherit;
-    font-weight: 400;
-    &:hover { border-color: var(--color-muted); filter: none; }
-    &[aria-checked="true"] { border-color: var(--color-accent); background: var(--color-panel); }
-    b { font-size: 12.5px; font-weight: 600; @include phone { font-size: 14px; } }
-    span { color: var(--color-muted); @include small(11.5px); }
-    @include phone { padding: 10px 12px; }
-  }
-  .points {
-    margin: 6px 0 0; color: var(--color-muted); @include small(11.5px);
-    font-variant-numeric: tabular-nums;
-  }
+  .about { margin: 6px 2px 0; color: var(--color-muted); @include small(11.5px); min-height: 1.5em; }
+  .tools { margin-top: 14px; }
 </style>

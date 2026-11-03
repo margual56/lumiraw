@@ -1,6 +1,7 @@
 <script>
   /** Eight hue bands, one at a time. */
   import Slider from '$lib/components/Slider.svelte';
+  import Section from '$lib/components/Section.svelte';
   import { app } from '$lib/state.svelte.js';
   import { t } from '$lib/i18n.svelte.js';
 
@@ -43,9 +44,8 @@
   const shown = (v) => (v === 0 ? t('grade.off') : `${v > 0 ? '+' : ''}${Math.round(v * 100)}`);
 </script>
 
-<details class="mixer">
-  <summary>{t('mixer.title')}</summary>
-  <p class="lede small">{t('mixer.lede')}</p>
+<Section title={t('mixer.title')} edited={anyTouched}>
+  <p class="lede small first">{t('mixer.lede')}</p>
 
   <div class="chips" role="radiogroup" aria-label={t('mixer.title')}>
     {#each BANDS as item (item.key)}
@@ -67,14 +67,13 @@
   <button class="ghost" type="button" onclick={clear} disabled={!anyTouched}>
     {t('mixer.reset')}
   </button>
-</details>
+</Section>
 
 <style lang="scss">
   @use '../../styles/type' as *;
   @use '../../styles/breakpoints' as *;
-  .mixer { margin-top: 16px; border-top: 1px solid var(--color-line); padding-top: 12px; }
-  summary { cursor: pointer; color: var(--color-muted); @include small(12px); }
   .small { @include small(11.5px); margin: 10px 0; }
+  .first { margin-top: 0; }
   .chips {
     display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 12px;
   }

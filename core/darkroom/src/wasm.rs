@@ -569,20 +569,6 @@ pub extern "C" fn ar_lut_clear() -> i32 {
     0
 }
 
-/// Hold a named look's table, fetched by the page when it was first chosen.
-#[no_mangle]
-pub extern "C" fn ar_look_load(id_ptr: *const u8, id_len: usize,
-                               ptr: *const u8, len: usize) -> i32 {
-    let id = String::from_utf8_lossy(unsafe { slice(id_ptr, id_len) }).into_owned();
-    match crate::load_look(&id, unsafe { slice(ptr, len) }) {
-        Ok(()) => {
-            set_json(json!({"look": id}));
-            0
-        }
-        Err(why) => set_error(&why, "bad_look"),
-    }
-}
-
 /// Wheels matching the open photograph's colour to a reference picture's,
 /// sRGB RGBA of `w` by `h`.
 #[no_mangle]

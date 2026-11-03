@@ -138,9 +138,12 @@
         });
       } else if ([REFOCUS, EXPOSURE, WB, VIBRANCE, LOCAL, LOOKS].includes(step)
                  && app.preview.key !== key) {
-        const out = await api.render({ id: app.id, settings: app.settings, size: 1300 });
+        const live = app.live;
+        const out = await api.render({ id: app.id, settings: app.settings, size: 1300, live });
         done(() => {
-          app.preview = { key, image: out.image };
+          // A frame made while dragging is a quick one, and is made again
+          // properly once the control is let go.
+          app.preview = { key: live ? `${key}|live` : key, image: out.image };
           app.focus = out.report?.focus ?? app.focus;
           app.toggles = out.toggles;
         });
@@ -177,11 +180,31 @@
     }
   }
 
+  // One refresh at a time: what changes while one is out waits for it, and
+  // only the latest of those goes next.
+  let running = false;
+  let wanted = null;
+  async function schedule(step, key) {
+    wanted = { step, key };
+    if (running) return;
+    running = true;
+    try {
+      while (wanted) {
+        const next = wanted;
+        wanted = null;
+        await refresh(next.step, next.key);
+      }
+    } finally {
+      running = false;
+    }
+  }
+
   $effect(() => {
     const step = app.step;
     const key = settingsKey();
     if (!app.id) return;
-    const timer = setTimeout(() => refresh(step, key), 200);
+    // Settled controls wait for a pause; a dragged one goes straight away.
+    const timer = setTimeout(() => schedule(step, key), app.live ? 0 : 200);
     return () => clearTimeout(timer);
   });
 

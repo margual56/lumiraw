@@ -13,7 +13,7 @@ import numpy as np
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "web/src/lib/wasm/looks"
+OUT = ROOT / "tools/looks"
 SIZE = 33
 
 

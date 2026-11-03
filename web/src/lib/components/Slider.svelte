@@ -8,6 +8,9 @@
     tone = '',
     commitOnRelease = false,
     onpreview = null,
+    // Told true while the range is held and false once it is let go, for a
+    // picture that should follow the thumb as it moves.
+    onactive = null,
   } = $props();
 
   // Ties the label to the range, so it is read out with it and a click on
@@ -41,5 +44,9 @@
     value={shown}
     oninput={input}
     onchange={commit}
+    onpointerdown={() => onactive?.(true)}
+    onpointerup={() => onactive?.(false)}
+    onpointercancel={() => onactive?.(false)}
+    onlostpointercapture={() => onactive?.(false)}
   />
 </div>

@@ -6,6 +6,7 @@
    */
   import ColourWheel from '$lib/components/ColourWheel.svelte';
   import Slider from '$lib/components/Slider.svelte';
+  import Section from '$lib/components/Section.svelte';
   import { app, blankWheels } from '$lib/state.svelte.js';
   import { t, signed } from '$lib/i18n.svelte.js';
   import * as api from '$lib/api.js';
@@ -18,7 +19,7 @@
   let picker = $state(null);
 
   const wheels = $derived(app.settings.wheels ?? blankWheels());
-  const touched = $derived(ZONES.some((z) => wheels[z].amount > 0.005 || wheels[z].lum !== 0)
+  const touched = $derived(ZONES.some((z) => wheels[z].amount >= 0.0005 || wheels[z].lum !== 0)
                            || wheels.balance !== 0 || wheels.blending !== 0.5);
 
   function set(zone, value) {
@@ -46,9 +47,8 @@
   const share = (v) => `${Math.round(v * 100)}%`;
 </script>
 
-<details class="grading" open={touched || undefined}>
-  <summary>{t('wheels.title')}</summary>
-  <p class="lede small">{t('wheels.lede')}</p>
+<Section title={t('wheels.title')} edited={touched}>
+  <p class="lede small first">{t('wheels.lede')}</p>
 
   <div class="wheels">
     {#each ZONES as zone (zone)}
@@ -57,10 +57,10 @@
   </div>
 
   <Slider label={t('wheels.balance')} value={wheels.balance} min={-1} max={1} step={0.05}
-          format={offset} commitOnRelease={true}
+          format={offset} commitOnRelease={true} onactive={(on) => (app.live = on)}
           onpreview={(v) => (app.settings.wheels = { ...wheels, balance: v })} />
   <Slider label={t('wheels.blending')} value={wheels.blending} min={0} max={1} step={0.05}
-          format={share} commitOnRelease={true}
+          format={share} commitOnRelease={true} onactive={(on) => (app.live = on)}
           onpreview={(v) => (app.settings.wheels = { ...wheels, blending: v })} />
 
   <div class="actions">
@@ -74,14 +74,13 @@
   <input bind:this={picker} type="file" hidden
          accept={`image/jpeg,image/png,image/webp,${RAW_ACCEPT}`} onchange={match} />
   <p class="small note">{note || t('match.how')}</p>
-</details>
+</Section>
 
 <style lang="scss">
   @use '../../styles/type' as *;
   @use '../../styles/breakpoints' as *;
-  .grading { margin-top: 16px; border-top: 1px solid var(--color-line); padding-top: 12px; }
-  summary { cursor: pointer; color: var(--color-muted); @include small(12px); }
   .small { @include small(11.5px); margin: 10px 0; }
+  .first { margin-top: 0; }
   .note { color: var(--color-muted); margin-top: 6px; }
   .wheels {
     display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; margin: 8px 0 12px;

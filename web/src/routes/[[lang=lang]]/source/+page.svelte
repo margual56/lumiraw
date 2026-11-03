@@ -37,7 +37,6 @@
       comprimido. Es el código Rust de {@render f('core/')} compilado a WebAssembly.</li>
     <li>La lista de cámaras de lensfun, y luego solo los objetivos de la montura de tu cámara
       ({@render f('web/src/lib/wasm/lenses/')}).</li>
-    <li>Las tablas de un estilo de color, solo si lo eliges ({@render f('web/src/lib/wasm/looks/')}).</li>
   </ul>
   <p>
     No hay scripts de terceros, ni fuentes externas, ni estadísticas. El
@@ -89,9 +88,11 @@
     <li><strong>En Oklab</strong>: punto negro y blanco, contraste, sombras/medios/luces,
       ruido de color y de luminancia, intensidad, recuperación de enfoque y nitidez.</li>
     <li><strong>Color</strong>: mezclador ({@render f('core/src/mixer.rs')}), blanco y negro y
-      efectos ({@render f('core/src/effects.rs')}), el estilo ({@render f('core/src/looks.rs')},
-      {@render f('core/src/lut.rs')}), tus curvas ({@render f('core/src/curve.rs')}), tu .cube,
-      viñeteo y grano.</li>
+      efectos ({@render f('core/src/effects.rs')}), las ruedas de color
+      ({@render f('core/src/wheels.rs')}), tus curvas ({@render f('core/src/curve.rs')}), tu .cube
+      ({@render f('core/src/lut.rs')}), viñeteo y grano. Un estilo es solo un ajuste de esos
+      controles ({@render f('web/src/lib/looks.json')}, a partir de
+      {@render f('core/src/looks.rs')}).</li>
   </ol>
   <p>
     Cada paso automático anota lo que decidió en un informe
@@ -225,7 +226,6 @@
       compressed. It's the Rust code in {@render f('core/')} compiled to WebAssembly.</li>
     <li>lensfun's list of cameras, then only the lenses for your camera's mount
       ({@render f('web/src/lib/wasm/lenses/')}).</li>
-    <li>A look's tables, only if you pick that look ({@render f('web/src/lib/wasm/looks/')}).</li>
   </ul>
   <p>
     No third-party scripts, no external fonts, no analytics. {@render f('web/package.json')}
@@ -278,9 +278,11 @@
     <li><strong>In Oklab</strong>: black and white point, contrast, shadows/midtones/highlights,
       colour and luminance noise, vibrance, focus recovery and sharpening.</li>
     <li><strong>Grade</strong>: the colour mixer ({@render f('core/src/mixer.rs')}), black and
-      white and effects ({@render f('core/src/effects.rs')}), the look
-      ({@render f('core/src/looks.rs')}, {@render f('core/src/lut.rs')}), your curves
-      ({@render f('core/src/curve.rs')}), your .cube, vignette and grain.</li>
+      white and effects ({@render f('core/src/effects.rs')}), the colour wheels
+      ({@render f('core/src/wheels.rs')}), your curves ({@render f('core/src/curve.rs')}), your
+      .cube ({@render f('core/src/lut.rs')}), vignette and grain. A look is only a setting of
+      those controls ({@render f('web/src/lib/looks.json')}, fitted from
+      {@render f('core/src/looks.rs')}).</li>
   </ol>
   <p>
     Each automatic step writes down what it decided in a report

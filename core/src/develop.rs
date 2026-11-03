@@ -34,11 +34,44 @@ pub struct Development {
     /// The whole frame at full size, corrected, framed and healed, while
     /// regions of it are being looked at.
     full_frame: Option<(String, Vec<crate::local::Spot>, Image)>,
+    /// The last preview as it stood before `finish`, with what it was
+    /// developed from, so that moving a wheel, a curve or the mixer develops only
+    /// the end of the pipeline again; see `Graded`.
+    graded: Option<Graded>,
     /// The sky and subject masks found for a framing, keyed on it.
     masks: Option<(String, crate::masks::Masks)>,
     /// Whether deep noise reduction was asked for when the file was opened,
     /// and what it measured if it could run.
     deep_denoise: Option<Option<crate::denoise::Noise>>,
+}
+
+/// A preview developed up to `finish`, and everything that went into it.
+struct Graded {
+    /// The settings with everything `finish` reads put back to its default.
+    settings: Settings,
+    long_edge: Option<usize>,
+    crop: bool,
+    /// Which of the sky and subject masks there were: the subject arrives
+    /// once its model is loaded, with no setting changing.
+    masks: (bool, bool),
+    image: Image,
+    report: Report,
+}
+
+/// The settings with what only `finish` reads put back to its defaults: two
+/// renders that agree on these agree on everything before `finish`.
+fn before_finish(s: &Settings) -> Settings {
+    let d = Settings::default();
+    Settings {
+        mixer: d.mixer,
+        monochrome: d.monochrome,
+        wheels: d.wheels,
+        curves: d.curves,
+        lut: d.lut,
+        vignette: d.vignette,
+        grain: d.grain,
+        ..s.clone()
+    }
 }
 
 /// A piece of the frame developed at full size; see `render_region`.
@@ -129,6 +162,7 @@ impl Development {
             baseline: None,
             decided_full: None,
             full_frame: None,
+            graded: None,
             masks: None,
             deep_denoise: None,
         }
@@ -144,6 +178,7 @@ impl Development {
             self.lens_match = found;
             self.cache.clear();
             self.baseline = None;
+            self.graded = None;
         }
     }
 
@@ -220,6 +255,18 @@ impl Development {
         if long_edge.is_none() {
             self.release_region();
         }
+        let masks = self.masks_for(settings);
+        let mask_kinds = (masks.get(crate::masks::Kind::Sky).is_some(),
+                          masks.get(crate::masks::Kind::Subject).is_some());
+        let upstream = before_finish(settings);
+        if let Some(g) = &self.graded {
+            if long_edge.is_some() && g.long_edge == long_edge && g.crop == crop
+                && g.masks == mask_kinds && g.settings == upstream {
+                let mut report = g.report.clone();
+                let window = Window::whole(&g.image);
+                return (finish(g.image.clone(), settings, window, &mut report), report);
+            }
+        }
         let mut report = Report::new();
         let (src, lens_info, eff_crop) = self.corrected(settings, long_edge, crop, &mut progress);
         self.report_lens(settings, &lens_info, &mut report);
@@ -241,7 +288,6 @@ impl Development {
             f
         });
 
-        let masks = self.masks_for(settings);
         let native_noise_floor = self.native_noise_floor();
         // The width was measured at a fixed working size, so the blur it
         // describes is that many pixels *there*.
@@ -282,6 +328,11 @@ impl Development {
                 report.add("framing", hint.to_json());
             }
         }
+        // Only previews are kept: a full-size frame is too big to hold twice.
+        self.graded = long_edge.map(|_| Graded {
+            settings: upstream, long_edge, crop, masks: mask_kinds,
+            image: rgb.clone(), report: report.clone(),
+        });
         let window = Window::whole(&rgb);
         (finish(rgb, settings, window, &mut report), report)
     }
@@ -417,12 +468,6 @@ fn finish(mut rgb: Image, settings: &Settings, window: Window, report: &mut Repo
         }
         report.add("wheels", json!({"applied": !wheels.is_identity()}));
 
-        // The named look sits under the photographer's own curves, the way a
-        // camera profile sits under every slider.
-        let look_applied = crate::lut::apply_named(&mut rgb, &settings.look, settings.look_strength);
-        report.add("look", json!({"applied": look_applied, "id": settings.look,
-                                  "strength": kit::round_to(settings.look_strength, 3)}));
-
         let counts = settings.curves.counts();
         report.add("curves", if settings.curves.is_identity() {
             json!({"applied": false})
@@ -455,9 +500,8 @@ impl Development {
     pub fn baseline(&mut self, settings: &Settings, long_edge: Option<usize>) -> Image {
         let mut flat = settings.clone();
         flat.enabled.clear();
-        // The grade comes off the "before" for the same reason the look does.
+        // The grade comes off the "before": it is taste, not a correction.
         flat.curves = crate::curve::Stack::identity();
-        flat.look = String::new();
         flat.wheels = crate::wheels::Wheels::default();
         for (key, ..) in TOGGLES.iter() {
             // Hold on to what the user asked for themselves, drop what was
@@ -563,7 +607,6 @@ impl Development {
         s.wheels = crate::wheels::Wheels::default();
         s.mixer = crate::mixer::Mixer::default();
         s.curves = crate::curve::Stack::identity();
-        s.look = String::new();
         s.lut = 0.0;
         s.monochrome = 0.0;
         let (img, _) = self.render(&s, Some(crate::skin::SEARCH_EDGE), true, None);
@@ -740,6 +783,25 @@ mod tests {
         let mut graded = plain.clone();
         graded.wheels.global = crate::wheels::Wheel { hue: 40.0, amount: 1.0, lum: 0.0 };
         assert_eq!(dev.baseline(&graded, Some(64)).d, a.d, "the wheels reached the before");
+    }
+
+    /// A preview developed again with only the grade changed comes out the
+    /// same as one developed from nothing, and a change before the grade is
+    /// not missed.
+    #[test]
+    fn a_kept_preview_gives_the_same_picture() {
+        let mut graded = Settings::default();
+        graded.wheels.shadows = crate::wheels::Wheel { hue: 200.0, amount: 0.6, lum: 0.4 };
+        graded.vignette = 0.5;
+        let fresh = development().render(&graded, Some(64), true, None).0;
+        let mut dev = development();
+        dev.render(&Settings::default(), Some(64), true, None);
+        assert!(dev.graded.is_some(), "the preview was not kept");
+        assert_eq!(dev.render(&graded, Some(64), true, None).0.d, fresh.d);
+        let mut warmer = graded.clone();
+        warmer.temperature = 0.6;
+        let fresh = development().render(&warmer, Some(64), true, None).0;
+        assert_eq!(dev.render(&warmer, Some(64), true, None).0.d, fresh.d, "a stale kept preview");
     }
 
     /// Matched to its own picture with a tint graded in, a photograph gets

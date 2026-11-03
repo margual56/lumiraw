@@ -1,6 +1,8 @@
 <script>
   /** The four-channel curve editor: drag the handles, or move the regions. */
   import Slider from '$lib/components/Slider.svelte';
+  import Section from '$lib/components/Section.svelte';
+  import { untrack } from 'svelte';
   import { app } from '$lib/state.svelte.js';
   import { t } from '$lib/i18n.svelte.js';
 
@@ -14,7 +16,20 @@
   ];
   const REGIONS = ['shadows', 'darks', 'lights', 'highlights'];
 
-  let tab = $state('regions');
+  const pointed = (c) => ['rgb', 'r', 'g', 'b'].some((k) => c?.[k]?.length >= 2);
+  const shaped = (c) => pointed(c) || Object.values(c?.regions ?? {}).some((v) => v);
+  // Opened on the points when there are some (a look's curves are points),
+  // and on the region sliders, the easier start, when there are none.
+  let tab = $state(pointed(app.settings.curves) ? 'rgb' : 'regions');
+  const edited = $derived(shaped(app.settings.curves));
+  // A look arriving with points (or a photograph whose edit has them) moves
+  // off the empty region sliders onto the curve; only the curves are watched,
+  // so choosing the Regions tab by hand stays chosen.
+  $effect(() => {
+    const curves = app.settings.curves;
+    const regions = Object.values(curves?.regions ?? {}).some((v) => v);
+    if (pointed(curves) && !regions && untrack(() => tab) === 'regions') tab = 'rgb';
+  });
   let svg = $state(null);
   let dragging = $state(-1);
 
@@ -136,8 +151,7 @@
   }
 </script>
 
-<details class="editor">
-  <summary>{t('editor.title')}</summary>
+<Section title={t('editor.title')} {edited}>
 
   <div class="tabs" role="tablist">
     {#each TABS as item (item.key)}
@@ -161,6 +175,14 @@
       <line x1="0" y1={(SIZE * i) / 4} x2={SIZE} y2={(SIZE * i) / 4} class="grid" />
     {/each}
     <line x1="0" y1={SIZE} x2={SIZE} y2="0" class="diagonal" />
+    <!-- The other channels, faintly, so the whole grade is in one place. -->
+    {#each TABS.filter((x) => x.key !== 'regions' && x.key !== tab) as other (other.key)}
+      {@const shape = app.curve?.edited?.[other.key]}
+      {#if shape && app.settings.curves[other.key]?.length >= 2}
+        <path d={path(shape)} fill="none" stroke={other.colour} stroke-width="1.2"
+              stroke-linecap="round" opacity="0.35" />
+      {/if}
+    {/each}
     {#if table}
       <path d={path(table)} fill="none" stroke={active.colour} stroke-width="1.8"
             stroke-linecap="round" />
@@ -189,15 +211,13 @@
   {/if}
 
   <button class="ghost" type="button" onclick={reset}>{t('editor.reset')}</button>
-</details>
+</Section>
 
 <style lang="scss">
   @use '../../styles/type' as *;
   @use '../../styles/breakpoints' as *;
-  .editor { margin-top: 16px; border-top: 1px solid var(--color-line); padding-top: 12px; }
-  summary { cursor: pointer; color: var(--color-muted); @include small(12px); }
   .small { @include small(11.5px); margin: 10px 0; }
-  .tabs { display: flex; gap: 4px; margin-top: 12px; }
+  .tabs { display: flex; gap: 4px; }
   .tabs button {
     flex: 1; padding: 5px 2px; cursor: pointer; font: inherit; @include small(11.5px);
     @include phone { padding: 9px 2px; min-height: 40px; }

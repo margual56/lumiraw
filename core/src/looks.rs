@@ -1,17 +1,21 @@
-//! The named looks.
+//! The named looks. Each is a setting of the grade's own controls (curves,
+//! wheels, mixer, monochrome), kept with the page in `web/src/lib/looks.json`
+//! and filled in when the look is chosen; nothing renders a look as such.
+//! The controls are fitted to a film table by `bin/fitlooks.rs`.
 
 /// A named look.
 pub struct Look {
     pub id: &'static str,
     pub label: &'static str,
     pub description: &'static str,
-    /// The table's file in the Film Simulation collection.
+    /// The table in the Film Simulation collection the controls are fitted
+    /// to (by `tools/looks.py`, then `bin/fitlooks.rs`).
     pub from: &'static str,
 }
 
 /// Every look there is, "none" first.
 pub static LOOKS: [Look; 8] = [
-    Look { id: "none", label: "None", description: "Your corrections, no look on top", from: "" },
+    Look { id: "none", label: "None", description: "Clear the curves, mixer and wheels", from: "" },
     Look { id: "warm-portrait", label: "Warm portrait",
            description: "Warm, soft contrast, kind to skin",
            from: "Color/Kodak/Kodak Portra 400 2.png" },
@@ -73,6 +77,22 @@ mod tests {
             }
         }
         assert!(find("no such look").is_none());
+    }
+
+    /// Every look but "none" has its controls in the page's presets, and they
+    /// do something; "none" has none, and there is nothing else in there.
+    #[test]
+    fn every_look_has_its_controls() {
+        let presets: serde_json::Value =
+            serde_json::from_str(include_str!("../../web/src/lib/looks.json")).unwrap();
+        let presets = presets.as_object().unwrap();
+        for look in LOOKS.iter().filter(|l| l.id != "none") {
+            let p = presets.get(look.id).unwrap_or_else(|| panic!("{} has no controls", look.id));
+            let s = crate::grade::Settings::from_json(p);
+            assert!(!s.curves.is_identity() || !s.wheels.is_identity() || !s.mixer.is_identity(),
+                    "{}'s controls change nothing", look.id);
+        }
+        assert_eq!(presets.len(), LOOKS.len() - 1, "presets for looks that are not in the list");
     }
 
     /// Every look but "none" says where its table came from, and "none" has

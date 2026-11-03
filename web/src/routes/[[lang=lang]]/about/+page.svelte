@@ -192,8 +192,9 @@
       spots.</li>
     <li><strong>Before and after.</strong> A slider over the result, with every automatic
       correction listed and each one can be switched off.</li>
-    <li><strong>Grade.</strong> Seven film and colour looks, with tone curves, a colour mixer,
-      3D LUTs in .cube format, grain and vignetting on top.</li>
+    <li><strong>Grade.</strong> Tone curves, a colour mixer, colour wheels, 3D LUTs in .cube
+      format, grain and vignetting, and seven film and colour looks that set the curves, mixer
+      and wheels for you to carry on from.</li>
     <li><strong>Download.</strong> JPEG, PNG (8 or 16-bit), TIFF or WebP, at full size or
       smaller, down to 1080 px for social media. Several photos can be exported together as a
       zip.</li>

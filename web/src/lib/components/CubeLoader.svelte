@@ -1,5 +1,6 @@
 <script>
   /** Load a `.cube` file, and say plainly where it goes. */
+  import Section from '$lib/components/Section.svelte';
   import Slider from '$lib/components/Slider.svelte';
   import { app } from '$lib/state.svelte.js';
   import { t, n } from '$lib/i18n.svelte.js';
@@ -36,9 +37,8 @@
   }
 </script>
 
-<div class="cube">
-  <h3>{t('cube.title')}</h3>
-  <p class="lede small">{@html t('cube.lede')}</p>
+<Section title={t('cube.title')} edited={!!app.lut && app.settings.lut > 0}>
+  <p class="lede small first">{@html t('cube.lede')}</p>
 
   {#if app.lut}
     <p class="loaded">
@@ -58,16 +58,13 @@
   {#if problem}<p class="problem">{problem}</p>{/if}
 
   <input bind:this={input} type="file" accept=".cube" onchange={load} hidden />
-</div>
+</Section>
 
 <style lang="scss">
   @use '../../styles/type' as *;
   @use '../../styles/breakpoints' as *;
-  .cube { margin-top: 18px; }
-  h3 {
-    margin: 0 0 4px; @include section-label;
-  }
   .small { @include small(11.8px); margin-bottom: 10px; }
+  .first { margin-top: 0; }
   .loaded {
     margin: 0 0 10px; padding: 8px 10px; border-radius: 8px;
     background: var(--color-panel-2); color: var(--color-muted);

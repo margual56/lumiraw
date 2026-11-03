@@ -4,22 +4,13 @@
 use crate::Edit;
 use serde_json::{json, Value};
 
-/// Every named look, for the list. The tables are not here: the page fetches
-/// one when it is first chosen and hands it in with `load_look`.
+/// Every named look, for the list. A look is a setting of the grade's own
+/// controls, which the page holds (`web/src/lib/looks.json`) and fills in when
+/// one is chosen; nothing here renders it.
 pub fn looks() -> Value {
     json!({"looks": lumiraw_core::looks::LOOKS.iter().map(|l| json!({
         "id": l.id, "label": l.label, "description": l.description,
     })).collect::<Vec<_>>()})
-}
-
-/// Hold a named look's table, packed as `tools/looks.py` packs it. Refused
-/// for a name that is not a look, so nothing can be parked under one.
-pub fn load_look(id: &str, bytes: &[u8]) -> Result<(), String> {
-    let look = lumiraw_core::looks::find(id).filter(|l| l.id != "none")
-        .ok_or_else(|| format!("there is no look called {id}"))?;
-    let lut = lumiraw_core::lut::Lut::from_bytes(look.label, bytes)?;
-    lumiraw_core::lut::set_named(look.id, lut);
-    Ok(())
 }
 
 /// The curves a settings object comes to, baked into tables as the pipeline

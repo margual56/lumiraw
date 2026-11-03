@@ -7,7 +7,7 @@ use rawler::rawsource::RawSource;
 use rawler::RawlerError;
 
 pub use rawler::CFA;
-use kit::{Mat3, Matrix3};
+use kit::{Mat3, Matrix3, Plane};
 
 /// Why a file could not be read, in a form the interface can say something
 /// useful about.
@@ -126,6 +126,37 @@ impl Raw {
         let black = self.black_at(x, y, c);
         let v = self.data[(y * self.width + x) * self.cpp + c];
         (v - black) / (self.white_for(colour) - black).max(1.0)
+    }
+
+    /// `normalised` for every photosite of a mosaic. The levels repeat over a
+    /// small tile, so they are worked out once per tile position.
+    pub fn normalised_mosaic(&self, cfa: &CFA) -> Plane {
+        debug_assert_eq!(self.cpp, 1);
+        let lcm = |a: usize, b: usize| {
+            let (mut x, mut y) = (a, b);
+            while y != 0 {
+                (x, y) = (y, x % y);
+            }
+            a / x * b
+        };
+        let tw = lcm(self.black.w.max(1), cfa.width.max(1));
+        let th = lcm(self.black.h.max(1), cfa.height.max(1));
+        let levels: Vec<(f32, f32)> = (0..th)
+            .flat_map(|y| (0..tw).map(move |x| (x, y)))
+            .map(|(x, y)| {
+                let black = self.black_at(x, y, 0);
+                (black, (self.white_for(cfa.color_at(y, x).min(2)) - black).max(1.0))
+            })
+            .collect();
+        let mut out = Plane::new(self.width, self.height);
+        let rows = out.d.chunks_exact_mut(self.width).zip(self.data.chunks_exact(self.width));
+        for (y, (dst, src)) in rows.enumerate() {
+            let tile = &levels[(y % th) * tw..][..tw];
+            for ((d, v), (black, range)) in dst.iter_mut().zip(src).zip(tile.iter().cycle()) {
+                *d = (v - black) / range;
+            }
+        }
+        out
     }
 }
 

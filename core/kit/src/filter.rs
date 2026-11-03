@@ -3,10 +3,7 @@
 
 use crate::image::{Image, Plane};
 
-// -------------------------------------------------------------------------
-// resampling, matches Pillow's `Image.resize(..., BILINEAR)`
-// -------------------------------------------------------------------------
-
+// Resampling, matches Pillow's `Image.resize(..., BILINEAR)`
 /// Pillow scales the triangle filter's support by the downscale factor, which
 /// is what makes its BILINEAR an antialiasing filter on the way down.
 fn coeffs(in_size: usize, out_size: usize) -> (usize, Vec<i32>, Vec<f32>) {
@@ -105,10 +102,7 @@ pub fn thumbnail(img: &Image, long_edge: usize) -> Image {
     resize_rgb(img, w, h)
 }
 
-// -------------------------------------------------------------------------
-// blurs
-// -------------------------------------------------------------------------
-
+// Blurs
 /// Separable box blur, normalised at the borders.
 pub fn box_blur(p: &Plane, r: usize) -> Plane {
     if r < 1 {

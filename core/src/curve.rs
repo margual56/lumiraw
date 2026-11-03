@@ -192,10 +192,7 @@ pub fn parametric(shadows: f32, darks: f32, lights: f32, highlights: f32) -> Cur
     Curve::new(&points)
 }
 
-// -------------------------------------------------------------------------
-// the stack the pipeline applies
-// -------------------------------------------------------------------------
-
+// The stack the pipeline applies
 /// The four curves a grade is made of.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Stack {
@@ -415,10 +412,7 @@ mod tests {
         assert!((c.at(1.0) - 0.93).abs() < 1e-4, "shoulder not held: {}", c.at(1.0));
     }
 
-    // ---------------------------------------------------------------------
-    // the stack
-    // ---------------------------------------------------------------------
-
+    // The stack
     fn grey(v: f32) -> Image {
         let mut img = Image::new(1, 1);
         for c in 0..3 {
@@ -513,10 +507,7 @@ mod tests {
     }
 
 
-    // ---------------------------------------------------------------------
-    // composition and the region sliders
-    // ---------------------------------------------------------------------
-
+    // Composition and the region sliders
     /// Composing has to mean composing, and it has to be free when either half
     /// has nothing to say.
     #[test]

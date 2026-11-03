@@ -108,7 +108,7 @@ pub fn derive(meta: &Meta, w: usize, h: usize, crop_factor: Option<f32>) -> Capt
     let sensor_w_mm = diag_mm * w as f32 / ((w * w + h * h) as f32).sqrt();
     p.pixel_pitch_um = sensor_w_mm * 1000.0 / (w.max(1) as f32);
 
-    // --- diffraction ------------------------------------------------------
+    // Diffraction.
     p.airy_um = 2.44 * LAMBDA_UM * p.aperture;
     p.diffraction_ratio = p.airy_um / p.pixel_pitch_um.max(0.1);
     // An Airy disc is well approximated by a Gaussian of sigma ~ 0.42*lambda*N;
@@ -121,7 +121,7 @@ pub fn derive(meta: &Meta, w: usize, h: usize, crop_factor: Option<f32>) -> Capt
             "ratio": round_to(p.diffraction_ratio, 1), "sigma": round_to(p.sharpen_sigma, 2)}}));
     }
 
-    // --- noise ------------------------------------------------------------
+    // Noise.
     // Doubling ISO costs a stop; doubling pixel area buys one back.
     let penalty = (p.iso.max(25.0) / 100.0).log2() - 2.0 * (p.pixel_pitch_um.max(0.5) / 4.0).log2();
     p.noise_prior = (penalty / 7.0).clamp(0.0, 1.0);
@@ -131,7 +131,7 @@ pub fn derive(meta: &Meta, w: usize, h: usize, crop_factor: Option<f32>) -> Capt
             "params": {"iso": p.iso as i64, "stops": round_to(p.usable_stops, 1)}}));
     }
 
-    // --- camera shake -----------------------------------------------------
+    // Camera shake.
     // The hand-holding rule only describes a hand.
     if p.shutter_s > 0.0 && p.focal35_mm > 0.0 {
         let handheld = 1.0 - kit::smoothstep(0.5, 2.0, p.shutter_s);
@@ -143,7 +143,7 @@ pub fn derive(meta: &Meta, w: usize, h: usize, crop_factor: Option<f32>) -> Capt
         }
     }
 
-    // --- what kind of picture is this ------------------------------------
+    // What kind of picture is this.
     p.tele_bias = ((p.focal35_mm.max(8.0) / 45.0).log2() / 2.0).clamp(-1.0, 1.0);
 
     if p.exposure_comp.abs() > 0.15 {

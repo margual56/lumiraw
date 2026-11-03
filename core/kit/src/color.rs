@@ -34,10 +34,7 @@ pub fn bradford_adaptation(white: [f32; 3]) -> Mat3 {
         .mul(&crate::matrix::Matrix3(scale).mul(&SRGB_TO_BRADFORD))
 }
 
-// -------------------------------------------------------------------------
-// transfer functions
-// -------------------------------------------------------------------------
-
+// Transfer functions
 /// The sRGB curves, exactly, for building the tables below and for checking
 /// them against.
 pub fn srgb_encode_exact(x: f32) -> f32 {
@@ -144,10 +141,7 @@ pub fn luminance_px(px: &[f32]) -> f32 {
     0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2]
 }
 
-// -------------------------------------------------------------------------
 // Oklab (Björn Ottosson).  Input/output is *linear* sRGB.
-// -------------------------------------------------------------------------
-
 #[inline]
 pub fn rgb_to_oklab_px(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     let l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b;
@@ -189,8 +183,9 @@ pub(crate) fn gamut_fold(ratio: f32) -> f32 {
     if ratio <= GAMUT_KNEE {
         return ratio;
     }
+    static SCALE: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
     let (t, l, p) = (GAMUT_KNEE, GAMUT_LIMIT, GAMUT_POWER);
-    let scale = (l - t) / (((1.0 - t) / (l - t)).powf(-p) - 1.0).powf(1.0 / p);
+    let scale = *SCALE.get_or_init(|| (l - t) / (((1.0 - t) / (l - t)).powf(-p) - 1.0).powf(1.0 / p));
     let x = (ratio - t) / scale;
     t + scale * x / (1.0 + x.powf(p)).powf(1.0 / p)
 }
@@ -204,8 +199,7 @@ pub fn to_gamut(lightness: &Plane, a: &Plane, b: &Plane) -> Image {
         let l = lightness.d[i].clamp(0.0, 1.0);
         let (aa, bb) = (a.d[i], b.d[i]);
         let (mut r, mut g, mut bl) = oklab_to_rgb_px(l, aa, bb);
-        // Chroma this low is inside sRGB at any lightness a picture has, so the
-        // search is spent only where it can matter.
+        // Chroma under 0.03 is inside sRGB at any lightness a picture has.
         let chroma = aa.hypot(bb);
         let inside = fits(r, g, bl);
         if chroma > 0.03 || !inside {

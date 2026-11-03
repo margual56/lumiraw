@@ -358,10 +358,7 @@ impl Skin {
     }
 }
 
-// -------------------------------------------------------------------------
-// region sampling
-// -------------------------------------------------------------------------
-
+// Region sampling
 /// Pixels inside a rectangle given in fractions of the kept `frame`, with blown
 /// ones dropped.
 pub fn sample_rect(img: &Image, rect: Rect, frame: Option<Rect>) -> Option<Vec<[f32; 3]>> {
@@ -385,10 +382,7 @@ pub fn sample_rect(img: &Image, rect: Rect, frame: Option<Rect>) -> Option<Vec<[
     Some(if keep.len() >= 16 { keep } else { all })
 }
 
-// -------------------------------------------------------------------------
-// scene-linear stages
-// -------------------------------------------------------------------------
-
+// Scene-linear stages
 /// White balance, on the frame and on its measuring thumbnail alike.
 pub fn apply_white_balance(img: &mut Image, thumb: &mut Image, s: &Settings, p: &Preset,
                            frame: Option<Rect>, d: &mut Decisions, frozen: bool,
@@ -629,10 +623,7 @@ pub fn filmic(img: &mut Image) {
     }
 }
 
-// -------------------------------------------------------------------------
-// perceptual stages (Oklab)
-// -------------------------------------------------------------------------
-
+// Perceptual stages (Oklab)
 /// Steps in the contrast curve's per-render table.
 const CURVE_STEPS: usize = 4096;
 
@@ -699,7 +690,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
         }
     }
 
-    // --- black/white point ------------------------------------------------
+    // Black/white point.
     let levels = if frozen {
         d.levels
     } else {
@@ -726,7 +717,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
         light_new.d.copy_from_slice(&lightness.d);
     }
 
-    // --- contrast ---------------------------------------------------------
+    // Contrast.
     let (amount, pivot) = if frozen {
         d.contrast
     } else {
@@ -753,7 +744,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
         }
     }
 
-    // --- tone zones -------------------------------------------------------
+    // Tone zones.
     // The user's own shadows/midtones/highlights, on top of whatever the
     // automatic curve decided.
     if s.shadows != 0.0 || s.midtones != 0.0 || s.highlights != 0.0 {
@@ -778,7 +769,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     }
     drop(lightness);
 
-    // --- colour noise -----------------------------------------------------
+    // Colour noise.
     // The photographer's amount works from the measured one rather than
     // replacing it, so "a little more" means a little more for this frame.
     let auto_chroma = if p.denoise { ((noise - 0.18) / 0.5).clamp(0.0, 1.0) * 0.85 } else { 0.0 };
@@ -800,7 +791,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
                        json!({"noise": round_to(noise, 3)}));
     }
 
-    // --- luminance noise --------------------------------------------------
+    // Luminance noise.
     // Allowed further than the automation goes on its own (0.85 against 0.55),
     // because the photographer can see what it costs in texture and the
     // automation cannot.
@@ -821,7 +812,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
                        json!({"noise": round_to(noise, 3)}));
     }
 
-    // --- vibrance ---------------------------------------------------------
+    // Vibrance.
     let mut chroma = Plane::new(img.w, img.h);
     for i in 0..n {
         chroma.d[i] = a.d[i].hypot(b.d[i]);
@@ -862,7 +853,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     }
     drop(chroma);
 
-    // --- focus recovery ---------------------------------------------------
+    // Focus recovery.
     // Before sharpening, because the two are not the same thing and the order
     // matters.
     if s.refocus > 0.0 && s.on("refocus") && focus_sigma > 0.0 {
@@ -877,7 +868,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
         report.skipped("focus recovery", reason, json!({}));
     }
 
-    // --- sharpening -------------------------------------------------------
+    // Sharpening.
     let amount = p.sharpen * (1.0 - 0.75 * noise) * render_scale.clamp(0.25, 1.0);
     if s.on("sharpen") && amount > 0.02 {
         let blurred = kit::gaussian_blur(&light_new, sharpen_sigma);
@@ -933,10 +924,7 @@ pub fn recover_focus(l: &mut Plane, sigma: f32, amount: f32, noise: f32) -> usiz
     rounds
 }
 
-// -------------------------------------------------------------------------
-// entry point
-// -------------------------------------------------------------------------
-
+// Entry point
 /// Where each stage sits along the run, for the progress bar.  Stage *codes*,
 /// not sentences: the interface names them in its own language.
 pub const STAGE_MARKS: [(f32, &str); 7] = [

@@ -7,11 +7,11 @@ use kit::Image;
 /// units.
 pub const GRAIN_MAX: f32 = 0.012;
 
-/// The most the corners may be darkened. Vintage used 0.22.
+/// The most the corners may be darkened.
 pub const VIGNETTE_MAX: f32 = 0.35;
 
 /// Where the corner falloff starts, as a fraction of the distance to the
-/// corner. Every look in `styles.rs` used this same figure.
+/// corner.
 const VIGNETTE_START: f32 = 0.45;
 
 /// How many grains fit across the long edge of the frame.
@@ -34,22 +34,6 @@ fn lattice_normal(x: i64, y: i64) -> f32 {
     (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos()
 }
 
-/// The grain field at a pixel, with unit variance at whatever scale it is
-/// sampled, as the picture would look reduced to this size.
-fn grain_at(x: usize, y: usize, per_pixel: f32) -> f32 {
-    if per_pixel >= 1.0 {
-        return lattice_normal(x as i64, y as i64) / per_pixel;
-    }
-    let (u, v) = ((x as f32 + 0.5) * per_pixel, (y as f32 + 0.5) * per_pixel);
-    let (x0, y0) = (u.floor(), v.floor());
-    let (fx, fy) = (u - x0, v - y0);
-    let (x0, y0) = (x0 as i64, y0 as i64);
-    let w = [(1.0 - fx) * (1.0 - fy), fx * (1.0 - fy), (1.0 - fx) * fy, fx * fy];
-    let n = w[0] * lattice_normal(x0, y0) + w[1] * lattice_normal(x0 + 1, y0)
-        + w[2] * lattice_normal(x0, y0 + 1) + w[3] * lattice_normal(x0 + 1, y0 + 1);
-    n / (w.iter().map(|k| k * k).sum::<f32>()).sqrt()
-}
-
 /// Toward grey, by a panchromatic-with-a-yellow-filter mix.
 pub fn monochrome(img: &mut Image, amount: f32) {
     let a = amount.clamp(0.0, 1.0);
@@ -64,60 +48,102 @@ pub fn monochrome(img: &mut Image, amount: f32) {
     }
 }
 
-/// Normalised distance from the centre, 1.0 at the corners.
-fn radius_at(x: usize, y: usize, w: usize, h: usize) -> f32 {
-    let cy = ((h as f32 - 1.0) / 2.0).max(1.0);
-    let cx = ((w as f32 - 1.0) / 2.0).max(1.0);
-    let ny = (y as f32 - (h as f32 - 1.0) / 2.0) / cy;
-    let nx = (x as f32 - (w as f32 - 1.0) / 2.0) / cx;
-    (nx * nx + ny * ny).sqrt() / std::f32::consts::SQRT_2
-}
-
-/// Darken toward the corners.
-pub fn vignette(img: &mut Image, amount: f32) {
-    vignette_in(img, amount, Window::whole(img));
-}
-
-/// `vignette` on a piece of a frame, placed where `window` says it sits.
+/// Darken toward the corners of the frame `window` places this image in.
 pub fn vignette_in(img: &mut Image, amount: f32, window: Window) {
     let a = amount.clamp(0.0, 1.0) * VIGNETTE_MAX;
     if a <= 0.0 {
         return;
     }
-    for y in 0..img.h {
-        for x in 0..img.w {
-            let r = radius_at(x + window.x, y + window.y, window.w, window.h);
+    let (w, h) = (window.w as f32, window.h as f32);
+    let cx = ((w - 1.0) / 2.0).max(1.0);
+    let cy = ((h - 1.0) / 2.0).max(1.0);
+    let width = img.w;
+    for (y, row) in img.px_mut().chunks_exact_mut(width).enumerate() {
+        let ny = ((y + window.y) as f32 - (h - 1.0) / 2.0) / cy;
+        for (x, px) in row.iter_mut().enumerate() {
+            let nx = ((x + window.x) as f32 - (w - 1.0) / 2.0) / cx;
+            // Normalised distance from the centre, 1.0 at the corners.
+            let r = (nx * nx + ny * ny).sqrt() / std::f32::consts::SQRT_2;
             let falloff = 1.0 - a * kit::smoothstep(VIGNETTE_START, 1.0, r);
-            let i = (y * img.w + x) * 3;
-            for c in 0..3 {
-                img.d[i + c] *= falloff;
+            for v in px.iter_mut() {
+                *v *= falloff;
             }
         }
     }
 }
 
-/// Luminance grain, strongest in the midtones as on real film.
-pub fn grain(img: &mut Image, amount: f32) {
-    grain_in(img, amount, Window::whole(img));
-}
-
-/// `grain` on a piece of a frame: the same grains the whole frame has there.
+/// Luminance grain, strongest in the midtones as on real film. On a piece of
+/// a frame it lays down the grains the whole frame has there, and it keeps
+/// unit variance at any size, as the picture would look reduced to it.
 pub fn grain_in(img: &mut Image, amount: f32, window: Window) {
     let a = amount.clamp(0.0, 1.0) * GRAIN_MAX;
     if a <= 0.0 {
         return;
     }
-    // Grains per pixel at this size.
     let per_pixel = GRAIN_ACROSS / window.long_edge().max(1) as f32;
     let w = img.w;
+    let mut lattice = LatticeRows::default();
     for (y, row) in img.px_mut().chunks_mut(w).enumerate() {
+        let y = y + window.y;
+        let v = (y as f32 + 0.5) * per_pixel;
+        let (y0, fy) = (v.floor(), v - v.floor());
+        if per_pixel < 1.0 {
+            let first = ((window.x as f32 + 0.5) * per_pixel).floor() as i64;
+            let last = (((window.x + w) as f32 + 0.5) * per_pixel).floor() as i64 + 1;
+            lattice.fill(y0 as i64, first, last);
+        }
         for (x, px) in row.iter_mut().enumerate() {
+            let x = x + window.x;
+            let n = if per_pixel >= 1.0 {
+                lattice_normal(x as i64, y as i64) / per_pixel
+            } else {
+                let u = (x as f32 + 0.5) * per_pixel;
+                let x0 = u.floor();
+                let fx = u - x0;
+                let k = [(1.0 - fx) * (1.0 - fy), fx * (1.0 - fy), (1.0 - fx) * fy, fx * fy];
+                let (top, bottom) = lattice.at(x0 as i64);
+                let n = k[0] * top[0] + k[1] * top[1] + k[2] * bottom[0] + k[3] * bottom[1];
+                n / (k.iter().map(|k| k * k).sum::<f32>()).sqrt()
+            };
             let luma = kit::luminance_px(px);
-            let n = grain_at(x + window.x, y + window.y, per_pixel) * a * 4.0 * luma * (1.0 - luma);
+            let n = n * a * 4.0 * luma * (1.0 - luma);
             for v in px.iter_mut() {
                 *v = (*v + n).clamp(0.0, 1.0);
             }
         }
+    }
+}
+
+/// Two rows of lattice values, kept while the rows of pixels being grained
+/// fall between them: below full size, several pixels share every point.
+#[derive(Default)]
+struct LatticeRows {
+    y0: Option<i64>,
+    first: i64,
+    top: Vec<f32>,
+    bottom: Vec<f32>,
+}
+
+impl LatticeRows {
+    fn fill(&mut self, y0: i64, first: i64, last: i64) {
+        if self.y0 == Some(y0) {
+            return;
+        }
+        let row = |y: i64| (first..=last).map(|x| lattice_normal(x, y)).collect::<Vec<_>>();
+        if self.y0 == Some(y0 - 1) && self.first == first {
+            self.top = std::mem::take(&mut self.bottom);
+        } else {
+            self.top = row(y0);
+        }
+        self.bottom = row(y0 + 1);
+        self.y0 = Some(y0);
+        self.first = first;
+    }
+
+    /// The points at `x0` and `x0 + 1` on the top row and on the bottom one.
+    fn at(&self, x0: i64) -> ([f32; 2], [f32; 2]) {
+        let i = (x0 - self.first) as usize;
+        ([self.top[i], self.top[i + 1]], [self.bottom[i], self.bottom[i + 1]])
     }
 }
 
@@ -129,19 +155,26 @@ mod tests {
         Image::filled(w, h, px)
     }
 
-    /// Nothing asked for has to mean nothing done, to the last bit.
+    fn vignette(img: &mut Image, amount: f32) {
+        vignette_in(img, amount, Window::whole(img));
+    }
+
+    fn grain(img: &mut Image, amount: f32) {
+        grain_in(img, amount, Window::whole(img));
+    }
+
+    /// Zero must leave every bit as it was.
     #[test]
     fn zero_does_nothing_at_all() {
         let src = flat(8, 6, [0.3, 0.45, 0.6]);
-        for effect in [monochrome as fn(&mut Image, f32), vignette, grain] {
+        for effect in [monochrome as fn(&mut Image, f32), vignette as fn(&mut Image, f32), grain] {
             let mut img = src.clone();
             effect(&mut img, 0.0);
             assert_eq!(img.d, src.d);
         }
     }
 
-    /// Full monochrome has to leave no colour behind, and half of it has to
-    /// leave half: a blend that snaps is a checkbox wearing a slider's clothes.
+    /// Full monochrome leaves no colour behind, and half of it leaves half.
     #[test]
     fn monochrome_drains_by_the_amount_asked() {
         let mut full = flat(4, 4, [0.8, 0.4, 0.2]);
@@ -158,8 +191,6 @@ mod tests {
         }
     }
 
-    /// The centre is what a vignette must not touch, and the corners are what
-    /// it is for.
     #[test]
     fn a_vignette_holds_the_centre_and_scales_with_the_frame() {
         for (w, h) in [(101usize, 101usize), (1001, 1001)] {
@@ -175,8 +206,7 @@ mod tests {
         }
     }
 
-    /// Grain has to be the same grain twice, or an export does not match the
-    /// preview it was approved from.
+    /// The export has to carry the grain the preview showed.
     #[test]
     fn grain_survives_being_reduced() {
         let spread = |img: &Image| -> f32 {

@@ -180,10 +180,7 @@ fn norm(s: &str) -> String {
         .collect()
 }
 
-// -------------------------------------------------------------------------
-// coefficient interpolation
-// -------------------------------------------------------------------------
-
+// Coefficient interpolation
 /// Linear interpolation between the two calibrated focal lengths that bracket
 /// the one actually used.
 fn bracket<T, F: Fn(&T) -> f32>(items: &[T], focal: f32, key: F) -> Option<(usize, usize, f32)> {
@@ -392,10 +389,7 @@ fn bracket_values(sorted: &[f32], x: f32) -> (f32, f32, f32) {
     (last, last, 0.0)
 }
 
-// -------------------------------------------------------------------------
-// applying the models
-// -------------------------------------------------------------------------
-
+// Applying the models
 /// Undo the lens' brightness falloff.  Vignetting coordinates are normalised
 /// by the half diagonal (verified against liblensfun).
 pub fn apply_vignetting(img: &mut Image, m: &LensMatch) -> Value {

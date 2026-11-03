@@ -608,10 +608,7 @@ fn deghost(out: &mut Image, frames: &[Frame], scale: &[f32], shifts: &[(i32, i32
 }
 
 
-// -------------------------------------------------------------------------
-// alignment
-// -------------------------------------------------------------------------
-
+// Alignment
 /// A frame reduced to what survives a change of exposure.
 pub struct Bitmaps {
     levels: Vec<(Vec<bool>, Vec<bool>, usize, usize)>, // above median, worth counting, w, h

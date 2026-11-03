@@ -87,7 +87,7 @@ pub fn preview(bytes: &[u8], long_edge: usize) -> Result<Image, DecodeError> {
 /// When the file says it was taken, in seconds since 1970, or zero. Reads
 /// the EXIF of raws and of JPEG, PNG and WebP alike.
 pub fn captured(bytes: &[u8]) -> i64 {
-    lumiraw_core::decode::captured(bytes)
+    lumiraw_core::decode::metadata(bytes).captured_s
 }
 
 /// How a file says it was taken, without decoding it, for a list of frames.

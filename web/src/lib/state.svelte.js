@@ -78,7 +78,7 @@ export function hasGrade(settings) {
 
 function readStraight() {
   try {
-    return typeof localStorage !== 'undefined' && localStorage.getItem('lumiraw.straight') === '1';
+    return localStorage.getItem('lumiraw.straight') === '1';
   } catch {
     return false;
   }
@@ -173,10 +173,14 @@ export function ungraded(settings) {
            lut: 0, monochrome: 0, vignette: 0, grain: 0 };
 }
 
-/** Everything a render depends on. */
-export function settingsKey() {
-  return `${app.id}|${JSON.stringify(app.settings)}`;
-}
+// Everything a render depends on. Derived once per change: the key is asked
+// for from several components on every edit.
+const key = $derived(`${app.id}|${JSON.stringify(app.settings)}`);
+export const settingsKey = () => key;
+
+const BLANK = JSON.stringify(defaultSettings());
+/** Whether a settings key is for settings nobody has touched. */
+export const isBlank = (k) => k === `${app.id}|${BLANK}`;
 
 /** A crop rectangle or a metering box belongs to the picture it was drawn on;
  *  carrying either onto the next file silently develops it wrongly. */

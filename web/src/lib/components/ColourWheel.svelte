@@ -1,25 +1,5 @@
-<script>
-  /**
-   * One grading wheel: drag the point away from the centre toward a colour,
-   * and the slider under it for lightness.
-   *
-   * The disc is drawn in Oklab, the space the pipeline grades in, and at the
-   * strength the pipeline pushes: the colour under the point is what a mid
-   * grey turns into. The ring round it shows each hue at full colour, to aim
-   * by. Distance from the centre is the square root of the amount, so the
-   * small amounts most grades use get most of the disc.
-   *
-   * Grabbing the point moves it from where it is; pressing elsewhere puts it
-   * there first. Shift slows the drag down for fine work. Double-click, or
-   * the clear button, puts it back in the middle.
-   */
-  import { oklabToSrgb, hueColour, fitChroma, MAX_PUSH } from '$lib/oklab.js';
-  import Slider from '$lib/components/Slider.svelte';
-  import { app } from '$lib/state.svelte.js';
-  import { t, signed } from '$lib/i18n.svelte.js';
-
-  /** `value` is `{ hue, amount, lum }`; `onchange` gets a new one. */
-  let { label, value, onchange } = $props();
+<script module>
+  import { oklabToSrgb, fitChroma, MAX_PUSH } from '$lib/oklab.js';
 
   /** Canvas pixels per side: twice the most the disc is shown at, for sharp
    *  edges on dense screens. */
@@ -28,23 +8,15 @@
   const DISC = 0.84, RING_IN = 0.89;
   /** The lightness the disc and the point are drawn at. */
   const SHOWN_L = 0.7;
-  /** How much a drag with Shift held moves the point, against a plain one. */
-  const FINE = 0.25;
-  /** How near the point, in shown pixels, a press grabs it rather than
-   *  putting it somewhere new. */
-  const GRAB = 14;
-
-  let canvas = $state(null);
-  let disc = $state(null);
 
   const toRadius = (amount) => Math.sqrt(Math.max(0, amount));
   const toAmount = (radius) => Math.min(1, radius) ** 2;
 
-  // The disc and ring, once.
-  $effect(() => {
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const image = ctx.createImageData(SIDE, SIDE);
+  // The same for every wheel, so it is drawn once and shared.
+  let pixels = null;
+  function discImage() {
+    if (pixels) return pixels;
+    pixels = new ImageData(SIDE, SIDE);
     const r = SIDE / 2;
     const edge = (inside) => Math.max(0, Math.min(1, inside * r));
     for (let y = 0; y < SIDE; y++) {
@@ -62,13 +34,50 @@
           alpha = Math.min(edge(d - RING_IN), edge(1 - d));
         } else continue;
         const [R, G, B] = oklabToSrgb(SHOWN_L, Math.cos(angle) * chroma, Math.sin(angle) * chroma);
-        image.data[i] = R;
-        image.data[i + 1] = G;
-        image.data[i + 2] = B;
-        image.data[i + 3] = Math.round(255 * alpha);
+        pixels.data[i] = R;
+        pixels.data[i + 1] = G;
+        pixels.data[i + 2] = B;
+        pixels.data[i + 3] = Math.round(255 * alpha);
       }
     }
-    ctx.putImageData(image, 0, 0);
+    return pixels;
+  }
+</script>
+
+<script>
+  /**
+   * One grading wheel: drag the point away from the centre toward a colour,
+   * and the slider under it for lightness.
+   *
+   * The disc is drawn in Oklab, the space the pipeline grades in, and at the
+   * strength the pipeline pushes: the colour under the point is what a mid
+   * grey turns into. The ring round it shows each hue at full colour, to aim
+   * by. Distance from the centre is the square root of the amount, so the
+   * small amounts most grades use get most of the disc.
+   *
+   * Grabbing the point moves it from where it is; pressing elsewhere puts it
+   * there first. Shift slows the drag down for fine work. Double-click, or
+   * the clear button, puts it back in the middle.
+   */
+  import { hueColour } from '$lib/oklab.js';
+  import Slider from '$lib/components/Slider.svelte';
+  import { app } from '$lib/state.svelte.js';
+  import { t, signed } from '$lib/i18n.svelte.js';
+
+  /** `value` is `{ hue, amount, lum }`; `onchange` gets a new one. */
+  let { label, value, onchange } = $props();
+
+  /** How much a drag with Shift held moves the point, against a plain one. */
+  const FINE = 0.25;
+  /** How near the point, in shown pixels, a press grabs it rather than
+   *  putting it somewhere new. */
+  const GRAB = 14;
+
+  let canvas = $state(null);
+  let disc = $state(null);
+
+  $effect(() => {
+    if (canvas) canvas.getContext('2d').putImageData(discImage(), 0, 0);
   });
 
   /** The point, in -1..1 of the disc with y up. */

@@ -40,7 +40,7 @@
     fetching = true;
     const key = settingsKey();
     try {
-      const out = await api.compare({ id: app.id, settings: app.settings, size: 1300 });
+      const out = await api.compare({ settings: app.settings, size: 1300 });
       if (key === settingsKey()) app.wipe = { key, before: out.before, after: out.after };
     } catch {
       holding = false;

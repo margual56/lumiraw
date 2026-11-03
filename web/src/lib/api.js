@@ -26,10 +26,6 @@ function ensure() {
       listener?.(event.data.fraction, event.data.code);
       return;
     }
-    if (type === 'tile') {
-      call?.ontile?.(event.data.tile);
-      return;
-    }
     if (type !== 'result' || !call) return;
     pending.delete(id);
     if (event.data.ok) {
@@ -62,12 +58,11 @@ function call(type, body = {}, hooks = {}, transfer = []) {
   // Settings arrive as Svelte state proxies, which structured clone refuses,
   // so they go through JSON. Bytes and files go over as they are: cloning a
   // File passes a reference, not its contents.
-  const raw = Object.entries(body).filter(([, v]) => v instanceof ArrayBuffer || v instanceof Blob);
-  const rest = Object.fromEntries(Object.entries(body).filter(([k]) => !raw.some(([r]) => r === k)));
-  // `type` and `id` go on last: the callers still pass an `id` field of their
-  // own (the session id the server used to hand out), and letting it win here
-  // would address the reply to a call nobody is waiting for.
-  const payload = { ...JSON.parse(JSON.stringify(rest)), ...Object.fromEntries(raw), type, id };
+  const bytes = (v) => v instanceof ArrayBuffer || v instanceof Blob;
+  const raw = Object.entries(body).filter(([, v]) => bytes(v));
+  const rest = Object.entries(body).filter(([, v]) => !bytes(v));
+  const payload = { ...JSON.parse(JSON.stringify(Object.fromEntries(rest))),
+                    ...Object.fromEntries(raw), type, id };
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject, ...hooks });
     ensure().postMessage(payload, transfer);
@@ -79,12 +74,6 @@ export function setProgressListener(fn) {
   listener = fn;
 }
 
-/** Warm the module up while the user is still looking at the drop zone. */
-export function preload() {
-  ready().catch(() => {});
-}
-
-/** Every photograph opened gets an id of its own. */
 let opened = 0;
 const photoId = () => `photo-${++opened}`;
 
@@ -128,11 +117,8 @@ export async function captured(file) {
  *  reports its own progress per photograph. */
 export const exportOnce = (body, onprogress) => call('export', body, { onprogress });
 
-/** The picture at full resolution, as an ImageBitmap, for the 100 % view. */
-/**
- * A piece of the picture at full size, around `centre` (fractions of the framed
- * picture), at most `width` by `height`.
- */
+/** A piece of the picture at full size, around `centre` (fractions of the
+ *  framed picture), at most `width` by `height`, for the 100 % view. */
 export const renderRegion = (body) => call('region', body);
 export const releaseRegion = () => call('releaseRegion');
 
@@ -221,46 +207,4 @@ export const stackReset = () => call('stackReset');
 export async function stackFinish() {
   const info = await call('stackFinish');
   return { ...info, id: photoId(), original_name: info.file };
-}
-
-/** Exports keep the job shape the download step already knows how to watch. */
-const jobs = new Map();
-
-export async function startExport(body) {
-  const id = String(nextId++);
-  const started = performance.now();
-  const record = { state: 'running', progress: 0, stage: 'starting', stage_params: {}, elapsed: 0 };
-  jobs.set(id, record);
-  call('export', body, {
-    onprogress: (fraction, code) => {
-      record.progress = fraction;
-      record.stage = code;
-      record.elapsed = (performance.now() - started) / 1000;
-    },
-  })
-    .then(({ blob, filename }) => Object.assign(record, {
-      state: 'done', progress: 1, blob, filename,
-      elapsed: (performance.now() - started) / 1000,
-    }))
-    .catch((error) => Object.assign(record, { state: 'error', error: error.message }));
-  return { job: id };
-}
-
-export async function jobStatus(id) {
-  const record = jobs.get(id);
-  if (!record) throw new Error('lost track of the export');
-  return { ...record };
-}
-
-export async function jobFile(id) {
-  const record = jobs.get(id);
-  if (!record?.blob) throw new Error('the finished file could not be fetched');
-  return {
-    blob: async () => record.blob,
-    headers: {
-      get: (name) => (name.toLowerCase() === 'content-disposition'
-        ? `attachment; filename="${record.filename}"`
-        : null),
-    },
-  };
 }

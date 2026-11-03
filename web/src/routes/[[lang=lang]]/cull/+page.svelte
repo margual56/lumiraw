@@ -13,7 +13,7 @@
     CLIPPED,
   } from '$lib/cull.js';
   import { t, n, localized } from '$lib/i18n.svelte.js';
-  import { errorText } from '$lib/format.js';
+  import { errorText, saveFile } from '$lib/format.js';
   import { NAME } from '$lib/brand.js';
   import { app } from '$lib/state.svelte.js';
   import { filesFromDrop, pickMany } from '$lib/roll.svelte.js';
@@ -201,11 +201,7 @@
   function csv() {
     const picked = new Set(shown.filter(isPicked));
     const blob = new Blob([toCsv(ranking, picked, levers, sharp)], { type: 'text/csv' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `${NAME.toLowerCase()}-ranking.csv`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    saveFile(blob, `${NAME.toLowerCase()}-ranking.csv`);
   }
 
   /** The picked raws, as a roll in the developer. */

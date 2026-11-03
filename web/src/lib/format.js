@@ -169,8 +169,8 @@ export function stageText(stage, params = {}) {
   return t(`stage.${stage}`, filled);
 }
 
-/** Server errors carry a code when they have one; fall back to its English. */
-/** A failure as a sentence. */
+/** A failure as a sentence: translated when the pipeline gave a reason code,
+ *  its own English otherwise. */
 export function errorText(error) {
   if (error?.reason) {
     // `message` is always available as a placeholder: some reports carry
@@ -181,4 +181,14 @@ export function errorText(error) {
     if (translated !== `error.${error.reason}`) return translated;
   }
   return error?.message ?? String(error);
+}
+
+/** Hand a blob to the browser as a download. */
+export function saveFile(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const link = Object.assign(document.createElement('a'), { href: url, download: name });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
 }

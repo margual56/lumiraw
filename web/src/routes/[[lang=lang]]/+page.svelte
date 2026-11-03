@@ -21,14 +21,15 @@
   import SiteHeader from '$lib/components/SiteHeader.svelte';
   import { ELSEWHERE, READING } from '$lib/pages.js';
   import * as api from '$lib/api.js';
-  import { t, n, localized, address, i18n } from '$lib/i18n.svelte.js';
+  import { t, localized, address, i18n } from '$lib/i18n.svelte.js';
   import { errorText } from '$lib/format.js';
   import { NAME, SITE } from '$lib/brand.js';
   import Meta from '$lib/components/Meta.svelte';
   import { history, observe, resetHistory, undo, redo, onKey } from '$lib/history.svelte.js';
   import { remember, forget } from '$lib/memory.js';
+  import { latest } from '$lib/latest.js';
   import {
-    app, settingsKey, stepVisible, setStraight, ungraded, defaultSettings,
+    app, settingsKey, isBlank, stepVisible, setStraight, ungraded, defaultSettings,
     STEPS, UPLOAD, FRAME, REFOCUS, EXPOSURE, WB, VIBRANCE, LOCAL, COMPARE, LOOKS, DOWNLOAD,
   } from '$lib/state.svelte.js';
 
@@ -53,7 +54,7 @@
       observe();
       const file = app.fileKey;
       const settings = $state.snapshot(app.settings);
-      const blank = JSON.stringify(settings) === JSON.stringify(defaultSettings());
+      const blank = isBlank(key);
       clearTimeout(saving);
       saving = setTimeout(() => (blank ? forget(file) : remember(file, settings)), 500);
     }
@@ -81,28 +82,21 @@
     app.progress = code === 'done' ? null : { fraction, code };
   });
 
+  // Fetch the wasm module and the lens database while the drop zone is still
+  // on screen, so the first render does not pay for them. A failure here
+  // surfaces again when a file is opened.
   $effect(() => {
-    // Fetch the wasm module and the lens database while the drop zone is still
-    // on screen, so the first render does not pay for them.
     api.ready()
       .then(async (info) => {
         if (info?.version && info.version !== app.version) {
           console.warn(`${NAME}: page is ${app.version} but the pipeline is `
                        + `${info.version}; a stale cached module is in play`);
         }
-        // The named grades, once. They are the same for every photograph and
-        // they come from the wasm so there is only one copy of them.
+        // The named grades live in the wasm, so there is only one copy of them.
         app.looks = (await api.looks()).looks ?? [];
       })
       .catch(() => {});
   });
-
-
-
-  /*
-   * ── rendering ────────────────────────────────────────────────────────── One
-   * effect watches the settings and the current step.
-   */
 
   let token = 0;
 
@@ -126,8 +120,7 @@
     app.busyParams = {};
     try {
       if (step === FRAME && app.frame.key !== key) {
-        const out = await api.render({ id: app.id, settings: app.settings,
-                                       uncropped: true, size: 1100 });
+        const out = await api.render({ settings: app.settings, uncropped: true, size: 1100 });
         done(() => {
           // The angle travels with the image.
           app.frame = { key, image: out.image, angle: app.settings.framing.angle };
@@ -139,7 +132,7 @@
       } else if ([REFOCUS, EXPOSURE, WB, VIBRANCE, LOCAL, LOOKS].includes(step)
                  && app.preview.key !== key) {
         const live = app.live;
-        const out = await api.render({ id: app.id, settings: app.settings, size: 1300, live });
+        const out = await api.render({ settings: app.settings, size: 1300, live });
         done(() => {
           // A frame made while dragging is a quick one, and is made again
           // properly once the control is let go.
@@ -153,17 +146,17 @@
       const bare = ungraded(app.settings);
       const bareKey = `${app.id}|${JSON.stringify(bare)}`;
       if (step === LOOKS && app.ungraded.key !== bareKey) {
-        const out = await api.render({ id: app.id, settings: bare, size: 1300 });
+        const out = await api.render({ settings: bare, size: 1300 });
         done(() => { app.ungraded = { key: bareKey, image: out.image }; });
       }
       if (step === COMPARE && app.wipe.key !== key) {
-        const out = await api.compare({ id: app.id, settings: app.settings, size: 1300 });
+        const out = await api.compare({ settings: app.settings, size: 1300 });
         done(() => {
           app.wipe = { key, before: out.before, after: out.after };
           app.toggles = out.toggles;
         });
       } else if (step === DOWNLOAD && app.output.key !== key) {
-        const out = await api.render({ id: app.id, settings: app.settings, size: 1300 });
+        const out = await api.render({ settings: app.settings, size: 1300 });
         done(() => {
           app.output = { key, image: out.image };
           app.toggles = out.toggles;
@@ -180,24 +173,7 @@
     }
   }
 
-  // One refresh at a time: what changes while one is out waits for it, and
-  // only the latest of those goes next.
-  let running = false;
-  let wanted = null;
-  async function schedule(step, key) {
-    wanted = { step, key };
-    if (running) return;
-    running = true;
-    try {
-      while (wanted) {
-        const next = wanted;
-        wanted = null;
-        await refresh(next.step, next.key);
-      }
-    } finally {
-      running = false;
-    }
-  }
+  const schedule = latest(refresh);
 
   $effect(() => {
     const step = app.step;
@@ -220,13 +196,18 @@
       .catch(() => { if (app.id === id) app.settings.skin = { faces: 0 }; });
   });
 
-  // The curve plot, kept in step with the settings.
+  // The curve editor's plot, while the editor is on screen. Dragging a point
+  // asks on every move, so only the latest request waits behind the one out.
+  const bakeCurves = latest(async (curves) => {
+    try {
+      app.curve = await api.curves({ settings: { curves } });
+    } catch {
+      // The plot keeps its last shape; the render reports the error.
+    }
+  });
   $effect(() => {
-    const curves = JSON.stringify(app.settings.curves);
-    if (!app.id) return;
-    api.curves({ id: app.id, settings: { curves: JSON.parse(curves) } })
-       .then((out) => (app.curve = out))
-       .catch(() => {});
+    const curves = $state.snapshot(app.settings.curves);
+    if (app.id && app.step === LOOKS) bakeCurves(curves);
   });
 
   // Inside a blog post, the post sends the photo and picks the step

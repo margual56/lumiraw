@@ -85,8 +85,7 @@ export function landAt(line, bearing) {
   return line[i % line.length] * (1 - k) + line[(i + 1) % line.length] * k;
 }
 
-// -- the tiles --------------------------------------------------------------------
-
+// The tiles
 const TILES = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium';
 const SIZE = 256;
 /** Decoded tiles kept, some 260 KB each: the last few places' worth. */

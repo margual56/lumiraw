@@ -23,8 +23,7 @@
   let spots = $state.raw([]);
   let status = $state('');
 
-  // -- the map --------------------------------------------------------------------
-
+  // The map
   let element = $state(null);
   let map = null;
   let leaflet = null;

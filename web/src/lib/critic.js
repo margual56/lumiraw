@@ -3,7 +3,7 @@
 
 import * as api from './api.js';
 import { measure } from './histogram.js';
-import { RAW_ACCEPT } from './format.js';
+import { RAW_ACCEPT, isRaw } from './format.js';
 import criticUrl from './wasm/critic.wasm?url';
 import aestheticUrl from './wasm/critic/nima-aesthetic.bin?url';
 import technicalUrl from './wasm/critic/nima-technical.bin?url';
@@ -21,7 +21,7 @@ const FACES = 1024;
 const RAWS = RAW_ACCEPT.split(',');
 export const IMAGES = ['.jpg', '.jpeg', '.png', '.webp'];
 export const ACCEPT = [...RAWS, ...IMAGES].join(',');
-export const isRaw = (name) => RAWS.some((s) => name.toLowerCase().endsWith(s));
+export { isRaw };
 export const isImage = (name) => IMAGES.some((s) => name.toLowerCase().endsWith(s));
 
 let pool = null;

@@ -676,7 +676,6 @@
     }
   }
 
-  /* A switch rather than a checkbox: it turns a behaviour on. */
   .switch {
     display: flex; align-items: center; gap: 8px; cursor: pointer; width: fit-content;
     input {

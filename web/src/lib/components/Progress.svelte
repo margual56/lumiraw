@@ -7,8 +7,7 @@
   // A picture following a dragged control is not worth a bar flickering on
   // and off a few times a second.
   const active = $derived(Boolean(app.job) || (app.busy && !app.live));
-  // The pipeline reports its own stages now that it runs here, so even a
-  // preview gets a real bar instead of a shuttle.
+  // The pipeline reports its stages, so even a preview gets a real bar.
   const reporting = $derived(Boolean(app.job) || Boolean(app.progress));
   const fraction = $derived(app.job ? app.job.progress : (app.progress?.fraction ?? 0));
   const label = $derived.by(() => {

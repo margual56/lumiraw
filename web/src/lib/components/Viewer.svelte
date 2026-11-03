@@ -149,8 +149,7 @@
   function down(event) {
     if (!selectable || !canvas) return;
     const from = at(event);
-    // Pressing on the existing box takes hold of it; pressing the picture
-    // outside it starts a new one, which is the only thing this used to do.
+    // Pressing on the box takes hold of it; pressing outside starts a new one.
     drag = { handle: grip(rect, from, reach()), from, was: rect };
     hover = drag.handle;
     pending = null;
@@ -187,7 +186,6 @@
     else rect = box;
   }
 
-  // A cancelled pointer is not a released one.
   function cancel() {
     drag = null;
     pending = null;
@@ -243,7 +241,7 @@
     handles(ctx, x, y, w, h);
   }
 
-  /** Eight marks, because there are eight things to take hold of. */
+  /** The corner and edge handles. */
   function handles(ctx, x, y, w, h) {
     ctx.fillStyle = '#e5a03c';
     for (const [cx, cy] of [[x, y], [x + w, y], [x, y + h], [x + w, y + h]]) {
@@ -304,7 +302,7 @@
 <div class="viewer" class:busy class:empty={!src}
      style:aspect-ratio={!src && app.info ? `${app.info.width} / ${app.info.height}` : undefined}
      ondblclick={(e) => { if (!zoomed) zoomAt(e); }}>
-  <!-- The transform is a local preview of a change the server has not rendered yet. -->
+  <!-- The transform previews a change the pipeline has not rendered yet. -->
   <img bind:this={img} {src} alt={t('viewer.alt')} draggable="false"
        style:transform={transform || undefined}
        onload={() => (geometry += 1)} />

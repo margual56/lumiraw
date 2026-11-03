@@ -12,8 +12,8 @@
   const offersTilt = $derived(!!hint && hint.angle !== 0);
   const offersShift = $derived(!!hint && hint.perspective_v !== 0);
 
-  // Turning an offer down hides that offer, not every future one: a different
-  // measurement is a different question and deserves asking again.
+  // Turning an offer down hides that offer only; a different measurement
+  // is offered again.
   let refused = $state('');
   const offerKey = $derived(hint ? `${hint.angle}|${hint.perspective_v}` : '');
   const offered = $derived(!!hint && refused !== offerKey);
@@ -59,7 +59,7 @@
     ['0.8', 'framing.ratio.45'],
   ];
 
-  // With auto-fit on and no crop of your own, the server trims to the largest
+  // With auto-fit on and no crop of your own, the pipeline trims to the largest
   // rectangle the tilt leaves intact; the overlay shows where that lands.
   const shownCrop = $derived(framing.crop ?? (framing.auto_fit ? app.coverCrop : null));
 

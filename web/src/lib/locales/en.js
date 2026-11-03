@@ -1,4 +1,4 @@
-/** Source language.  Any key missing from another locale falls back to here. */
+/** Source language. Any key missing from another locale falls back to here. */
 export default {
   'app.tagline': 'raw → finished photograph',
 
@@ -467,7 +467,7 @@ export default {
   'error.crashed': 'Internal error: restarted with {file} reopened. Try again, and if it stops in the same place, please report it.',
   'error.unsupported_sensor': '{file} comes from a sensor {app} cannot develop: {message}.',
 
-  // ── exposure merge ──────────────────────────────────────────────────────
+  // Exposure merge
   'merge.link': 'Merge or stack several frames',
   'merge.linkHint': 'A bracket for more range, or a stack for less noise, star trails or front-to-back focus.',
   'merge.title': 'Merge and stack',
@@ -582,7 +582,7 @@ export default {
   'error.merge': 'These frames could not be merged. {message}',
   'error.stack': 'These frames could not be stacked. {message}',
 
-  // ── gallery culling ─────────────────────────────────────────────────────
+  // Gallery culling
   'cull.link': 'Pick the best of a shoot',
   'cull.linkHint': 'Score a whole shoot and choose the frames worth developing.',
   'cull.title': 'Culling',

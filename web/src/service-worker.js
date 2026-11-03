@@ -12,7 +12,7 @@ const ALL = [...build, ...files.filter(served), ...prerendered];
 const onDemand = (path) =>
   /\/(lens-[^/]*|lensfun-[^/]*)\.json$|\/((nima|face)-[^/]*|segmenter|denoiser)\.bin$/.test(path);
 
-// -- other hosts' data (see lib/remote.js) --------------------------------------
+// Other hosts' data (see lib/remote.js)
 const REMOTE = 'lumiraw-remote-v1';
 const SAVED = 'x-lumiraw-saved';
 /** Enough for many spots; the oldest go first. */

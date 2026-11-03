@@ -20,6 +20,9 @@ export const RAW_ACCEPT = [
   '.dng',                                 // phones, Leica, Pentax, Ricoh, and converters
 ].join(',');
 
+const RAW_SUFFIXES = RAW_ACCEPT.split(',');
+export const isRaw = (name) => RAW_SUFFIXES.some((s) => name.toLowerCase().endsWith(s));
+
 /** A look's name in the reader's language. */
 export const lookLabel = (id, fallback = '') => {
   const key = `look.${id}`;

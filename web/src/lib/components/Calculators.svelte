@@ -138,7 +138,7 @@
     v.lon = next.lon;
   }
 
-  // -- the stars' sky -----------------------------------------------------------
+  // The stars' sky
   // The spot's night, for the Sharp stars preview: at the time picked on the
   // golden hour if it is dark then, or else at the darkest of that night.
   let atlas = $state.raw(null);
@@ -182,7 +182,7 @@
     }, { maximumAge: 600000, timeout: 15000 });
   }
 
-  // -- the map ------------------------------------------------------------------
+  // The map
   // Loaded only when the golden hour is open. A click puts the spot there;
   // typed coordinates move it.
   let mapElement = $state(null);

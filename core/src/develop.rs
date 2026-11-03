@@ -337,8 +337,6 @@ impl Development {
         (finish(rgb, settings, window, &mut report), report)
     }
 
-    /// The blur focus recovery aims at, in pixels of a render `long` pixels on
-    /// its long edge.
     pub fn release_region(&mut self) {
         self.full_frame = None;
         self.decided_full = None;
@@ -371,6 +369,8 @@ impl Development {
         decided
     }
 
+    /// The blur focus recovery aims at, in pixels of a render `long` pixels on
+    /// its long edge.
     fn focus_sigma_at(&mut self, long: usize) -> f32 {
         match self.focus_width() {
             Some(w) if w >= crate::analyze::FOCUS_SOFT => {

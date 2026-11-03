@@ -216,7 +216,7 @@
     </label>
   </div>
   <Slider label={t('wheels.lum')} value={value.lum} min={-1} max={1} step={0.05} format={lum}
-          commitOnRelease={true} onpreview={(v) => set({ lum: v })}
+          oninput={(v) => set({ lum: v })}
           onactive={(on) => (app.live = on)} />
 </div>
 

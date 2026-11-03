@@ -1,39 +1,26 @@
 <script>
-  /** A labelled range. */
+  // Without `oninput`, dragging writes straight to `value`. With it, the
+  // caller decides what a drag changes, and `onchange` hears the release.
+  // `onactive` is told whether the thumb is held, for pictures that follow it.
   let {
     label,
     value = $bindable(0),
     min = -1, max = 1, step = 0.01,
     format = (v) => v.toFixed(2),
     tone = '',
-    commitOnRelease = false,
-    onpreview = null,
-    // Told true while the range is held and false once it is let go, for a
-    // picture that should follow the thumb as it moves.
+    oninput = null,
+    onchange = null,
     onactive = null,
   } = $props();
 
-  // Ties the label to the range, so it is read out with it and a click on
-  // the label reaches it.
   const id = $props.id();
 
-  let draft = $state(value);
-  $effect(() => { draft = value; });     // follow changes made elsewhere
-
-  const shown = $derived(commitOnRelease ? draft : value);
+  let shown = $derived(value);
 
   function input(event) {
-    const next = Number(event.currentTarget.value);
-    if (!commitOnRelease) {
-      value = next;
-      return;
-    }
-    draft = next;
-    onpreview?.(next);
-  }
-
-  function commit(event) {
-    if (commitOnRelease) value = Number(event.currentTarget.value);
+    shown = Number(event.currentTarget.value);
+    if (oninput) oninput(shown);
+    else value = shown;
   }
 </script>
 
@@ -43,7 +30,7 @@
     {id} type="range" {min} {max} {step} class={tone}
     value={shown}
     oninput={input}
-    onchange={commit}
+    onchange={(e) => onchange?.(Number(e.currentTarget.value))}
     onpointerdown={() => onactive?.(true)}
     onpointerup={() => onactive?.(false)}
     onpointercancel={() => onactive?.(false)}

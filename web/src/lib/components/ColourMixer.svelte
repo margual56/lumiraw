@@ -60,8 +60,8 @@
 
   {#each KNOBS as knob (knob.key)}
     <Slider label={t(knob.label)} value={value(band, knob.key)}
-            min={-1} max={1} step={0.05} format={shown} commitOnRelease={true}
-            onpreview={(v) => set(band, knob.key, v)} />
+            min={-1} max={1} step={0.05} format={shown}
+            oninput={(v) => set(band, knob.key, v)} />
   {/each}
 
   <button class="ghost" type="button" onclick={clear} disabled={!anyTouched}>

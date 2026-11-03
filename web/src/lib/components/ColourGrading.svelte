@@ -57,11 +57,11 @@
   </div>
 
   <Slider label={t('wheels.balance')} value={wheels.balance} min={-1} max={1} step={0.05}
-          format={offset} commitOnRelease={true} onactive={(on) => (app.live = on)}
-          onpreview={(v) => (app.settings.wheels = { ...wheels, balance: v })} />
+          format={offset} onactive={(on) => (app.live = on)}
+          oninput={(v) => (app.settings.wheels = { ...wheels, balance: v })} />
   <Slider label={t('wheels.blending')} value={wheels.blending} min={0} max={1} step={0.05}
-          format={share} commitOnRelease={true} onactive={(on) => (app.live = on)}
-          onpreview={(v) => (app.settings.wheels = { ...wheels, blending: v })} />
+          format={share} onactive={(on) => (app.live = on)}
+          oninput={(v) => (app.settings.wheels = { ...wheels, blending: v })} />
 
   <div class="actions">
     <button type="button" class="ghost" disabled={matching || !app.id}

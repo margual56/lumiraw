@@ -42,10 +42,9 @@
     refused = offerKey;
   }
 
-  // Where the handle is right now.  It leads `framing.angle` during a drag and
-  // catches up when the drag ends.
-  let liveAngle = $state(0);
-  $effect(() => { liveAngle = app.settings.framing.angle; });
+  // Leads `framing.angle` while the tilt is dragged; the angle is only
+  // committed on release.
+  let liveAngle = $derived(app.settings.framing.angle);
 
   // How far the picture on screen is from where the handle says it should be.
   const spin = $derived(liveAngle - (app.frame.angle ?? 0));
@@ -110,9 +109,9 @@
       </div>
     {/if}
 
-    <Slider label={t('framing.tilt')} bind:value={framing.angle}
+    <Slider label={t('framing.tilt')} value={framing.angle}
             min={-45} max={45} step={0.1} format={(v) => `${n(v, 1)}°`}
-            commitOnRelease onpreview={(v) => (liveAngle = v)} />
+            oninput={(v) => (liveAngle = v)} onchange={(v) => (framing.angle = v)} />
     <Slider label={t('framing.shiftV')} bind:value={framing.perspective_v}
             min={-0.6} max={0.6} format={(v) => n(v)} />
     <Slider label={t('framing.shiftH')} bind:value={framing.perspective_h}

@@ -205,7 +205,7 @@
         <Slider label={t(`editor.region.${key}`)} value={regionValue(key)}
                 min={-1} max={1} step={0.05}
                 format={(v) => (v === 0 ? t('grade.off') : `${v > 0 ? '+' : ''}${Math.round(v * 100)}`)}
-                onpreview={(v) => setRegion(key, v)} commitOnRelease={true} />
+                oninput={(v) => setRegion(key, v)} />
       {/each}
     </div>
   {/if}

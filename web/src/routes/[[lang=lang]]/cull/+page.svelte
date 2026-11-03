@@ -475,7 +475,7 @@
                   {/if}
                 </div>
                 {#if nth === 0 && group.length > 1}
-                  <button class="ghost small more" onclick={() => unfold(it)}>
+                  <button class="ghost small unfold" onclick={() => unfold(it)}>
                     {unfolded ? t('cull.fewer') : t('cull.similar', { count: group.length - 1 })}
                   </button>
                 {/if}
@@ -754,5 +754,5 @@
     cursor: help;
     .warn { color: var(--color-accent); }
   }
-  .more { justify-self: start; }
+  .unfold { justify-self: start; }
 </style>

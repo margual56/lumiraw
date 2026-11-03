@@ -209,8 +209,8 @@ pub fn propose(img: &Image, rect: Option<Rect>) -> Option<Proposal> {
         out.angle = -(tilt as f64);
         out.angle_confidence = confidence_from(prominence as f64);
     }
-    // The vanishing point is fitted from pooled cells rather than from the
-    // votes above, for a reason worth writing down.
+    // The vanishing point is fitted from orientations pooled over blocks
+    // (`cells`), not from the per-pixel votes above.
     if let Some((perspective, agreement)) = verticals(&cells(&luma), &frame, vertical_support) {
         out.perspective_v = perspective;
         out.perspective_confidence = agreement;

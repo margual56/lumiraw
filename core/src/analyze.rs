@@ -125,8 +125,7 @@ pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f3
         let cap = 1.20 / hi.max(EPS);
         if cap < gain {
             guard = Some(gain);
-            // The guard and the rescue want opposite things, and on a frame
-            // that needed rescuing the guard used to win and undo it.
+            // The rescue wins over the guard, or the guard would undo it.
             let floor = if rescue_ev > 0.0 { gain } else { 0.0 };
             gain = cap.max(floor);
             waived = gain > cap;
@@ -452,8 +451,7 @@ mod tests {
                 "it should still get the floor, got {amount}");
     }
 
-    /// A flat frame still gets more than a contrasty one, which is the part of
-    /// the old behaviour worth keeping.
+    /// A flat frame still gets more curve than a contrasty one.
     #[test]
     fn a_flat_frame_gets_more_curve_than_a_wide_one() {
         let flat = auto_contrast(&lightness(0.02, 64, 48), 0.20, 0.45, 1.0).0;

@@ -414,8 +414,7 @@ mod tests {
         img
     }
 
-    /// A photograph nobody graded has to come out of this exactly as it went
-    /// in.
+    /// An ungraded frame comes out bit for bit as it went in.
     #[test]
     fn an_ungraded_frame_comes_back_untouched() {
         let stack = Stack::identity();

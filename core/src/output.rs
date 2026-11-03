@@ -141,7 +141,7 @@ fn png_bytes(img: &Image, bits: u8, block: &[u8], meta: &[Entry], modified: Opti
 fn jpeg_bytes(img: &Image, quality: u8, block: &[u8]) -> Result<Vec<u8>, String> {
     let mut buf: Vec<u8> = Vec::new();
     let mut enc = jpeg_encoder::Encoder::new(&mut buf, quality);
-    // 4:4:4, like the Python version: no colour smearing.
+    // 4:4:4: no chroma subsampling.
     enc.set_sampling_factor(jpeg_encoder::SamplingFactor::F_1_1);
     enc.set_progressive(true);
     // APP1, introduced by the "Exif\0\0" identifier the spec requires.

@@ -2,8 +2,8 @@
 
 use serde_json::{Map, Value};
 
-/// Everything the pipeline decided, keyed by stage name (insertion ordered,
-/// like the Python dict the interface expects).
+/// Everything the pipeline decided, keyed by stage name in the order the
+/// stages ran, which is the order the interface lists them in.
 #[derive(Default, Clone, Debug)]
 pub struct Report {
     pub order: Vec<String>,

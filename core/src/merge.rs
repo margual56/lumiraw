@@ -151,8 +151,6 @@ pub fn inspect(frames: &[Frame]) -> Vec<Finding> {
         findings.extend(inspect_bracket(frames, members));
     }
 
-    // There used to be a mixed_camera / mixed_lens / mixed_focal check here,
-    // asked of the whole pile.
     findings
 }
 

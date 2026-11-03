@@ -264,8 +264,8 @@ pub fn stats_view_plane(p: &Plane, rect: Option<Rect>) -> Cow<'_, Plane> {
 mod tests {
     use super::*;
 
-    /// The closed form for the largest empty-corner-free rectangle, checked
-    /// against the Python implementation's output for the same frame.
+    /// The closed form for the largest rectangle with no empty corners,
+    /// against known answers.
     #[test]
     fn cover_crop_matches_reference() {
         let f = Framing { angle: 8.0, ..Framing::default() };

@@ -224,8 +224,7 @@ mod tests {
         }
     }
 
-    /// A hue turn has to turn the hue and leave the chroma roughly where it
-    /// was, or the control is two controls wearing one name.
+    /// A hue turn turns the hue and leaves the chroma roughly where it was.
     #[test]
     fn a_hue_turn_turns_the_hue() {
         let green = flat(srgb([0.45, 0.66, 0.5]));

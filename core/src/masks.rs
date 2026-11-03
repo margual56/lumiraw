@@ -181,8 +181,7 @@ pub fn refine(mask: &Plane, img: &Image, frame: (f32, f32, f32, f32)) -> Plane {
                                                         v * mask.h as f32 - 0.5);
         }
     }
-    let mut guide = kit::luminance(img);
-    guide.d.iter_mut().for_each(|v| *v = v.max(0.0).sqrt());
+    let guide = crate::analyze::sqrt_luminance(img);
     // About one mask pixel across, so the edge can move as far as the mask
     // could be wrong and no further.
     let radius = ((fw.max(fh) / mask.w.max(mask.h) as f32) * 1.5).round().max(2.0) as usize;

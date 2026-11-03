@@ -1,4 +1,4 @@
-//! Decode-only statistics, for comparing against the Python (LibRaw) decoder.
+//! Decode-only statistics, for comparing against LibRaw's decode of the same file.
 use lumiraw_core::{decode, raw};
 
 fn main() {

@@ -79,7 +79,7 @@
     const { list, index, item } = drag;
     drag = null;
     if (index === -1) {
-      // A click rather than a drag: a sensible default rather than nothing.
+      // A click, not a drag: give the filter a default size.
       if (item.kind === 'linear' && Math.hypot((item.b[0] - item.a[0]) * W, (item.b[1] - item.a[1]) * H) < 8) {
         item.b = [item.a[0], Math.min(1, item.a[1] + 0.3)];
       }

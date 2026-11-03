@@ -757,7 +757,6 @@
   .notes {
     margin: 0 0 14px; padding-left: 18px; color: var(--color-muted); font-size: 13px;
     li { margin: 4px 0; line-height: 1.5; }
-    /* The one note that is a warning rather than a remark. */
     .warn { color: var(--color-ink); }
   }
 </style>

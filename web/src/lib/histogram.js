@@ -5,7 +5,7 @@
 export const BLOWN = 254;
 export const CRUSHED = 1;
 
-/** Counts per level for red, green, blue and luminance (Rec. */
+/** Counts per level for red, green, blue and luminance (Rec. 709 weights). */
 export function analyse(image) {
   const { data } = image;
   const r = new Uint32Array(256), g = new Uint32Array(256), b = new Uint32Array(256);

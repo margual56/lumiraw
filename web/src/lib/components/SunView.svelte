@@ -72,8 +72,7 @@
     };
   }
 
-  // -- the land -------------------------------------------------------------------
-
+  // The land
   $effect(() => {
     status = 'looking';
     return forSpot(horizonFrom, (found) => {
@@ -86,8 +85,7 @@
     });
   });
 
-  // -- the sun --------------------------------------------------------------------
-
+  // The sun
   /** A minute of the day picked, as a Date in this device's time zone. */
   const midnight = $derived(new Date(`${day}T00:00`).valueOf());
   const at = (m) => atMinute(day, m);
@@ -123,8 +121,7 @@
     if (set) facing = path[minuteOf(set)].bearing;
   });
 
-  // -- the night ------------------------------------------------------------------
-
+  // The night
   /** How far into the night the time picked is: 0 by day, 1 once the stars are all out. */
   const dark = $derived(nightness(sun.geometric));
 
@@ -280,8 +277,7 @@
   const POINTS = $derived(t('calc.sun.compass').split(','));
   const SHORT = $derived(t('calc.sun.points').split(','));
 
-  // -- the drawing ----------------------------------------------------------------
-
+  // The drawing
   /** Where level ground meets the sky: a third of the way up, and less ground when the view is tall. */
   const level = $derived(Math.max(height * 0.66, height - 140));
   /** How wide the view is: as asked, but when tall, no wider than keeps its top at the zenith. */
@@ -541,8 +537,7 @@
     }
   });
 
-  // -- looking round --------------------------------------------------------------
-
+  // Looking round
   let dragged = null;
   function grab(event) {
     dragged = { x: event.clientX, facing };

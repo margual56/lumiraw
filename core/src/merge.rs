@@ -151,8 +151,6 @@ pub fn inspect(frames: &[Frame]) -> Vec<Finding> {
         findings.extend(inspect_bracket(frames, members));
     }
 
-    // There used to be a mixed_camera / mixed_lens / mixed_focal check here,
-    // asked of the whole pile.
     findings
 }
 
@@ -608,10 +606,7 @@ fn deghost(out: &mut Image, frames: &[Frame], scale: &[f32], shifts: &[(i32, i32
 }
 
 
-// -------------------------------------------------------------------------
-// alignment
-// -------------------------------------------------------------------------
-
+// Alignment
 /// A frame reduced to what survives a change of exposure.
 pub struct Bitmaps {
     levels: Vec<(Vec<bool>, Vec<bool>, usize, usize)>, // above median, worth counting, w, h

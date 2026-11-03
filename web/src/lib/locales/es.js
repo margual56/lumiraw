@@ -466,7 +466,7 @@ export default {
   'error.crashed': 'Error interno: se ha reiniciado con {file} abierto. Vuelve a intentarlo y, si se detiene en el mismo punto, avísanos.',
   'error.unsupported_sensor': '{file} viene de un sensor que {app} no puede revelar: {message}.',
 
-  // ── fusión de exposiciones ──────────────────────────────────────────────
+  // Fusión de exposiciones
   'merge.link': 'Fusionar o apilar varias tomas',
   'merge.linkHint': 'Un horquillado para más rango, o un apilado para menos ruido, trazos de estrellas o enfoque de delante a atrás.',
   'merge.title': 'Fusionar y apilar',
@@ -581,7 +581,7 @@ export default {
   'error.merge': 'No se han podido fusionar estas tomas. {message}',
   'error.stack': 'No se han podido apilar estas tomas. {message}',
 
-  // ── selección de fotos ──────────────────────────────────────────────────
+  // Selección de fotos
   'cull.link': 'Elegir lo mejor de una sesión',
   'cull.linkHint': 'Puntúa toda una sesión y elige las tomas que merece la pena revelar.',
   'cull.title': 'Selección',

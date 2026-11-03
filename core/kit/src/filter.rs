@@ -3,10 +3,7 @@
 
 use crate::image::{Image, Plane};
 
-// -------------------------------------------------------------------------
-// resampling, matches Pillow's `Image.resize(..., BILINEAR)`
-// -------------------------------------------------------------------------
-
+// Resampling, matching Pillow's `Image.resize(..., BILINEAR)`.
 /// Pillow scales the triangle filter's support by the downscale factor, which
 /// is what makes its BILINEAR an antialiasing filter on the way down.
 fn coeffs(in_size: usize, out_size: usize) -> (usize, Vec<i32>, Vec<f32>) {
@@ -48,38 +45,8 @@ pub fn resize_plane(p: &Plane, w: usize, h: usize) -> Plane {
     if p.w == w && p.h == h {
         return p.clone();
     }
-    // horizontal pass
-    let (ks, bounds, kk) = coeffs(p.w, w);
-    let mut tmp = Plane::new(w, p.h);
-    for y in 0..p.h {
-        let row = y * p.w;
-        for x in 0..w {
-            let xmin = bounds[x * 2] as usize;
-            let n = bounds[x * 2 + 1] as usize;
-            let mut acc = 0.0f32;
-            for i in 0..n {
-                acc += p.d[row + xmin + i] * kk[x * ks + i];
-            }
-            tmp.d[y * w + x] = acc;
-        }
-    }
-    // vertical pass: a whole source row at a time, weighted into the output
-    // row, so the inner loop is contiguous (and vectorised) instead of striding
-    // down a column per output pixel.
-    let (ks2, bounds2, kk2) = coeffs(p.h, h);
     let mut out = Plane::new(w, h);
-    for y in 0..h {
-        let ymin = bounds2[y * 2] as usize;
-        let n = bounds2[y * 2 + 1] as usize;
-        let dst = &mut out.d[y * w..(y + 1) * w];
-        for i in 0..n {
-            let k = kk2[y * ks2 + i];
-            let src = &tmp.d[(ymin + i) * w..(ymin + i + 1) * w];
-            for (o, s) in dst.iter_mut().zip(src) {
-                *o += *s * k;
-            }
-        }
-    }
+    out.d = resize::<1>(&p.d, p.w, p.h, w, h);
     out
 }
 
@@ -87,10 +54,47 @@ pub fn resize_rgb(img: &Image, w: usize, h: usize) -> Image {
     if img.w == w && img.h == h {
         return img.clone();
     }
-    let r = resize_plane(&img.plane(0), w, h);
-    let g = resize_plane(&img.plane(1), w, h);
-    let b = resize_plane(&img.plane(2), w, h);
-    Image::from_planes(&r, &g, &b)
+    let mut out = Image::new(w, h);
+    out.d = resize::<3>(&img.d, img.w, img.h, w, h);
+    out
+}
+
+/// Resample `C` interleaved channels, horizontally then vertically.
+fn resize<const C: usize>(src: &[f32], sw: usize, sh: usize, w: usize, h: usize) -> Vec<f32> {
+    let (ks, bounds, kk) = coeffs(sw, w);
+    let mut tmp = vec![0f32; w * sh * C];
+    for (dst, row) in tmp.chunks_exact_mut(w * C).zip(src.chunks_exact(sw * C)) {
+        for x in 0..w {
+            let xmin = bounds[x * 2] as usize;
+            let n = bounds[x * 2 + 1] as usize;
+            let mut acc = [0f32; C];
+            for i in 0..n {
+                let k = kk[x * ks + i];
+                let px = &row[(xmin + i) * C..(xmin + i + 1) * C];
+                for c in 0..C {
+                    acc[c] += px[c] * k;
+                }
+            }
+            dst[x * C..(x + 1) * C].copy_from_slice(&acc);
+        }
+    }
+    // A whole source row at a time, weighted into the output row, so the
+    // inner loop runs along memory instead of down a column.
+    let (ks, bounds, kk) = coeffs(sh, h);
+    let stride = w * C;
+    let mut out = vec![0f32; stride * h];
+    for (y, dst) in out.chunks_exact_mut(stride).enumerate() {
+        let ymin = bounds[y * 2] as usize;
+        let n = bounds[y * 2 + 1] as usize;
+        for i in 0..n {
+            let k = kk[y * ks + i];
+            let row = &tmp[(ymin + i) * stride..(ymin + i + 1) * stride];
+            for (o, s) in dst.iter_mut().zip(row) {
+                *o += *s * k;
+            }
+        }
+    }
+    out
 }
 
 /// Small copy used for every statistic, so analysis cost is resolution
@@ -105,10 +109,7 @@ pub fn thumbnail(img: &Image, long_edge: usize) -> Image {
     resize_rgb(img, w, h)
 }
 
-// -------------------------------------------------------------------------
-// blurs
-// -------------------------------------------------------------------------
-
+// Blurs
 /// Separable box blur, normalised at the borders.
 pub fn box_blur(p: &Plane, r: usize) -> Plane {
     if r < 1 {
@@ -177,6 +178,14 @@ pub fn gaussian_blur(p: &Plane, sigma: f32) -> Plane {
 
 /// Fast guided filter (He et al.).
 pub fn guided_filter(guide: &Plane, src: &Plane, radius: usize, eps: f32, subsample: usize) -> Plane {
+    let [out] = guided_filter_each(guide, [src], radius, eps, subsample);
+    out
+}
+
+/// `guided_filter` on several planes under one guide, whose statistics are
+/// worked out once for all of them.
+pub fn guided_filter_each<const N: usize>(guide: &Plane, srcs: [&Plane; N], radius: usize,
+                                          eps: f32, subsample: usize) -> [Plane; N] {
     let (w, h) = (guide.w, guide.h);
     let s = subsample.max(1);
     let sw = (w / s).max(8);
@@ -184,35 +193,39 @@ pub fn guided_filter(guide: &Plane, src: &Plane, radius: usize, eps: f32, subsam
     let r = (radius / s).max(1);
 
     let gi = resize_plane(guide, sw, sh);
-    let pi = resize_plane(src, sw, sh);
-
     let mut gg = Plane::new(sw, sh);
-    let mut gp = Plane::new(sw, sh);
     for i in 0..gi.d.len() {
         gg.d[i] = gi.d[i] * gi.d[i];
-        gp.d[i] = gi.d[i] * pi.d[i];
     }
     let mean_i = box_blur(&gi, r);
-    let mean_p = box_blur(&pi, r);
     let mean_gg = box_blur(&gg, r);
-    let mean_gp = box_blur(&gp, r);
 
-    let mut a = Plane::new(sw, sh);
-    let mut b = Plane::new(sw, sh);
-    for i in 0..a.d.len() {
-        let var_i = mean_gg.d[i] - mean_i.d[i] * mean_i.d[i];
-        let cov = mean_gp.d[i] - mean_i.d[i] * mean_p.d[i];
-        a.d[i] = cov / (var_i + eps);
-        b.d[i] = mean_p.d[i] - a.d[i] * mean_i.d[i];
-    }
-    let a = resize_plane(&box_blur(&a, r), w, h);
-    let b = resize_plane(&box_blur(&b, r), w, h);
+    srcs.map(|src| {
+        let pi = resize_plane(src, sw, sh);
+        let mut gp = Plane::new(sw, sh);
+        for i in 0..gi.d.len() {
+            gp.d[i] = gi.d[i] * pi.d[i];
+        }
+        let mean_p = box_blur(&pi, r);
+        let mean_gp = box_blur(&gp, r);
 
-    let mut out = Plane::new(w, h);
-    for i in 0..out.d.len() {
-        out.d[i] = a.d[i] * guide.d[i] + b.d[i];
-    }
-    out
+        let mut a = Plane::new(sw, sh);
+        let mut b = Plane::new(sw, sh);
+        for i in 0..a.d.len() {
+            let var_i = mean_gg.d[i] - mean_i.d[i] * mean_i.d[i];
+            let cov = mean_gp.d[i] - mean_i.d[i] * mean_p.d[i];
+            a.d[i] = cov / (var_i + eps);
+            b.d[i] = mean_p.d[i] - a.d[i] * mean_i.d[i];
+        }
+        let a = resize_plane(&box_blur(&a, r), w, h);
+        let b = resize_plane(&box_blur(&b, r), w, h);
+
+        let mut out = Plane::new(w, h);
+        for i in 0..out.d.len() {
+            out.d[i] = a.d[i] * guide.d[i] + b.d[i];
+        }
+        out
+    })
 }
 
 /// Bilinear sample with edge clamping, the sampler used by every resample

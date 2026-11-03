@@ -13,7 +13,7 @@
     CLIPPED,
   } from '$lib/cull.js';
   import { t, n, localized } from '$lib/i18n.svelte.js';
-  import { errorText } from '$lib/format.js';
+  import { errorText, saveFile } from '$lib/format.js';
   import { NAME } from '$lib/brand.js';
   import { app } from '$lib/state.svelte.js';
   import { filesFromDrop, pickMany } from '$lib/roll.svelte.js';
@@ -201,11 +201,7 @@
   function csv() {
     const picked = new Set(shown.filter(isPicked));
     const blob = new Blob([toCsv(ranking, picked, levers, sharp)], { type: 'text/csv' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `${NAME.toLowerCase()}-ranking.csv`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    saveFile(blob, `${NAME.toLowerCase()}-ranking.csv`);
   }
 
   /** The picked raws, as a roll in the developer. */
@@ -475,7 +471,7 @@
                   {/if}
                 </div>
                 {#if nth === 0 && group.length > 1}
-                  <button class="ghost small more" onclick={() => unfold(it)}>
+                  <button class="ghost small unfold" onclick={() => unfold(it)}>
                     {unfolded ? t('cull.fewer') : t('cull.similar', { count: group.length - 1 })}
                   </button>
                 {/if}
@@ -680,7 +676,6 @@
     }
   }
 
-  /* A switch rather than a checkbox: it turns a behaviour on. */
   .switch {
     display: flex; align-items: center; gap: 8px; cursor: pointer; width: fit-content;
     input {
@@ -754,5 +749,5 @@
     cursor: help;
     .warn { color: var(--color-accent); }
   }
-  .more { justify-self: start; }
+  .unfold { justify-self: start; }
 </style>

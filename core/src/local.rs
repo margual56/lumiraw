@@ -147,20 +147,21 @@ pub fn apply_filters(img: &mut Image, filters: &[Filter], frame: Option<Rect>,
             refined.push((kind, plane));
         }
     }
+    let planes: Vec<Option<&kit::Plane>> = filters.iter().map(|f| {
+        let kind = f.mask()?;
+        refined.iter().find(|(k, _)| *k == kind).and_then(|(_, p)| p.as_ref())
+    }).collect();
     for y in 0..img.h {
         let v = (y as f32 + 0.5 - fy) / fh;
         for x in 0..img.w {
             let u = (x as f32 + 0.5 - fx) / fw;
-            let i = (y * img.w + x) * 3;
-            for f in filters {
-                let k = match f.shape {
-                    Shape::Mask { kind, invert } => {
-                        match refined.iter().find(|(k, _)| *k == kind).and_then(|(_, p)| p.as_ref()) {
-                            Some(p) if invert => 1.0 - p.d[y * img.w + x],
-                            Some(p) => p.d[y * img.w + x],
-                            None => 0.0,
-                        }
-                    }
+            let j = y * img.w + x;
+            let i = j * 3;
+            for (f, plane) in filters.iter().zip(&planes) {
+                let k = match (&f.shape, plane) {
+                    (Shape::Mask { invert: true, .. }, Some(p)) => 1.0 - p.d[j],
+                    (Shape::Mask { .. }, Some(p)) => p.d[j],
+                    (Shape::Mask { .. }, None) => 0.0,
                     _ => weight(&f.shape, u, v, aspect),
                 };
                 if k <= 1e-4 {
@@ -174,8 +175,7 @@ pub fn apply_filters(img: &mut Image, filters: &[Filter], frame: Option<Rect>,
                     }
                 }
                 if f.temperature != 0.0 {
-                    // The same gains as the global temperature control, and
-                    // the same care to hold luminance while the colour moves.
+                    // The global temperature control's gains, which hold luminance.
                     let g = crate::grade::temp_tint_gains(f.temperature * k, 0.0);
                     for c in 0..3 {
                         px[c] *= g[c];

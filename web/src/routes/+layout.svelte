@@ -18,7 +18,7 @@
       .catch(() => {});
   });
 
-  // The address says the language (/es/...
+  // The address says the language: /es/... is Spanish, anything else English.
   useLocale(page.params.lang ?? 'en');
   $effect.pre(() => useLocale(page.params.lang ?? 'en'));
 

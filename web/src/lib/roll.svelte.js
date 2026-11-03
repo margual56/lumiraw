@@ -4,12 +4,9 @@ import * as api from './api.js';
 import { app, resetForNewPhoto, settingsFor, usable, FRAME, UPLOAD, DOWNLOAD } from './state.svelte.js';
 import { fileKey, recall } from './memory.js';
 import { t } from './i18n.svelte.js';
-import { errorText, RAW_ACCEPT } from './format.js';
+import { errorText, isRaw } from './format.js';
 import { zip } from './zip.js';
 import { stamp } from './wasm/stamp.js';
-
-const SUFFIXES = RAW_ACCEPT.split(',');
-const isRaw = (name) => SUFFIXES.some((s) => name.toLowerCase().endsWith(s));
 
 let keys = 0;
 

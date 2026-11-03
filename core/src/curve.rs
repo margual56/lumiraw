@@ -15,13 +15,10 @@ pub struct Curve {
 }
 
 impl Curve {
-    /// The curve that changes nothing.
     pub fn identity() -> Curve {
         Curve { table: (0..TABLE).map(|i| i as f32 / (TABLE - 1) as f32).collect(), knots: 0 }
     }
 
-    /// Whether this curve is the one that changes nothing, so a caller can skip
-    /// a pass over twenty million pixels rather than multiply them all by one.
     pub fn is_identity(&self) -> bool {
         self.table.iter().enumerate().all(|(i, v)| {
             (v - i as f32 / (TABLE - 1) as f32).abs() < 1e-6
@@ -43,16 +40,9 @@ impl Curve {
         Curve { table, knots: knots.len() }
     }
 
-    /// The curve at one value, interpolating between table entries.
     #[inline]
     pub fn at(&self, x: f32) -> f32 {
-        let t = x.clamp(0.0, 1.0) * (TABLE - 1) as f32;
-        let i = t as usize;
-        if i >= TABLE - 1 {
-            return self.table[TABLE - 1];
-        }
-        let f = t - i as f32;
-        self.table[i] * (1.0 - f) + self.table[i + 1] * f
+        sample(&self.table, x.clamp(0.0, 1.0))
     }
 
     /// How many control points shaped this curve, after the unreadable ones
@@ -192,10 +182,7 @@ pub fn parametric(shadows: f32, darks: f32, lights: f32, highlights: f32) -> Cur
     Curve::new(&points)
 }
 
-// -------------------------------------------------------------------------
-// the stack the pipeline applies
-// -------------------------------------------------------------------------
-
+// The stack the pipeline applies
 /// The four curves a grade is made of.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Stack {
@@ -229,13 +216,10 @@ impl Stack {
         Stack { composite, channel, baked, identity }
     }
 
-    /// Whether applying this would be a pass over every pixel to multiply it
-    /// by one.
     pub fn is_identity(&self) -> bool {
         self.identity
     }
 
-    /// The composite curve, for drawing.
     pub fn composite(&self) -> &Curve {
         &self.composite
     }
@@ -245,33 +229,27 @@ impl Stack {
         &self.channel[c.min(2)]
     }
 
-    /// One channel of one pixel: display-linear in, display-linear out.
+    /// One channel of one pixel, display-linear in and out. The encode clamps
+    /// above white, as `output.rs` does when it writes the file.
     #[inline]
     fn map(&self, c: usize, v: f32) -> f32 {
-        // Anything above white is already gone by the time a file is written,
-        // because `output.rs` encodes with the same clamp.
-        let t = kit::srgb_encode_scalar(v) * (TABLE - 1) as f32;
-        let i = t as usize;
-        let base = c * TABLE;
-        if i >= TABLE - 1 {
-            return self.baked[base + TABLE - 1];
-        }
-        let f = t - i as f32;
-        self.baked[base + i] * (1.0 - f) + self.baked[base + i + 1] * f
+        sample(&self.baked[c * TABLE..(c + 1) * TABLE], kit::srgb_encode_scalar(v))
     }
 
-    /// The image with the stack applied, or the image itself if there is
-    /// nothing to apply.
-    pub fn apply(&self, img: &Image) -> Image {
+    pub fn apply_to(&self, img: &mut Image) {
         if self.identity {
-            return img.clone();
+            return;
         }
-        let mut out = img.clone();
-        for px in out.px_mut() {
+        for px in img.px_mut() {
             for (c, v) in px.iter_mut().enumerate() {
                 *v = self.map(c, *v);
             }
         }
+    }
+
+    pub fn apply(&self, img: &Image) -> Image {
+        let mut out = img.clone();
+        self.apply_to(&mut out);
         out
     }
 
@@ -291,6 +269,18 @@ impl Stack {
         let [bands, rgb, r, g, b] = edited(Some(v));
         Stack::new(bands.then(&rgb), r, g, b, strength)
     }
+}
+
+/// A `TABLE`-entry curve at `x` in 0..1, interpolating between entries.
+#[inline]
+fn sample(table: &[f32], x: f32) -> f32 {
+    let t = x * (TABLE - 1) as f32;
+    let i = t as usize;
+    if i >= TABLE - 1 {
+        return table[TABLE - 1];
+    }
+    let f = t - i as f32;
+    table[i] * (1.0 - f) + table[i + 1] * f
 }
 
 /// The five curves the editor shows, each exactly as it is edited.
@@ -415,10 +405,7 @@ mod tests {
         assert!((c.at(1.0) - 0.93).abs() < 1e-4, "shoulder not held: {}", c.at(1.0));
     }
 
-    // ---------------------------------------------------------------------
-    // the stack
-    // ---------------------------------------------------------------------
-
+    // The stack
     fn grey(v: f32) -> Image {
         let mut img = Image::new(1, 1);
         for c in 0..3 {
@@ -427,8 +414,7 @@ mod tests {
         img
     }
 
-    /// A photograph nobody graded has to come out of this exactly as it went
-    /// in.
+    /// An ungraded frame comes out bit for bit as it went in.
     #[test]
     fn an_ungraded_frame_comes_back_untouched() {
         let stack = Stack::identity();
@@ -513,10 +499,7 @@ mod tests {
     }
 
 
-    // ---------------------------------------------------------------------
-    // composition and the region sliders
-    // ---------------------------------------------------------------------
-
+    // Composition and the region sliders
     /// Composing has to mean composing, and it has to be free when either half
     /// has nothing to say.
     #[test]

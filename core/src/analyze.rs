@@ -28,10 +28,7 @@ pub fn soft_limit(x: f32, limit: f32) -> f32 {
 }
 
 
-// -------------------------------------------------------------------------
-// white balance
-// -------------------------------------------------------------------------
-
+// White balance
 /// How much of the automatic white balance's green-magenta correction is
 /// kept; see `auto_white_balance`.
 pub const TINT_TRUST: f32 = 0.2;
@@ -91,10 +88,7 @@ pub fn auto_white_balance(thumb: &Image, strength: f32, limit_ev: f32) -> ([f32;
     )
 }
 
-// -------------------------------------------------------------------------
-// exposure
-// -------------------------------------------------------------------------
-
+// Exposure
 /// Match the log-average luminance to middle grey, partially, with a highlight
 /// guard that gives way when the raw was already clipped.
 pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f32) -> (f32, Value) {
@@ -111,7 +105,7 @@ pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f3
     let delta = soft_limit((target_key / key.max(EPS)).log2() * strength, limit_ev);
     let mut gain = delta.exp2();
 
-    // --- rescue, rather than restraint ------------------------------------
+    // Rescue, rather than restraint.
     // The soft limit above keeps a deliberately dark frame dark, which is right
     // for a night portrait and wrong for a frame that is simply underexposed.
     let buried = |g: f32| {
@@ -131,8 +125,7 @@ pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f3
         let cap = 1.20 / hi.max(EPS);
         if cap < gain {
             guard = Some(gain);
-            // The guard and the rescue want opposite things, and on a frame
-            // that needed rescuing the guard used to win and undo it.
+            // The rescue wins over the guard, or the guard would undo it.
             let floor = if rescue_ev > 0.0 { gain } else { 0.0 };
             gain = cap.max(floor);
             waived = gain > cap;
@@ -152,10 +145,7 @@ pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f3
     )
 }
 
-// -------------------------------------------------------------------------
-// dynamic range
-// -------------------------------------------------------------------------
-
+// Dynamic range
 /// How hard to squeeze the scene's range into the display's.
 pub fn auto_tone_compression(thumb: &Image, comfortable_stops: f32, floor: f32) -> (f32, Value) {
     let y = kit::luminance(thumb);
@@ -169,10 +159,7 @@ pub fn auto_tone_compression(thumb: &Image, comfortable_stops: f32, floor: f32) 
     )
 }
 
-// -------------------------------------------------------------------------
-// display-referred tone
-// -------------------------------------------------------------------------
-
+// Display-referred tone
 /// Robust black/white point from percentiles, moved only part of the way.
 pub fn auto_levels(lightness: &Plane, strength: f32, clip_pct: f64) -> (f32, f32, Value) {
     let p = kit::percentiles(&lightness.d,
@@ -223,10 +210,7 @@ pub fn auto_contrast(lightness: &Plane, target_spread: f32, max_amount: f32, com
     )
 }
 
-// -------------------------------------------------------------------------
-// colour
-// -------------------------------------------------------------------------
-
+// Colour
 /// Saturation boost from how colourful the frame already is, measured on the
 /// 80th percentile of chroma over well-lit pixels.
 pub fn auto_vibrance(chroma: &Plane, lightness: &Plane, target_chroma: f32, max_boost: f32)
@@ -288,10 +272,7 @@ pub fn noise_from_floor(floor: f32, iso: f32, prior: f32) -> (f32, Value) {
     )
 }
 
-// -------------------------------------------------------------------------
-// focus
-// -------------------------------------------------------------------------
-
+// Focus
 /// The size the frame is measured at, whatever the sensor's.
 pub const FOCUS_LONG_EDGE: usize = 1800;
 const FOCUS_TILE: usize = 96;
@@ -470,8 +451,7 @@ mod tests {
                 "it should still get the floor, got {amount}");
     }
 
-    /// A flat frame still gets more than a contrasty one, which is the part of
-    /// the old behaviour worth keeping.
+    /// A flat frame still gets more curve than a contrasty one.
     #[test]
     fn a_flat_frame_gets_more_curve_than_a_wide_one() {
         let flat = auto_contrast(&lightness(0.02, 64, 48), 0.20, 0.45, 1.0).0;

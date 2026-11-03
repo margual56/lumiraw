@@ -6,7 +6,6 @@
 
   let { onpick } = $props();
   let over = $state(false);
-  let input;
 
   /** Every file, not the first: a roll is dropped all at once, or as the
    *  folder it came off the card in. */
@@ -26,7 +25,6 @@
   ondrop={async (e) => { e.preventDefault(); take(await filesFromDrop(e.dataTransfer)); }}
 >
   <input
-    bind:this={input}
     type="file"
     multiple
     accept={RAW_ACCEPT}

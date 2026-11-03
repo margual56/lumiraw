@@ -1,6 +1,5 @@
-// The three things every picture on the page has to do, in one place because
-// the viewer and the before/after comparator both need all three and used to
-// carry their own copy of each.
+// What every picture on the page needs, shared by the viewer and the
+// before/after comparator.
 @use 'breakpoints' as *;
 
 // A photograph sized to whatever is left after the chrome, never taller.

@@ -165,14 +165,14 @@ function fail(info) {
   throw error;
 }
 
-// -- pixels -> something an <img> can show --------------------------------
-
+// Pixels -> something an <img> can show
 /** WebP at 0.92 is a good preview carrier: encoding a 1300px frame costs a few
  *  milliseconds and the blob is a fraction of a PNG's. */
 async function toBlob(pixels, w, h, type = 'image/webp', quality = 0.92) {
   const canvas = new OffscreenCanvas(w, h);
   const ctx = canvas.getContext('2d');
-  ctx.putImageData(new ImageData(new Uint8ClampedArray(pixels), w, h), 0, 0);
+  const view = new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, pixels.length);
+  ctx.putImageData(new ImageData(view, w, h), 0, 0);
   return canvas.convertToBlob({ type, quality });
 }
 
@@ -199,8 +199,7 @@ function encodedBytes() {
   return new Uint8Array(memory.buffer, ptr, len).slice();
 }
 
-// -- operations ------------------------------------------------------------
-
+// Operations
 /** The open call for a photograph: with deep noise reduction on its mosaic,
  *  or without. */
 const opener = (deep) => (deep ? wasm.ar_open_denoised : wasm.ar_open);
@@ -300,16 +299,6 @@ async function render({ settings, size, uncropped, live }) {
   };
 }
 
-/** The picture at full resolution, for looking at 100 %. */
-async function full({ settings }) {
-  const rc = settingsPointer(settings, (sp, sl) => wasm.ar_render(sp, sl, 0, 1));
-  const info = readJson();
-  if (rc !== 0) fail(info);
-  const { w, h, pixels } = primary();
-  const bitmap = await createImageBitmap(new ImageData(new Uint8ClampedArray(pixels.buffer), w, h));
-  return { bitmap, width: w, height: h, report: info.report ?? {}, [TRANSFER]: [bitmap] };
-}
-
 /** A piece of the picture at full size, for the 100 % view. */
 async function region({ settings, centre, width, height }) {
   const rc = settingsPointer(settings, (sp, sl) =>
@@ -362,9 +351,13 @@ async function compare({ settings, size }) {
   if (rc !== 0) fail(info);
   const after = primary();
   const before = secondary();
+  const [afterBlob, beforeBlob] = await Promise.all([
+    toBlob(after.pixels, after.w, after.h),
+    toBlob(before.pixels, before.w, before.h),
+  ]);
   return {
-    after: await toBlob(after.pixels, after.w, after.h),
-    before: await toBlob(before.pixels, before.w, before.h),
+    after: afterBlob,
+    before: beforeBlob,
     toggles: info.toggles ?? [],
     report: info.report ?? {},
   };
@@ -550,7 +543,7 @@ async function stackFinish() {
   return ensureLenses(info);
 }
 
-const HANDLERS = { open, render, full, region, releaseRegion, thumbnail, preview, captured,
+const HANDLERS = { open, render, region, releaseRegion, thumbnail, preview, captured,
                    compare, looks, curves, match, skin, mask,
                    lutLoad, lutClear,
                    export: exportImage,

@@ -316,10 +316,7 @@ impl Stacker {
     }
 }
 
-// -------------------------------------------------------------------------
-// lining up
-// -------------------------------------------------------------------------
-
+// Lining up
 /// The long edge the magnification is measured at.
 const GREY_EDGE: usize = 512;
 
@@ -437,10 +434,7 @@ fn difference(a: &Plane, b: &Plane, s: f32, dx: f32, dy: f32) -> f32 {
     if count == 0 { f32::MAX } else { sum / count as f32 }
 }
 
-// -------------------------------------------------------------------------
-// focus
-// -------------------------------------------------------------------------
-
+// Focus
 /// A focus stack in progress: for every level of a Laplacian pyramid, the
 /// frames' detail weighted by how sharp each frame is there, and the sum of
 /// those weights. The weights are blurred down the pyramid along with the
@@ -616,10 +610,7 @@ fn expand(p: &Plane, w: usize, h: usize) -> Plane {
     out
 }
 
-// -------------------------------------------------------------------------
-// half floats, for the median's copies
-// -------------------------------------------------------------------------
-
+// Half floats, for the median's copies
 const HALF_NAN: u16 = 0x7e00;
 
 /// IEEE half precision, rounded to nearest. Plenty for linear light: eleven

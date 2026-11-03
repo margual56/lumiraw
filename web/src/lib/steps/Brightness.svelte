@@ -34,28 +34,15 @@
             min={-3} max={3} step={0.1} format={(v) => `${signed(v, 1)} EV`} />
     <p class="lede zonehint">{t('brightness.fineHint')}</p>
 
-    <!--
-      The three zones share a scale, so their handles line up and the picture's own tonal
-      order is easy to read off the panel.
-    -->
-    <div class="zone" role="group" aria-label={t('brightness.shadows')}
-         onpointerenter={enter('shadows')} onpointerleave={leave('shadows')}
-         onfocusin={enter('shadows')} onfocusout={leave('shadows')}>
-      <Slider label={t('brightness.shadows')} bind:value={app.settings.shadows}
-              min={-1} max={1} step={0.02} format={(v) => signed(v, 2)} />
-    </div>
-    <div class="zone" role="group" aria-label={t('brightness.midtones')}
-         onpointerenter={enter('midtones')} onpointerleave={leave('midtones')}
-         onfocusin={enter('midtones')} onfocusout={leave('midtones')}>
-      <Slider label={t('brightness.midtones')} bind:value={app.settings.midtones}
-              min={-1} max={1} step={0.02} format={(v) => signed(v, 2)} />
-    </div>
-    <div class="zone" role="group" aria-label={t('brightness.highlights')}
-         onpointerenter={enter('highlights')} onpointerleave={leave('highlights')}
-         onfocusin={enter('highlights')} onfocusout={leave('highlights')}>
-      <Slider label={t('brightness.highlights')} bind:value={app.settings.highlights}
-              min={-1} max={1} step={0.02} format={(v) => signed(v, 2)} />
-    </div>
+    <!-- The zones share a scale, so their handles line up in tonal order. -->
+    {#each ['shadows', 'midtones', 'highlights'] as zone (zone)}
+      <div class="zone" role="group" aria-label={t(`brightness.${zone}`)}
+           onpointerenter={enter(zone)} onpointerleave={leave(zone)}
+           onfocusin={enter(zone)} onfocusout={leave(zone)}>
+        <Slider label={t(`brightness.${zone}`)} bind:value={app.settings[zone]}
+                min={-1} max={1} step={0.02} format={(v) => signed(v, 2)} />
+      </div>
+    {/each}
     <!-- A finger never hovers, but touching a slider enters it, so on a
          touchscreen the same thing is done by holding one. -->
     <p class="lede zonehint">
@@ -79,7 +66,6 @@
   /* The wrapper exists for the pointer, not for the layout: it must not add
      a box of its own between the three sliders. */
   .zone { display: contents; }
-  /* Two controls where there used to be one: let them wrap rather than
-     squeezing the labels, which are long in both languages. */
+  /* Wrap rather than squeeze the labels, which are long in both languages. */
   .row { display: flex; flex-wrap: wrap; gap: 8px; }
 </style>

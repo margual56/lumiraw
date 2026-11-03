@@ -1,17 +1,22 @@
-# !/usr/bin/env bash Build the whole application.
+#!/usr/bin/env bash
+# Build the whole application.
+#   --wasm  rebuild the two wasm modules and stop (for a release)
+#   --db    rebake the lens database first
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# --wasm: rebuild the two modules and stop, for a release, where the version
-# they carry has to change with everything else.
-if [[ "${1:-}" == "--wasm" ]]; then
-  # One at a time: built together, Cargo would hand the developer's module the
-  # culling one's exports along with the networks it shares.
+# One module at a time: built together, Cargo would hand the developer's
+# module the culling one's exports along with the networks they share.
+# Target flags (simd128, the getrandom backend) live in .cargo/config.toml.
+build_wasm() {
   for module in darkroom critic; do
     cargo build --release --manifest-path core/Cargo.toml -p "$module" --target wasm32-unknown-unknown
+    cp "core/target/wasm32-unknown-unknown/release/$module.wasm" "web/src/lib/wasm/$module.wasm"
   done
-  cp core/target/wasm32-unknown-unknown/release/darkroom.wasm web/src/lib/wasm/darkroom.wasm
-  cp core/target/wasm32-unknown-unknown/release/critic.wasm web/src/lib/wasm/critic.wasm
+}
+
+if [[ "${1:-}" == "--wasm" ]]; then
+  build_wasm
   exit 0
 fi
 
@@ -21,14 +26,7 @@ if [[ "${1:-}" == "--db" ]]; then
 fi
 
 if command -v cargo >/dev/null && rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown; then
-  # Target flags (simd128, the getrandom backend) live in .cargo/config.toml.
-  # One at a time: built together, Cargo would hand the developer's module the
-  # culling one's exports along with the networks it shares.
-  for module in darkroom critic; do
-    cargo build --release --manifest-path core/Cargo.toml -p "$module" --target wasm32-unknown-unknown
-  done
-  cp core/target/wasm32-unknown-unknown/release/darkroom.wasm web/src/lib/wasm/darkroom.wasm
-  cp core/target/wasm32-unknown-unknown/release/critic.wasm web/src/lib/wasm/critic.wasm
+  build_wasm
   echo "rebuilt the wasm modules from core/darkroom and core/critic"
 else
   for module in darkroom critic; do

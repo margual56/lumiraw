@@ -57,7 +57,7 @@ pub fn decode_with(bytes: &[u8], denoiser: Option<Denoiser>) -> Result<Decoded, 
 /// Sensor values to linear sRGB: levels, (noise reduction,) white balance,
 /// demosaic, highlight reconstruction, colour matrix, orientation.
 fn develop_raw(raw: &raw::Raw, meta: Meta, denoiser: Option<Denoiser>) -> Decoded {
-    // --- black/white levels + camera white balance ------------------------
+    // Black/white levels + camera white balance.
     // dcraw normalises the multipliers by the largest one, so no channel can
     // clip further than the raw already did.
     let mut wb = raw.wb;
@@ -70,23 +70,16 @@ fn develop_raw(raw: &raw::Raw, meta: Meta, denoiser: Option<Denoiser>) -> Decode
     let mut denoised = None;
     let mut cam = match &raw.layout {
         raw::Layout::Mosaic(cfa) => {
-            let (fw, fh) = (raw.width, raw.height);
-            let mut cfa_plane = Plane::new(fw, fh);
-            for y in 0..fh {
-                for x in 0..fw {
-                    cfa_plane.d[y * fw + x] = raw.normalised(x, y, 0);
-                }
-            }
-            // On the sensor's own values: the noise model the network knows
-            // is the sensor's, before any channel is scaled.
+            let mut cfa_plane = raw.normalised_mosaic(cfa);
+            // Before white balance: the network was trained on the sensor's
+            // own noise, with no channel scaled yet.
             if let Some(d) = denoiser {
                 denoised = crate::denoise::denoise(&mut cfa_plane, cfa, raw.area, d.net, d.progress);
             }
-            for y in 0..fh {
-                for x in 0..fw {
-                    let c = cfa.color_at(y, x).min(2);
-                    let v = &mut cfa_plane.d[y * fw + x];
-                    *v = v.clamp(0.0, 1.0) * wb[c];
+            for (y, row) in cfa_plane.d.chunks_exact_mut(raw.width).enumerate() {
+                let gains: Vec<f32> = (0..cfa.width).map(|x| wb[cfa.color_at(y, x).min(2)]).collect();
+                for (v, g) in row.iter_mut().zip(gains.iter().cycle()) {
+                    *v = v.clamp(0.0, 1.0) * g;
                 }
             }
             // The pattern is looked up at absolute sensor positions, so the
@@ -94,8 +87,7 @@ fn develop_raw(raw: &raw::Raw, meta: Meta, denoiser: Option<Denoiser>) -> Decode
             demosaic_any(&cfa_plane, cfa, x0, y0, w, h)
         }
         raw::Layout::Linear => {
-            // Already three values a pixel, but still in the camera's own
-            // colours and still unbalanced.
+            // Three values a pixel, but still camera colours, unbalanced.
             let mut img = Image::new(w, h);
             for y in 0..h {
                 for x in 0..w {
@@ -110,10 +102,9 @@ fn develop_raw(raw: &raw::Raw, meta: Meta, denoiser: Option<Denoiser>) -> Decode
     };
     reconstruct_highlights(&mut cam, &wb);
 
-    // --- camera RGB -> linear sRGB ---------------------------------------
-    // Not clamped.
+    // Camera RGB to linear sRGB, unclamped except that a pixel with no light
+    // in it goes to black.
     let m = cam_to_srgb(&scene_matrix(&raw.matrices, &raw.wb));
-    // What is not kept is a pixel with no light in it.
     for px in cam.d.chunks_exact_mut(3) {
         let out = m.apply([px[0], px[1], px[2]]);
         if kit::luminance_px(&out) > 0.0 {
@@ -123,14 +114,12 @@ fn develop_raw(raw: &raw::Raw, meta: Meta, denoiser: Option<Denoiser>) -> Decode
         }
     }
 
-    // Not every decoder reads the orientation (rawler's ARW one does not), and
-    // a portrait frame that comes up on its side is the first thing anyone
-    // notices.
+    // Not every decoder reads the orientation (rawler's ARW one does not).
     let orientation = match raw.orientation {
         Orientation::Normal | Orientation::Unknown => Orientation::from_u16(meta.orientation),
         o => o,
     };
-    Decoded { img: orient(&cam, orientation), meta, denoised }
+    Decoded { img: orient(cam, orientation), meta, denoised }
 }
 
 /// A small picture of the file for a filmstrip, from the JPEG the camera
@@ -160,17 +149,11 @@ pub fn thumbnail(bytes: &[u8], long_edge: usize, smallest: usize) -> Result<Imag
     }
     let small = kit::thumbnail(&img, long_edge);
     let meta = read_exif(bytes);
-    Ok(orient(&small, Orientation::from_u16(meta.orientation)))
+    Ok(orient(small, Orientation::from_u16(meta.orientation)))
 }
 
-/// When a file says it was taken, in seconds, or zero. Any container the EXIF
-/// reader knows: raws, and JPEG, PNG and WebP too.
-pub fn captured(bytes: &[u8]) -> i64 {
-    read_exif(bytes).captured_s
-}
-
-/// What a file says about how it was taken, without decoding it: enough to
-/// list it. Any container the EXIF reader knows.
+/// What a file says about how it was taken, without decoding it. Works on any
+/// container the EXIF reader knows: raws, and JPEG, PNG and WebP too.
 pub fn metadata(bytes: &[u8]) -> Meta {
     read_exif(bytes)
 }
@@ -302,11 +285,9 @@ fn surrounding_hue(img: &Image, onset: &[f32; 3], limit: &[f32; 3]) -> Option<Hu
         for x in (0..img.w).step_by(2) {
             let i = (y * img.w + x) * 3;
             let px = &img.d[i..i + 3];
-            // Nowhere near any ceiling is the overwhelmingly common case, and
-            // three smoothsteps twenty million times is worth not doing.
+            // Most pixels are nowhere near a ceiling; skip the smoothsteps.
             let clear = px[0] < onset[0] && px[1] < onset[1] && px[2] < onset[2];
-            // Only a pixel with every channel still in range describes a
-            // colour.
+            // Only a pixel with every channel in range describes a colour.
             let known = if clear {
                 1.0
             } else {
@@ -411,14 +392,12 @@ fn reconstruct_highlights(img: &mut Image, wb: &[f32; 3]) {
     // Where recovery starts, as a fraction of each channel's own ceiling.
     const ONSET: f32 = 0.96;
 
-    // Each channel's ceiling is where the white balance put its saturation
-    // point, and these do not vary per pixel, so work them out once.
+    // Each channel clips where the white balance put its saturation point.
     let limit = [wb[0].max(1e-6), wb[1].max(1e-6), wb[2].max(1e-6)];
     let onset = [ONSET * limit[0], ONSET * limit[1], ONSET * limit[2]];
 
     let Some(hues) = surrounding_hue(img, &onset, &limit) else {
-        // Not one pixel in the frame kept all three channels, so there is
-        // nothing to carry inward and every highlight is on its own.
+        // No pixel kept all three channels, so there is no colour to carry in.
         for px in img.d.chunks_exact_mut(3) {
             let blown = blown_at(px, &onset, &limit);
             if blown[0] + blown[1] + blown[2] <= 0.0 {
@@ -436,8 +415,6 @@ fn reconstruct_highlights(img: &mut Image, wb: &[f32; 3]) {
         for x in 0..img.w {
             let i = (y * img.w + x) * 3;
             let px = [img.d[i], img.d[i + 1], img.d[i + 2]];
-            // Comparisons before smoothsteps: almost every pixel in a frame is
-            // nowhere near a ceiling and can be dismissed in three loads.
             if px[0] < onset[0] && px[1] < onset[1] && px[2] < onset[2] {
                 continue;
             }
@@ -454,7 +431,7 @@ fn reconstruct_highlights(img: &mut Image, wb: &[f32; 3]) {
             let mid = 0.5 * (v[0] + v[2]);
             v[1] += blown[1] * (mid - v[1]).max(0.0);
 
-            // How far gone the pixel is overall.
+            // How far gone the pixel is overall: its second most blown channel.
             let mut order = blown;
             order.sort_by(|a, b| b.partial_cmp(a).unwrap());
             let core = order[1];
@@ -463,7 +440,6 @@ fn reconstruct_highlights(img: &mut Image, wb: &[f32; 3]) {
                 continue;
             }
 
-            // Here is where the surroundings earn their keep.
             let hue = hues.at(x, y);
             let (mut scale, mut anchor) = (0.0f32, 0.0f32);
             for c in 0..3 {
@@ -507,149 +483,7 @@ fn cam_to_srgb(xyz_to_cam: &Mat3) -> Mat3 {
     Matrix3(cam_rgb).inverse(1e-12).unwrap_or(Mat3::IDENTITY)
 }
 
-// -------------------------------------------------------------------------
-// demosaic
-// -------------------------------------------------------------------------
-// Two passes.
-
-/// Interpolate a Bayer mosaic to full colour, choosing a direction for green
-/// and reconstructing red and blue as differences from it.
-pub fn demosaic_directional(cfa: &Plane, pattern: &CFA, x0: usize, y0: usize,
-                            w: usize, h: usize) -> Image {
-    // Everything below assumes the four-site Bayer quad.
-    if pattern.width != 2 || pattern.height != 2 {
-        return demosaic_any(cfa, pattern, x0, y0, w, h);
-    }
-    let mut out = Image::new(w, h);
-
-    // The pattern repeats every two rows and columns, so resolve it once for
-    // the crop's phase rather than paying color_at's modulo indexing on every
-    // one of the dozen-odd reads each pixel makes.
-    let phase = [
-        [pattern.color_at(y0, x0), pattern.color_at(y0, x0 + 1)],
-        [pattern.color_at(y0 + 1, x0), pattern.color_at(y0 + 1, x0 + 1)],
-    ];
-    let colour = |x: usize, y: usize| phase[y & 1][x & 1];
-    let is_green = |c: usize| c == 1 || c == 3;
-
-    // Out-of-frame neighbours are reflected, not clamped.
-    let reflect = |v: i64, n: usize| -> usize {
-        let n = n as i64;
-        let folded = if v < 0 { -v } else if v >= n { 2 * (n - 1) - v } else { v };
-        // The guard is for a frame narrower than the neighbourhood, where one
-        // fold is not enough to land inside.
-        folded.clamp(0, n - 1) as usize
-    };
-    // Reflection happens in crop coordinates so that the second pass, which
-    // reads a sensor value and a reconstructed green at what must be the same
-    // pixel, cannot have the two disagree about where the edge is.
-    let row = |dy: i64, y: usize| -> usize { reflect(y as i64 + dy, h) };
-    let col = |dx: i64, x: usize| -> usize { reflect(x as i64 + dx, w) };
-    let sensor_row = |r: usize| -> usize { (y0 + r) * cfa.w };
-    let sensor_col = |c: usize| -> usize { x0 + c };
-
-    // --- pass 1: green at every pixel -----------------------------------
-    // At a red or blue site green has four neighbours, two horizontal and two
-    // vertical.
-    for y in 0..h {
-        let (rm2, rm1, r0, rp1, rp2) = (
-            sensor_row(row(-2, y)), sensor_row(row(-1, y)), sensor_row(row(0, y)),
-            sensor_row(row(1, y)), sensor_row(row(2, y)),
-        );
-        for x in 0..w {
-            let i = (y * w + x) * 3;
-            let (cm2, cm1, c0, cp1, cp2) = (
-                sensor_col(col(-2, x)), sensor_col(col(-1, x)), sensor_col(col(0, x)),
-                sensor_col(col(1, x)), sensor_col(col(2, x)),
-            );
-            let centre = cfa.d[r0 + c0];
-            if is_green(colour(x, y)) {
-                out.d[i + 1] = centre;
-                continue;
-            }
-            let (n1, s1) = (cfa.d[rm1 + c0], cfa.d[rp1 + c0]);
-            let (w1, e1) = (cfa.d[r0 + cm1], cfa.d[r0 + cp1]);
-            let (n2, s2) = (cfa.d[rm2 + c0], cfa.d[rp2 + c0]);
-            let (w2, e2) = (cfa.d[r0 + cm2], cfa.d[r0 + cp2]);
-
-            let curve_h = 2.0 * centre - w2 - e2;
-            let curve_v = 2.0 * centre - n2 - s2;
-            let g_h = 0.5 * (w1 + e1) + 0.25 * curve_h;
-            let g_v = 0.5 * (n1 + s1) + 0.25 * curve_v;
-
-            // How much the image is doing in each direction: the green
-            // difference across the centre plus the same-colour curvature.
-            let d_h = (w1 - e1).abs() + curve_h.abs();
-            let d_v = (n1 - s1).abs() + curve_v.abs();
-
-            // Weight each estimate by the *other* direction's activity, so the
-            // flatter direction wins.
-            let total = d_h + d_v;
-            out.d[i + 1] = if total > 0.0 {
-                // How lopsided the two directions are, -1 (all the activity
-                // vertical, so interpolate horizontally) to +1.
-                let lean = (d_v - d_h) / total;
-                // Squaring the lean while keeping its sign holds the estimate
-                // near the isotropic average until one direction is clearly
-                // flatter, and still commits fully when it is.
-                let weight_h = 0.5 * (1.0 + lean * lean.abs());
-                g_h * weight_h + g_v * (1.0 - weight_h)
-            } else {
-                // Flat both ways, so the two estimates agree anyway.
-                0.5 * (g_h + g_v)
-            };
-        }
-    }
-
-    // --- pass 2: red and blue from green plus a colour difference --------
-    // Interpolating red directly would carry every edge in the scene into the
-    // estimate, and since red is sampled at half green's density it cannot
-    // follow those edges.
-    for y in 0..h {
-        let (rm1, r0, rp1) = (row(-1, y), row(0, y), row(1, y));
-        for x in 0..w {
-            let i = (y * w + x) * 3;
-            let (cm1, c0, cp1) = (col(-1, x), col(0, x), col(1, x));
-            let g = out.d[(r0 * w + c0) * 3 + 1];
-            // A sensor reading minus the green reconstructed at the same pixel,
-            // both addressed from one pair of crop coordinates so they cannot
-            // drift apart at the frame edge.
-            let diff = |r: usize, c: usize| -> f32 {
-                cfa.d[sensor_row(r) + sensor_col(c)] - out.d[(r * w + c) * 3 + 1]
-            };
-            let (r, b);
-            if is_green(colour(x, y)) {
-                // A green site has red on one axis and blue on the other.
-                let across = 0.5 * (diff(r0, cm1) + diff(r0, cp1));
-                let along = 0.5 * (diff(rm1, c0) + diff(rp1, c0));
-                if colour(x + 1, y) == 0 {
-                    r = g + across;
-                    b = g + along;
-                } else {
-                    r = g + along;
-                    b = g + across;
-                }
-            } else {
-                // A red site has blue only on the diagonals, and vice versa.
-                let other = g
-                    + 0.25
-                        * (diff(rm1, cm1) + diff(rm1, cp1)
-                            + diff(rp1, cm1) + diff(rp1, cp1));
-                let centre = cfa.d[sensor_row(r0) + sensor_col(c0)];
-                if colour(x, y) == 0 {
-                    r = centre;
-                    b = other;
-                } else {
-                    b = centre;
-                    r = other;
-                }
-            }
-            out.d[i] = r.max(0.0);
-            out.d[i + 2] = b.max(0.0);
-        }
-    }
-    out
-}
+// Demosaicing
 
 /// The demosaic for whatever pattern the sensor has.
 pub fn demosaic_any(cfa: &Plane, pattern: &CFA, x0: usize, y0: usize, w: usize, h: usize) -> Image {
@@ -673,7 +507,7 @@ pub fn demosaic_pattern(cfa: &Plane, pattern: &CFA, x0: usize, y0: usize, w: usi
         cfa.d[(y0 as i64 + y) as usize * cfa.w + (x0 as i64 + x) as usize]
     };
 
-    // --- green everywhere ---------------------------------------------------
+    // Green everywhere.
     let mut green = Plane::new(w, h);
     for y in 0..h as i64 {
         for x in 0..w as i64 {
@@ -711,7 +545,7 @@ pub fn demosaic_pattern(cfa: &Plane, pattern: &CFA, x0: usize, y0: usize, w: usi
         }
     }
 
-    // --- red and blue as a difference from green ---------------------------
+    // Red and blue as a difference from green.
     let mut out = Image::new(w, h);
     for y in 0..h as i64 {
         for x in 0..w as i64 {
@@ -748,94 +582,85 @@ pub fn demosaic_pattern(cfa: &Plane, pattern: &CFA, x0: usize, y0: usize, w: usi
 /// Gradient-corrected bilinear interpolation (Malvar, He & Cutler 2004).
 pub fn demosaic(cfa: &Plane, pattern: &CFA, x0: usize, y0: usize, w: usize,
                 h: usize) -> Image {
-    let mut out = Image::new(w, h);
-    let at = |x: i64, y: i64| -> f32 {
+    // The colour at each phase of the 2x2 quad, and whether a green site has
+    // red beside it (which decides its two asymmetric kernels).
+    let phase: [[(usize, bool); 2]; 2] = std::array::from_fn(|py| std::array::from_fn(|px| {
+        let (y, x) = (y0 + py, x0 + px);
+        (pattern.color_at(y, x), pattern.color_at(y, x + 1) == 0)
+    }));
+    let clamped = |x: i64, y: i64| -> f32 {
         let xx = (x0 as i64 + x).clamp(0, cfa.w as i64 - 1) as usize;
         let yy = (y0 as i64 + y).clamp(0, cfa.h as i64 - 1) as usize;
         cfa.d[yy * cfa.w + xx]
     };
-    for y in 0..h as i64 {
-        for x in 0..w as i64 {
-            let c = pattern.color_at((y0 as i64 + y) as usize, (x0 as i64 + x) as usize);
-            let centre = at(x, y);
-            // neighbourhood
-            let n1 = at(x, y - 1);
-            let s1 = at(x, y + 1);
-            let w1 = at(x - 1, y);
-            let e1 = at(x + 1, y);
-            let n2 = at(x, y - 2);
-            let s2 = at(x, y + 2);
-            let w2 = at(x - 2, y);
-            let e2 = at(x + 2, y);
-            let nw = at(x - 1, y - 1);
-            let ne = at(x + 1, y - 1);
-            let sw = at(x - 1, y + 1);
-            let se = at(x + 1, y + 1);
+    // Where every read two sites out stays on the sensor.
+    let inside_x = 2usize.saturating_sub(x0)..(cfa.w.saturating_sub(x0 + 2)).min(w);
+    let inside_y = 2usize.saturating_sub(y0)..(cfa.h.saturating_sub(y0 + 2)).min(h);
 
-            let cross = n1 + s1 + w1 + e1;
-            let diag = nw + ne + sw + se;
-            let far = n2 + s2 + w2 + e2;
-            let far_h = w2 + e2;
-            let far_v = n2 + s2;
-
-            let (r, g, b);
-            if c == 1 || c == 3 {
-                // Green site.  Which of R/B lies horizontally decides the two
-                // asymmetric kernels.
-                let row_has_red = pattern.color_at((y0 as i64 + y) as usize, (x0 as i64 + x + 1) as usize) == 0;
-                let g_v = centre;
-                let hori = (5.0 * centre + 4.0 * (w1 + e1) - (nw + ne + sw + se) - far_h
-                    + 0.5 * far_v)
-                    / 8.0;
-                let vert = (5.0 * centre + 4.0 * (n1 + s1) - (nw + ne + sw + se) - far_v
-                    + 0.5 * far_h)
-                    / 8.0;
-                if row_has_red {
-                    r = hori;
-                    b = vert;
-                } else {
-                    r = vert;
-                    b = hori;
-                }
-                g = g_v;
+    let mut out = Image::new(w, h);
+    for y in 0..h {
+        let row = &phase[y & 1];
+        let interior_row = inside_y.contains(&y);
+        for x in 0..w {
+            let (c, red_beside) = row[x & 1];
+            let px = if interior_row && inside_x.contains(&x) {
+                let base = (y0 + y) * cfa.w + x0 + x;
+                let stride = cfa.w as i64;
+                malvar(|dx, dy| cfa.d[(base as i64 + dy * stride + dx) as usize], c, red_beside)
             } else {
-                // Red or blue site.
-                let g_est = (4.0 * centre + 2.0 * cross - far) / 8.0;
-                let other = (6.0 * centre + 2.0 * diag - 1.5 * far) / 8.0;
-                if c == 0 {
-                    r = centre;
-                    g = g_est;
-                    b = other;
-                } else {
-                    b = centre;
-                    g = g_est;
-                    r = other;
-                }
-            }
-            let i = (y as usize * w + x as usize) * 3;
-            out.d[i] = r.max(0.0);
-            out.d[i + 1] = g.max(0.0);
-            out.d[i + 2] = b.max(0.0);
+                let (x, y) = (x as i64, y as i64);
+                malvar(|dx, dy| clamped(x + dx, y + dy), c, red_beside)
+            };
+            let i = (y * w + x) * 3;
+            out.d[i] = px[0].max(0.0);
+            out.d[i + 1] = px[1].max(0.0);
+            out.d[i + 2] = px[2].max(0.0);
         }
     }
     out
 }
 
-// -------------------------------------------------------------------------
-// orientation
-// -------------------------------------------------------------------------
+/// One pixel of `demosaic`, reading the mosaic at offsets from it.
+#[inline(always)]
+fn malvar(at: impl Fn(i64, i64) -> f32, c: usize, red_beside: bool) -> [f32; 3] {
+    let centre = at(0, 0);
+    let (n1, s1, w1, e1) = (at(0, -1), at(0, 1), at(-1, 0), at(1, 0));
+    let (n2, s2, w2, e2) = (at(0, -2), at(0, 2), at(-2, 0), at(2, 0));
+    let (nw, ne, sw, se) = (at(-1, -1), at(1, -1), at(-1, 1), at(1, 1));
 
-fn orient(img: &Image, o: Orientation) -> Image {
+    let cross = n1 + s1 + w1 + e1;
+    let diag = nw + ne + sw + se;
+    let far = n2 + s2 + w2 + e2;
+    let far_h = w2 + e2;
+    let far_v = n2 + s2;
+
+    if c == 1 || c == 3 {
+        let hori = (5.0 * centre + 4.0 * (w1 + e1) - (nw + ne + sw + se) - far_h
+            + 0.5 * far_v)
+            / 8.0;
+        let vert = (5.0 * centre + 4.0 * (n1 + s1) - (nw + ne + sw + se) - far_v
+            + 0.5 * far_h)
+            / 8.0;
+        if red_beside { [hori, centre, vert] } else { [vert, centre, hori] }
+    } else {
+        let g = (4.0 * centre + 2.0 * cross - far) / 8.0;
+        let other = (6.0 * centre + 2.0 * diag - 1.5 * far) / 8.0;
+        if c == 0 { [centre, g, other] } else { [other, g, centre] }
+    }
+}
+
+// Orientation
+fn orient(img: Image, o: Orientation) -> Image {
     use Orientation::*;
     match o {
-        Normal | Unknown => img.clone(),
-        HorizontalFlip => map(img, img.w, img.h, |x, y, w, _| (w - 1 - x, y)),
-        Rotate180 => map(img, img.w, img.h, |x, y, w, h| (w - 1 - x, h - 1 - y)),
-        VerticalFlip => map(img, img.w, img.h, |x, y, _, h| (x, h - 1 - y)),
-        Transpose => map(img, img.h, img.w, |x, y, _, _| (y, x)),
-        Rotate90 => map(img, img.h, img.w, |x, y, _, h| (y, h - 1 - x)),
-        Transverse => map(img, img.h, img.w, |x, y, w, h| (w - 1 - y, h - 1 - x)),
-        Rotate270 => map(img, img.h, img.w, |x, y, w, _| (w - 1 - y, x)),
+        Normal | Unknown => img,
+        HorizontalFlip => map(&img, img.w, img.h, |x, y, w, _| (w - 1 - x, y)),
+        Rotate180 => map(&img, img.w, img.h, |x, y, w, h| (w - 1 - x, h - 1 - y)),
+        VerticalFlip => map(&img, img.w, img.h, |x, y, _, h| (x, h - 1 - y)),
+        Transpose => map(&img, img.h, img.w, |x, y, _, _| (y, x)),
+        Rotate90 => map(&img, img.h, img.w, |x, y, _, h| (y, h - 1 - x)),
+        Transverse => map(&img, img.h, img.w, |x, y, w, h| (w - 1 - y, h - 1 - x)),
+        Rotate270 => map(&img, img.h, img.w, |x, y, w, _| (w - 1 - y, x)),
     }
 }
 
@@ -858,10 +683,7 @@ fn map<F: Fn(usize, usize, usize, usize) -> (usize, usize)>(
     out
 }
 
-// -------------------------------------------------------------------------
 // EXIF
-// -------------------------------------------------------------------------
-
 fn read_exif(bytes: &[u8]) -> Meta {
     let mut m = Meta {
         iso: 100.0,
@@ -1090,18 +912,15 @@ mod tests {
         for px in truth.d.chunks_exact_mut(3) {
             px.copy_from_slice(&colour);
         }
-        for (name, method) in [("demosaic", demosaic as fn(&Plane, &CFA, usize, usize, usize, usize) -> Image),
-                               ("directional", demosaic_directional)] {
-            let got = round_trip(method, &truth, &cfa);
-            // The border reads clamped neighbours, so judge the interior.
-            for y in 2..h - 2 {
-                for x in 2..w - 2 {
-                    for c in 0..3 {
-                        let v = got.d[(y * w + x) * 3 + c];
-                        assert!((v - colour[c]).abs() < 1e-4,
-                                "{name} shifted a flat field at {x},{y} channel {c}: \
-                                 {v} against {}", colour[c]);
-                    }
+        let got = round_trip(demosaic, &truth, &cfa);
+        // The border reads clamped neighbours, so judge the interior.
+        for y in 2..h - 2 {
+            for x in 2..w - 2 {
+                for c in 0..3 {
+                    let v = got.d[(y * w + x) * 3 + c];
+                    assert!((v - colour[c]).abs() < 1e-4,
+                            "shifted a flat field at {x},{y} channel {c}: {v} against {}",
+                            colour[c]);
                 }
             }
         }
@@ -1122,36 +941,17 @@ mod tests {
                 }
             }
         }
-        for (name, method) in [("demosaic", demosaic as fn(&Plane, &CFA, usize, usize, usize, usize) -> Image),
-                               ("directional", demosaic_directional)] {
-            let got = round_trip(method, &truth, &cfa);
-            for y in 2..h - 2 {
-                for x in 2..w - 2 {
-                    let i = (y * w + x) * 3;
-                    let want = truth.d[i];
-                    for c in 0..3 {
-                        assert!((got.d[i + c] - want).abs() < 2e-3,
-                                "{name} lost a linear ramp at {x},{y} channel {c}");
-                    }
+        let got = round_trip(demosaic, &truth, &cfa);
+        for y in 2..h - 2 {
+            for x in 2..w - 2 {
+                let i = (y * w + x) * 3;
+                let want = truth.d[i];
+                for c in 0..3 {
+                    assert!((got.d[i + c] - want).abs() < 2e-3,
+                            "lost a linear ramp at {x},{y} channel {c}");
                 }
             }
         }
-    }
-
-    /// The directional interpolator only knows the Bayer quad, so it has to
-    /// hand anything else to the one that does not care.
-    #[test]
-    fn non_bayer_falls_back() {
-        let xtrans = CFA::new(XTRANS);
-        let (w, h) = (24usize, 24usize);
-        let mut plane = Plane::new(w, h);
-        for (i, v) in plane.d.iter_mut().enumerate() {
-            *v = (i % 17) as f32 / 17.0;
-        }
-        let fallback = demosaic_directional(&plane, &xtrans, 0, 0, w, h);
-        let generic = demosaic_any(&plane, &xtrans, 0, 0, w, h);
-        assert_eq!(fallback.d, generic.d,
-                   "a non-Bayer pattern must go to the pattern demosaic untouched");
     }
 
     const XTRANS: &str = "GGRGGBGGBGGRBRGRBGGGBGGRGGRGGBRBGBRG";

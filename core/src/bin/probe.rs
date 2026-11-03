@@ -1,15 +1,23 @@
-//! Native harness: develop a raw the same way the wasm build will, and print
-//! what every stage decided.  Not part of the wasm build.
+//! Develop a raw natively, the same way the wasm build does, and print what
+//! every stage decided.
+//!
+//!     probe <raw> [out.png] [long_edge] [settings.json]
 use lumiraw_core::{develop::Development, grade::Settings, lensdb::Database, output};
+use std::time::Instant;
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let path = args.next().expect("usage: probe <raw> [out.png] [long_edge]");
+    let path = args.next().expect("usage: probe <raw> [out.png] [long_edge] [settings.json]");
     let out_path = args.next().unwrap_or_else(|| "out.png".into());
     let long_edge: Option<usize> = args.next().and_then(|s| s.parse().ok());
+    let settings = match args.next() {
+        Some(p) => {
+            let text = std::fs::read_to_string(&p).expect("read settings");
+            Settings::from_json(&serde_json::from_str(&text).expect("settings json"))
+        }
+        None => Settings::default(),
+    };
 
-    // The baked database lives with the web assets; find it whether we were
-    // started from the crate or from the repository root.
     let db_bytes = ["web/src/lib/wasm/lensfun.json", "../web/src/lib/wasm/lensfun.json",
                     "../../web/src/lib/wasm/lensfun.json"]
         .iter()
@@ -21,22 +29,15 @@ fn main() {
     }
 
     let bytes = std::fs::read(&path).expect("read");
-    let t0 = std::time::Instant::now();
+    let t0 = Instant::now();
     let mut dev = Development::open(&path, &bytes, db.as_ref()).expect("open");
     println!("decode {:.2}s -> {}x{}", t0.elapsed().as_secs_f32(), dev.width(), dev.height());
     println!("describe {}", dev.describe());
     println!("lens match: {:?}", dev.lens_match.as_ref().map(|m| m.lens.clone()));
 
-    let settings = Settings::default();
-    let t1 = std::time::Instant::now();
-    let mut last = String::new();
-    let mut cb = |f: f32, code: &str| {
-        last = format!("{:.0}% {}", f * 100.0, code);
-    };
-    let (img, report) = dev.render(&settings, long_edge, true, Some(&mut cb));
+    let t1 = Instant::now();
+    let (img, report) = dev.render(&settings, long_edge, true, None);
     println!("render {:.2}s -> {}x{}", t1.elapsed().as_secs_f32(), img.w, img.h);
-    // One line of JSON, so tools/parity.py can diff it against the Python
-    // pipeline's own report field by field.
     println!("RESULT {}", serde_json::json!({
         "describe": dev.describe(),
         "report": report.to_json(),
@@ -45,7 +46,7 @@ fn main() {
         "width": img.w, "height": img.h,
     }));
 
-    let t2 = std::time::Instant::now();
+    let t2 = Instant::now();
     let png = output::save(&img, "png8", 92, &dev.exif, None).expect("encode");
     std::fs::write(&out_path, &png).expect("write");
     println!("png {:.2}s, {} bytes -> {}", t2.elapsed().as_secs_f32(), png.len(), out_path);

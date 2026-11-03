@@ -5,8 +5,8 @@
   import { app } from '$lib/state.svelte.js';
   import { NAME } from '$lib/brand.js';
   import { t, n } from '$lib/i18n.svelte.js';
-  import { lookLabel, formatLabel, stageText, errorText } from '$lib/format.js';
-  import { startExport, jobStatus, jobFile } from '$lib/api.js';
+  import { lookLabel, formatLabel, stageText, errorText, saveFile } from '$lib/format.js';
+  import { exportOnce } from '$lib/api.js';
   import { exportRoll } from '$lib/roll.svelte.js';
 
   let format = $state('jpeg');
@@ -30,17 +30,6 @@
   // is resized again on their side, and less kindly.
   const SIZES = ['', '4000', '2560', '1600', '1080'];
 
-  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-  function save(blob, name) {
-    const url = URL.createObjectURL(blob);
-    const link = Object.assign(document.createElement('a'), { href: url, download: name });
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
-  }
-
   const kept = $derived(app.roll.filter((item) => item.keep).length);
   let batch = $state(null);      // { text, progress } while the roll exports
 
@@ -57,7 +46,7 @@
         onstatus: (text, progress) => (batch = { text, progress }),
       });
       const first = (app.roll.find((item) => item.keep)?.name ?? NAME).replace(/\.[^.]+$/, '');
-      save(blob, `${first}_and_${count - 1}_more.zip`);
+      saveFile(blob, `${first}_and_${count - 1}_more.zip`);
       app.exportState = t('roll.saved', {
         count, size: n(blob.size / 1e6, 1), seconds: n((performance.now() - started) / 1000, 0),
       }) + (failed.length ? `\n${t('roll.failed')}\n${failed.join('\n')}` : '');
@@ -74,37 +63,22 @@
     working = true;
     app.exportState = '';
     app.job = { progress: 0, stage: 'starting', stage_params: {}, elapsed: 0 };
+    const started = performance.now();
+    const elapsed = () => (performance.now() - started) / 1000;
     try {
-      const { job } = await startExport({
-        id: app.id,
+      const { blob, filename } = await exportOnce({
         settings: app.settings,
         format,
         quality,
         max_size: maxSize || null,
         original_name: app.info.original_name,
+      }, (progress, stage) => {
+        app.job = { progress, stage, stage_params: {}, elapsed: elapsed() };
       });
-
-      // The server reports the pipeline's real stages; poll until it stops.
-      let status;
-      do {
-        await wait(400);
-        status = await jobStatus(job);
-        app.job = {
-          progress: status.progress,
-          stage: status.stage,
-          stage_params: status.stage_params ?? {},
-          elapsed: status.elapsed,
-        };
-      } while (status.state === 'running');
-      if (status.state === 'error') throw new Error(status.error);
-
-      const res = await jobFile(job);
-      const blob = await res.blob();
-      const match = (res.headers.get('Content-Disposition') || '').match(/filename="(.+?)"/);
-      const name = match ? match[1] : `${NAME.toLowerCase()}.png`;
-      save(blob, name);
+      const name = filename || `${NAME.toLowerCase()}.png`;
+      saveFile(blob, name);
       app.exportState = t('download.saved', {
-        name, size: n(blob.size / 1e6, 1), seconds: n(status.elapsed, 0),
+        name, size: n(blob.size / 1e6, 1), seconds: n(elapsed(), 0),
       });
     } catch (err) {
       app.exportState = errorText(err);

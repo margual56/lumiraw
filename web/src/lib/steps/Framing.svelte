@@ -12,8 +12,8 @@
   const offersTilt = $derived(!!hint && hint.angle !== 0);
   const offersShift = $derived(!!hint && hint.perspective_v !== 0);
 
-  // Turning an offer down hides that offer, not every future one: a different
-  // measurement is a different question and deserves asking again.
+  // Turning an offer down hides that offer only; a different measurement
+  // is offered again.
   let refused = $state('');
   const offerKey = $derived(hint ? `${hint.angle}|${hint.perspective_v}` : '');
   const offered = $derived(!!hint && refused !== offerKey);
@@ -42,10 +42,9 @@
     refused = offerKey;
   }
 
-  // Where the handle is right now.  It leads `framing.angle` during a drag and
-  // catches up when the drag ends.
-  let liveAngle = $state(0);
-  $effect(() => { liveAngle = app.settings.framing.angle; });
+  // Leads `framing.angle` while the tilt is dragged; the angle is only
+  // committed on release.
+  let liveAngle = $derived(app.settings.framing.angle);
 
   // How far the picture on screen is from where the handle says it should be.
   const spin = $derived(liveAngle - (app.frame.angle ?? 0));
@@ -60,7 +59,7 @@
     ['0.8', 'framing.ratio.45'],
   ];
 
-  // With auto-fit on and no crop of your own, the server trims to the largest
+  // With auto-fit on and no crop of your own, the pipeline trims to the largest
   // rectangle the tilt leaves intact; the overlay shows where that lands.
   const shownCrop = $derived(framing.crop ?? (framing.auto_fit ? app.coverCrop : null));
 
@@ -110,9 +109,9 @@
       </div>
     {/if}
 
-    <Slider label={t('framing.tilt')} bind:value={framing.angle}
+    <Slider label={t('framing.tilt')} value={framing.angle}
             min={-45} max={45} step={0.1} format={(v) => `${n(v, 1)}°`}
-            commitOnRelease onpreview={(v) => (liveAngle = v)} />
+            oninput={(v) => (liveAngle = v)} onchange={(v) => (framing.angle = v)} />
     <Slider label={t('framing.shiftV')} bind:value={framing.perspective_v}
             min={-0.6} max={0.6} format={(v) => n(v)} />
     <Slider label={t('framing.shiftH')} bind:value={framing.perspective_h}

@@ -17,7 +17,7 @@ function equatorial(l, b) {
   return { ra: wrap360(ra / RAD), dec: dec / RAD };
 }
 
-// -- the moon -----------------------------------------------------------------------
+// The moon
 // After SunCalc (BSD), itself after https://aa.quae.nl/en/reken/hemelpositie.html:
 // good to a fraction of a degree.
 
@@ -54,7 +54,7 @@ export function moonPhase(date) {
   return { lit: (1 + Math.cos(incidence)) / 2, waxing: towards < 0 };
 }
 
-// -- the planets --------------------------------------------------------------------
+// The planets
 // The approximate orbits JPL gives for 1800–2050 (E. M. Standish,
 // https://ssd.jpl.nasa.gov/planets/approx_pos.html): to a minute of arc or so
 // for these, as each changes per century from J2000. Each row is the
@@ -124,8 +124,7 @@ export function planets(date) {
   });
 }
 
-// -- how dark ----------------------------------------------------------------------
-
+// How dark
 /** The sky's brightness over a moonless, unlit sky, by the sun's altitude
  *  (degrees, before the air's lift): magnitudes per square arcsecond brighter. */
 const TWILIGHT = [[-18, 0], [-15, 1.2], [-12, 4], [-9, 7], [-6, 10], [-3, 12.5], [0, 14]];
@@ -156,8 +155,7 @@ export function skyBrightness({ ratio = 0, sun, moon, lit }) {
  *  relation, as amateur astronomers use it): 6.6 in a natural one, 4 in a town. */
 export const faintest = (sqm) => 7.93 - 5 * Math.log10(10 ** (4.316 - sqm / 5) + 1);
 
-// -- the whole sky ------------------------------------------------------------------
-
+// The whole sky
 /** The centre of the galaxy, the Milky Way's brightest part, in Sagittarius. */
 export const CORE = { ra: 266.4, dec: -28.94 };
 

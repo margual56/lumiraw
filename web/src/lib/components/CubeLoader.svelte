@@ -17,7 +17,7 @@
     try {
       const info = await lutLoad(file);
       app.lut = { ...info, name: file.name };
-      // A table nobody can see is a table nobody loaded, so it arrives on.
+      // A freshly loaded table is switched on, so it shows.
       app.settings.lut_id = info.id;
       app.settings.lut = app.settings.lut > 0 ? app.settings.lut : 1;
     } catch (err) {

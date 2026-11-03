@@ -83,17 +83,27 @@ const clocks = new Map();
 export function clock(date) {
   if (!date) return '—';
   let format = clocks.get(i18n.locale);
-  if (!format) clocks.set(i18n.locale, (format = new Intl.DateTimeFormat(i18n.locale, { hour: '2-digit', minute: '2-digit' })));
+  if (!format) {
+    format = new Intl.DateTimeFormat(i18n.locale, { hour: '2-digit', minute: '2-digit' });
+    clocks.set(i18n.locale, format);
+  }
   return format.format(date);
 }
 
+const numbers = new Map();
 /** Numbers in the reader's own notation, 1,36 in Spanish, 1.36 in English. */
 export function n(value, digits = 2) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
-  return new Intl.NumberFormat(i18n.locale, {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(Number(value));
+  const key = `${i18n.locale}|${digits}`;
+  let format = numbers.get(key);
+  if (!format) {
+    format = new Intl.NumberFormat(i18n.locale, {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    });
+    numbers.set(key, format);
+  }
+  return format.format(Number(value));
 }
 
 export function signed(value, digits = 2) {

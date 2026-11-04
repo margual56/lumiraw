@@ -22,6 +22,12 @@ pub struct Meta {
     pub captured_s: i64,
     /// The lens corrections the camera wrote into the file, if it did.
     pub embedded_lens: Option<crate::lensdb::Embedded>,
+    /// The lens the file's lens number stands for, as maker and model, when
+    /// rawler knows the number: "Sigma", "18-50mm F2.8 DC DN | C".
+    pub lens_identified: Option<(String, String)>,
+    /// How far away the lens was focused, in metres; zero when the file does
+    /// not say, infinite at infinity.
+    pub focus_m: f32,
 }
 
 pub struct Decoded {
@@ -54,7 +60,65 @@ pub fn decode_with(bytes: &[u8], denoiser: Option<Denoiser>) -> Result<Decoded, 
         meta.model = raw.model.clone();
     }
     meta.embedded_lens = embedded_lens(bytes, &meta.make);
+    // rawler's lens numbers are sometimes wrong ("Viltrox 40mm F2.5" for a
+    // lens the file calls "E 35mm F1.8"); the file's own name wins.
+    meta.lens_identified = identified_lens(bytes)
+        .filter(|(_, lens)| !crate::lensdb::specs_differ(lens, &meta.lens_model));
+    meta.focus_m = sony_focus_distance(bytes, &meta);
     Ok(develop_raw(&raw, meta, denoiser))
+}
+
+/// The lens rawler finds from the maker's lens number.
+fn identified_lens(bytes: &[u8]) -> Option<(String, String)> {
+    let source = rawler::rawsource::RawSource::new_from_slice(bytes);
+    let decoder = rawler::get_decoder(&source).ok()?;
+    let lens = decoder.raw_metadata(&source, &rawler::decoders::RawDecodeParams::default()).ok()?.lens?;
+    Some((lens.lens_make, lens.lens_model))
+}
+
+/// Sony's focus position (byte 0x2d of the enciphered tag 0x9402 on NEX and
+/// ILCE bodies, 0x20 on SLT and ILCA), as distance the way exiftool reads it:
+/// `(2^(v/16 - 5) + 1)` times the 35 mm focal length, 255 for infinity. Rough,
+/// but enough to pick between vignetting calibrations made near and far.
+fn sony_focus_distance(bytes: &[u8], meta: &Meta) -> f32 {
+    use rawler::formats::tiff::{ifd::OffsetMode, reader::TiffReader, GenericTiffReader, Value};
+    use rawler::tags::ExifTag;
+    let model = meta.model.trim();
+    let at = if model.starts_with("NEX-") || model.starts_with("ILCE-") {
+        0x2d
+    } else if model.starts_with("SLT-") || model.starts_with("ILCA-") {
+        0x20
+    } else {
+        return 0.0;
+    };
+    let read = || -> Option<u8> {
+        let tiff = GenericTiffReader::new_with_buffer(bytes, 0, 0, None).ok()?;
+        let exif = tiff.find_first_ifd_with_tag(ExifTag::MakerNotes)?;
+        let notes = exif.parse_makernote(&mut std::io::Cursor::new(bytes), OffsetMode::Absolute, &[])
+            .ok()??;
+        let Value::Undefined(data) = &notes.get_entry(0x9402u16)?.value else { return None };
+        // Later bodies keep something else under the same tag.
+        if matches!(data.first(), Some(0x05 | 0xff)) {
+            return None;
+        }
+        data.get(at).map(|&b| sony_decipher(b))
+    };
+    match read() {
+        None | Some(0) => 0.0,
+        Some(255) => f32::INFINITY,
+        Some(v) if meta.focal35_mm > 0.0 => {
+            (2f32.powf(v as f32 / 16.0 - 5.0) + 1.0) * meta.focal35_mm / 1000.0
+        }
+        Some(_) => 0.0,
+    }
+}
+
+/// Sony's substitution cipher: a byte `b` below 249 is stored as `b³ mod 249`.
+fn sony_decipher(c: u8) -> u8 {
+    if c >= 249 {
+        return c;
+    }
+    (0..249u32).find(|b| b * b * b % 249 == c as u32).unwrap_or(c as u32) as u8
 }
 
 /// Sony's own distortion, CA and vignetting tables, from the raw's sub-IFD.
@@ -795,6 +859,14 @@ fn epoch_seconds(t: &exif::DateTime) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sonys_cipher_comes_undone() {
+        for b in 0..249u32 {
+            assert_eq!(sony_decipher((b * b * b % 249) as u8) as u32, b);
+        }
+        assert_eq!(sony_decipher(255), 255);
+    }
 
     /// The capture time is the only thing that tells two frames of one burst
     /// apart from two photographs of different things, so the arithmetic that

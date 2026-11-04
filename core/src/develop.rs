@@ -24,7 +24,10 @@ pub struct Development {
     /// whether that could be measured at all.
     focus: Option<Option<f32>>,
     pub profile: CaptureProfile,
+    /// The lens as found from the file, when nobody has chosen another.
     pub lens_match: Option<LensMatch>,
+    /// The camera and its mount's calibrated lenses, to choose a lens from.
+    lenses: Option<Database>,
     cache: Vec<(String, Image, Option<Rect>, Map<String, Value>)>,
     /// The last "before" rendered, with the settings, size and 3D table it
     /// was rendered from.
@@ -141,6 +144,7 @@ impl Development {
         let (w, h) = (linear.w, linear.h);
         let crop_factor = db.and_then(|db| db.find_camera(&meta.make, &meta.model)).map(|c| c.crop);
         let lens_match = find_lens(db, &meta);
+        let lenses = db.and_then(|db| mount_lenses(db, &meta));
         let prof = profile::derive(&meta, w, h, crop_factor);
         Development {
             filename: filename.to_string(),
@@ -150,6 +154,7 @@ impl Development {
             noise_floor: None,
             profile: prof,
             lens_match,
+            lenses,
             cache: Vec::new(),
             focus: None,
             baseline: None,
@@ -166,7 +171,12 @@ impl Development {
     /// it needs).
     pub fn use_lenses(&mut self, db: &Database) {
         let found = find_lens(Some(db), &self.meta);
+        let lenses = mount_lenses(db, &self.meta);
         let which = |m: &Option<LensMatch>| m.as_ref().map(|m| (m.source(), m.entry.model.clone()));
+        let count = |l: &Option<Database>| l.as_ref().map_or(0, |l| l.lenses.len());
+        if count(&lenses) != count(&self.lenses) {
+            self.lenses = lenses;
+        }
         if which(&found) != which(&self.lens_match) {
             self.lens_match = found;
             self.cache.clear();
@@ -181,7 +191,21 @@ impl Development {
     /// The mount whose lenses `db` would need to find this photograph's lens;
     /// see `Database::missing_mount`.
     pub fn missing_mount(&self, db: &Database) -> Option<String> {
-        db.missing_mount(&self.meta.make, &self.meta.model, &self.meta.lens_model)
+        db.missing_mount(&self.meta.make, &self.meta.model)
+    }
+
+    /// The lens these settings correct for: the one chosen, or else the one
+    /// found from the file.
+    fn lens_for(&self, s: &Settings) -> Option<LensMatch> {
+        let m = &self.meta;
+        let chosen = match s.lens.as_str() {
+            "" => None,
+            "camera" => camera_lens(self.lenses.as_ref(), m),
+            model => self.lenses.as_ref().and_then(|db| {
+                db.find_chosen(&m.make, &m.model, model, m.focal_mm, m.aperture, focus_distance(m))
+            }),
+        };
+        chosen.or_else(|| self.lens_match.clone())
     }
 
     pub fn width(&self) -> usize {
@@ -208,7 +232,7 @@ impl Development {
             None => Cow::Borrowed(&self.linear),
             Some(e) => Cow::Owned(kit::thumbnail(&self.linear, e)),
         };
-        if let Some(m) = &self.lens_match {
+        if let Some(m) = &self.lens_for(s) {
             if s.on("lens_vignetting") {
                 if let Some(cb) = progress.as_mut() {
                     cb(0.02, "vignetting");
@@ -427,16 +451,42 @@ impl Development {
     }
 }
 
-/// The lens in the database, or failing that the corrections the camera
-/// wrote into the file.
+/// The lens in the database, by the maker's lens number first and its name
+/// second, or failing both the corrections the camera wrote into the file.
 fn find_lens(db: Option<&Database>, meta: &Meta) -> Option<LensMatch> {
-    let found = db.and_then(|db| db.find_lens(&meta.make, &meta.model, &meta.lens_model,
-                                              meta.focal_mm, meta.aperture, 10.0));
-    found.or_else(|| {
-        let crop = db.and_then(|db| db.find_camera(&meta.make, &meta.model)).map_or(1.0, |c| c.crop);
-        meta.embedded_lens.clone().map(|e| LensMatch::from_embedded(
-            e, &meta.model, &meta.lens_model, crop, meta.focal_mm, meta.aperture))
-    })
+    let (f, a, d) = (meta.focal_mm, meta.aperture, focus_distance(meta));
+    let found = db.and_then(|db| {
+        meta.lens_identified.as_ref()
+            .and_then(|(maker, lens)| db.find_identified(&meta.make, &meta.model, maker, lens, f, a, d))
+            .or_else(|| db.find_lens(&meta.make, &meta.model, &meta.lens_model, f, a, d))
+    });
+    found.or_else(|| camera_lens(db, meta))
+}
+
+/// The corrections the camera wrote into the file, as a lens.
+fn camera_lens(db: Option<&Database>, meta: &Meta) -> Option<LensMatch> {
+    let crop = db.and_then(|db| db.find_camera(&meta.make, &meta.model)).map_or(1.0, |c| c.crop);
+    let name = meta.lens_identified.as_ref()
+        .map_or(meta.lens_model.clone(), |(maker, lens)| format!("{maker} {lens}"));
+    meta.embedded_lens.clone().map(|e| LensMatch::from_embedded(
+        e, &meta.model, &name, crop, meta.focal_mm, meta.aperture))
+}
+
+/// The camera and the calibrated lenses of its mount, on their own.
+fn mount_lenses(db: &Database, meta: &Meta) -> Option<Database> {
+    let camera = db.find_camera(&meta.make, &meta.model)?.clone();
+    let lenses = db.lenses_for(&meta.make, &meta.model);
+    (!lenses.is_empty()).then(|| Database { cameras: vec![camera], lenses, mounts: None })
+}
+
+/// Where the lens was focused, in metres, for picking a vignetting
+/// calibration: 10 when the file does not say, 1000 for infinity.
+fn focus_distance(meta: &Meta) -> f32 {
+    match meta.focus_m {
+        d if d.is_infinite() => 1000.0,
+        d if d > 0.0 => d,
+        _ => 10.0,
+    }
 }
 
 /// Lens work is the first quarter of a render; grading is the rest.
@@ -448,8 +498,9 @@ fn after_lens<'a>(progress: Option<&'a mut dyn FnMut(f32, &str)>)
 /// What a lens-corrected, framed frame depends on, and nothing else.
 fn corrected_key(s: &Settings, long_edge: Option<usize>, crop: bool) -> String {
     format!(
-        "{:?}|{}|{}|{}|{}|{}",
+        "{:?}|{}|{}|{}|{}|{}|{}",
         long_edge,
+        s.lens,
         s.on("lens_vignetting"),
         s.on("lens_distortion"),
         s.on("lens_tca"),
@@ -618,7 +669,8 @@ impl Development {
     fn report_lens(&self, settings: &Settings, measured: &Map<String, Value>, report: &mut Report) {
         let stages = ["vignetting", "distortion", "chromatic aberration"];
         let keys = ["lens_vignetting", "lens_distortion", "lens_tca"];
-        let m = match &self.lens_match {
+        let lens = self.lens_for(settings);
+        let m = match &lens {
             None => {
                 let reason = if self.meta.lens_model.is_empty() {
                     "no_lens_in_exif"
@@ -635,6 +687,7 @@ impl Development {
         for (stage, key) in stages.iter().zip(keys.iter()) {
             let info = kit::with(
                 json!({"applied": settings.on(key), "lens": m.lens, "source": m.source(),
+                       "guessed": m.guessed,
                        "focal": format!("{}mm", trim_num(m.focal)),
                        "aperture": format!("f/{}", trim_num(m.aperture))}),
                 measured.get(*stage).cloned().unwrap_or(Value::Null));
@@ -656,7 +709,7 @@ impl Development {
             // "Unavailable" means the correction *cannot* run, no lens match,
             // or no data for this correction, as opposed to switched off.
             let available = if *group == "Lens" {
-                self.lens_match.is_some() && (applied || reason == "switched_off")
+                self.lens_for(settings).is_some() && (applied || reason == "switched_off")
             } else {
                 true
             };
@@ -679,7 +732,18 @@ impl Development {
             "notes": self.profile.notes,
             "lens_calibration": self.lens_match.as_ref().map(|m| json!({
                 "lens": m.lens, "focal": kit::round_to(m.focal, 1), "aperture": kit::round_to(m.aperture, 2),
-                "source": m.source()})),
+                "source": m.source(), "guessed": m.guessed})),
+            // What a lens can be chosen from: the mount's calibrated lenses,
+            // and whether the camera wrote corrections of its own.
+            "lens_choices": self.lenses.as_ref().map_or(Vec::new(), |db| db.lenses.iter()
+                .map(|l| json!({"model": l.model, "name": lensdb::full_name(l)})).collect()),
+            "lens_camera": self.meta.embedded_lens.is_some(),
+            "lens_identified": self.meta.lens_identified.as_ref().map(|(maker, lens)| format!("{maker} {lens}")),
+            "focus_m": match self.meta.focus_m {
+                d if d.is_infinite() => json!("inf"),
+                d if d > 0.0 => json!(kit::round_to(d, 2)),
+                _ => Value::Null,
+            },
             // Null when not asked for; false when the sensor is not one it
             // knows (not a 2 x 2 Bayer mosaic).
             "deep_denoise": self.deep_denoise.map(|n| n.is_some()),
@@ -712,7 +776,7 @@ fn detail(key: &str, info: &Value) -> Value {
     }
     let g = |k: &str| obj.get(k).cloned().unwrap_or(Value::Null);
     let lens_bits = json!({"lens": g("lens"), "focal": g("focal"), "aperture": g("aperture"),
-                           "source": g("source")});
+                           "source": g("source"), "guessed": g("guessed")});
     match key {
         "lens_vignetting" => {
             let mut p = lens_bits.as_object().unwrap().clone();
@@ -876,6 +940,36 @@ mod tests {
         assert_eq!(a.w.max(a.h), 320);
         assert_eq!(b.w.max(b.h), 160, "the crop came out {}x{}", b.w, b.h);
         assert_eq!(ra.get("sharpening")["amount"], rb.get("sharpening")["amount"]);
+    }
+
+    /// A lens chosen by hand is the one corrected for, in place of the one
+    /// found from the file.
+    #[test]
+    fn a_chosen_lens_is_the_one_corrected_for() {
+        let lens = |model: &str| crate::lensdb::LensEntry {
+            maker: "Someone".into(), model: model.into(), mount: "Sony E".into(), crop: 1.534,
+            aspect: 1.5, tca: Vec::new(), vign: Vec::new(),
+            dist: vec![crate::lensdb::DistEntry { f: 30.0, m: "poly3".into(), k1: -0.02,
+                                                   ..Default::default() }],
+        };
+        let db = Database {
+            cameras: vec![crate::lensdb::CameraEntry { maker: "Sony".into(), model: "ILCE-5000".into(),
+                                                       mount: "Sony E".into(), crop: 1.534 }],
+            lenses: vec![lens("30mm F1.4 DC DN"), lens("30mm F2.8 DN")],
+            mounts: None,
+        };
+        let meta = Meta { make: "SONY".into(), model: "ILCE-5000".into(),
+                          lens_model: "E 30mm F1.4".into(), focal_mm: 30.0, aperture: 1.4,
+                          ..Meta::default() };
+        let mut dev = Development::from_frame("test", Image::new(96, 64), meta, Vec::new(), Some(&db));
+        let found = |dev: &mut Development, s: &Settings| {
+            let (_, report) = dev.render(s, Some(64), true, None);
+            report.get("distortion")["lens"].as_str().unwrap_or_default().to_string()
+        };
+        assert_eq!(found(&mut dev, &Settings::default()), "Someone 30mm F1.4 DC DN");
+        let chosen = Settings { lens: "30mm F2.8 DN".into(), ..Settings::default() };
+        assert_eq!(found(&mut dev, &chosen), "Someone 30mm F2.8 DN");
+        assert_eq!(dev.describe()["lens_choices"].as_array().unwrap().len(), 2);
     }
 
     /// Each toggle reports what its own stage did, not a neighbour's.

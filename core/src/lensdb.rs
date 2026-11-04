@@ -55,8 +55,11 @@ pub struct LensEntry {
     pub model: String,
     #[serde(default)]
     pub mount: String,
+    /// The crop factor and shape of the sensor the lens was calibrated on.
     #[serde(default = "one")]
     pub crop: f32,
+    #[serde(default = "three_two")]
+    pub aspect: f32,
     #[serde(default)]
     pub dist: Vec<DistEntry>,
     #[serde(default)]
@@ -67,6 +70,10 @@ pub struct LensEntry {
 
 fn one() -> f32 {
     1.0
+}
+
+fn three_two() -> f32 {
+    1.5
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -107,10 +114,21 @@ impl LensMatch {
             distance: 10.0,
             entry: LensEntry {
                 maker: String::new(), model: String::new(), mount: String::new(), crop,
-                dist: Vec::new(), tca: Vec::new(), vign: Vec::new(),
+                aspect: 1.5, dist: Vec::new(), tca: Vec::new(), vign: Vec::new(),
             },
             embedded: Some(embedded),
         }
+    }
+
+    /// One unit of lensfun's radius in this image, in pixels: half the
+    /// calibration sensor's short side (`diagonal` false, for distortion and
+    /// CA) or half its diagonal (vignetting), scaled to this camera's sensor.
+    /// A full-frame calibration on an APS-C body reaches past the corners.
+    fn calibration_unit(&self, w: usize, h: usize, diagonal: bool) -> f32 {
+        let half_diag = ((w as f32 - 1.0).powi(2) + (h as f32 - 1.0).powi(2)).sqrt() / 2.0;
+        let sensors = if self.entry.crop > 0.0 && self.crop > 0.0 { self.crop / self.entry.crop } else { 1.0 };
+        let shape = if diagonal { 1.0 } else { self.entry.aspect.max(1.0).hypot(1.0) };
+        (half_diag * sensors / shape).max(1.0)
     }
 
     /// Where the calibration came from: `"lensfun"` or `"camera"`.
@@ -550,8 +568,8 @@ fn bracket_values(sorted: &[f32], x: f32) -> (f32, f32, f32) {
 }
 
 // Applying the models
-/// Undo the lens' brightness falloff.  Vignetting coordinates are normalised
-/// by the half diagonal (verified against liblensfun).
+/// Undo the lens' brightness falloff. Radii are over the half diagonal of the
+/// sensor the lens was calibrated on, as liblensfun has them.
 pub fn apply_vignetting(img: &mut Image, m: &LensMatch) -> Value {
     let k = vignetting_at(&m.entry, m.focal, m.aperture, m.distance);
     let embedded = m.embedded.as_ref().filter(|e| e.has_vignetting());
@@ -561,11 +579,16 @@ pub fn apply_vignetting(img: &mut Image, m: &LensMatch) -> Value {
     let before = corner_mean(img);
     let cx = (img.w as f32 - 1.0) / 2.0;
     let cy = (img.h as f32 - 1.0) / 2.0;
-    let half_diag = (cx * cx + cy * cy).sqrt().max(1.0);
+    // The camera's tables are for its own sensor; lensfun's for the one it
+    // was calibrated on.
+    let unit = match embedded {
+        Some(_) => (cx * cx + cy * cy).sqrt().max(1.0),
+        None => m.calibration_unit(img.w, img.h, true),
+    };
     for y in 0..img.h {
-        let dy = (y as f32 - cy) / half_diag;
+        let dy = (y as f32 - cy) / unit;
         for x in 0..img.w {
-            let dx = (x as f32 - cx) / half_diag;
+            let dx = (x as f32 - cx) / unit;
             let r2 = dx * dx + dy * dy;
             let c = match embedded {
                 Some(e) => spline(&e.vign, r2.sqrt()),
@@ -627,8 +650,7 @@ pub fn apply_geometry(img: &Image, m: &LensMatch, distortion: bool, tca: bool) -
     let (w, h) = (img.w, img.h);
     let cx = (w as f32 - 1.0) / 2.0;
     let cy = (h as f32 - 1.0) / 2.0;
-    // Geometry normalisation: half the *shorter* side (verified against liblensfun).
-    let unit = (w.min(h) as f32) / 2.0;
+    let unit = m.calibration_unit(w, h, false);
     let scale = if dk.model == 0 { 1.0 } else { autoscale(&|ru| dist_ratio(&dk, ru), w, h, unit, cx, cy) };
 
     // Sampled straight from the interleaved frame, rather than from three
@@ -847,7 +869,7 @@ mod tests {
     fn two_lenses_with_the_same_specification_are_not_guessed_between() {
         let lens = |model: &str| LensEntry {
             maker: "Someone".into(), model: model.into(), mount: "Sony E".into(), crop: 1.5,
-            dist: Vec::new(), tca: Vec::new(), vign: Vec::new(),
+            aspect: 1.5, dist: Vec::new(), tca: Vec::new(), vign: Vec::new(),
         };
         let db = Database {
             cameras: vec![CameraEntry { maker: "Sony".into(), model: "ILCE-5000".into(),
@@ -856,6 +878,47 @@ mod tests {
             mounts: None,
         };
         assert!(db.find_lens("SONY", "ILCE-5000", "E 30mm F1.4", 30.0, 1.4, 10.0).is_none());
+    }
+
+    /// A lens calibrated on full frame, on a body with a smaller sensor, sees
+    /// only the middle of its field: the APS-C picture corrects as that part
+    /// of the full-frame picture does, point for point.
+    #[test]
+    fn a_full_frame_calibration_fits_a_smaller_sensor() {
+        let entry = LensEntry {
+            maker: "Someone".into(), model: "50mm F2".into(), mount: "Sony E".into(), crop: 1.0,
+            aspect: 1.5,
+            dist: vec![DistEntry { f: 50.0, m: "poly5".into(), k1: -0.03, ..DistEntry::default() }],
+            tca: Vec::new(),
+            vign: vec![VignEntry { f: 50.0, ap: 2.0, d: 10.0, k1: -0.3, k2: 0.0, k3: 0.0 }],
+        };
+        let on = |crop: f32| LensMatch {
+            camera: "body".into(), lens: "50mm F2".into(), crop, focal: 50.0, aperture: 2.0,
+            distance: 10.0, entry: entry.clone(), embedded: None,
+        };
+        // The same pixels: a full-frame picture, and its middle as APS-C has it.
+        let (fw, fh, cw, ch) = (901, 601, 601, 401);
+        let dot = |w: usize, h: usize| {
+            let mut img = Image::new(w, h);
+            let (x, y) = (w / 2 + 150, h / 2 + 100);
+            img.d[(y * w + x) * 3..][..3].fill(1.0);
+            img
+        };
+        let found = |img: &Image| {
+            let i = (0..img.w * img.h).max_by(|a, b| img.d[a * 3].total_cmp(&img.d[b * 3])).unwrap();
+            ((i % img.w) as i32 - (img.w / 2) as i32, (i / img.w) as i32 - (img.h / 2) as i32)
+        };
+        let (full, _) = apply_geometry(&dot(fw, fh), &on(1.0), true, false);
+        let (aps, _) = apply_geometry(&dot(cw, ch), &on(1.5), true, false);
+        assert_eq!(found(&full), found(&aps));
+
+        let flat = |w, h| { let mut i = Image::new(w, h); i.d.fill(0.5); i };
+        let (mut full, mut aps) = (flat(fw, fh), flat(cw, ch));
+        apply_vignetting(&mut full, &on(1.0));
+        apply_vignetting(&mut aps, &on(1.5));
+        let at = |img: &Image, dx: usize, dy: usize| img.d[((img.h / 2 + dy) * img.w + img.w / 2 + dx) * 3];
+        assert!((at(&full, 280, 190) - at(&aps, 280, 190)).abs() < 1e-3,
+                "{} against {}", at(&full, 280, 190), at(&aps, 280, 190));
     }
 
     /// The tables from a Sigma 18-50mm F2.8 at 18.7mm, as an ILCE-5000 wrote them.

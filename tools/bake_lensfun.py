@@ -52,6 +52,10 @@ def main(src: Path, dst: Path) -> None:
                 "crop": fnum_text(lens, "cropfactor", 1.0),
                 "dist": [], "tca": [], "vign": [],
             }
+            # The calibration sensor's shape; 3:2 unless it says otherwise.
+            aspect = aspect_ratio(lens)
+            if aspect != 1.5:
+                entry["aspect"] = aspect
             for d in calib.findall("distortion"):
                 entry["dist"].append({
                     "f": fnum(d, "focal", 0.0), "m": d.attrib.get("model", ""),
@@ -80,6 +84,16 @@ def main(src: Path, dst: Path) -> None:
     dst.write_text(json.dumps({"cameras": cameras, "lenses": lenses}, separators=(",", ":")))
     print(f"{len(cameras)} cameras, {len(lenses)} calibrated lenses -> {dst} "
           f"({dst.stat().st_size / 1e6:.2f} MB)")
+
+
+def aspect_ratio(node):
+    """`<aspect-ratio>` as "4:3" or "1.333", long side over short."""
+    text = (node.findtext("aspect-ratio") or "").strip()
+    try:
+        a, b = (float(x) for x in text.split(":")) if ":" in text else (float(text), 1.0)
+        return round(max(a, b) / min(a, b), 4)
+    except ValueError:
+        return 1.5
 
 
 def fnum_text(node, tag, default):

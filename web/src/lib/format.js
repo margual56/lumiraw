@@ -36,10 +36,17 @@ export const lookDescription = (id, fallback = '') => {
 };
 export const formatLabel = (id) => t(`format.${id}`);
 
+/** The lens a correction was calibrated for, or the camera's own profile of it. */
+const lensName = (p) =>
+  p.source === 'camera'
+    ? t(p.lens ? 'detail.lens.camera' : 'detail.lens.cameraOnly', { lens: p.lens })
+    : p.lens;
+
 /** One line under a correction's name, saying what it did. */
 export function toggleDetail(detail) {
   if (!detail || !detail.code) return '';
-  const p = detail.params ?? {};
+  const p = { ...detail.params };
+  if (p.lens !== undefined) p.lens = lensName(p);
   switch (detail.code) {
     case 'reason':
       return t(`reason.${p.reason}`);

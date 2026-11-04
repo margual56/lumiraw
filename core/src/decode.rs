@@ -20,6 +20,8 @@ pub struct Meta {
     pub orientation: u16,
     /// When the shutter opened, in seconds, or zero when the file does not say.
     pub captured_s: i64,
+    /// The lens corrections the camera wrote into the file, if it did.
+    pub embedded_lens: Option<crate::lensdb::Embedded>,
 }
 
 pub struct Decoded {
@@ -51,7 +53,26 @@ pub fn decode_with(bytes: &[u8], denoiser: Option<Denoiser>) -> Result<Decoded, 
     if meta.model.is_empty() {
         meta.model = raw.model.clone();
     }
+    meta.embedded_lens = embedded_lens(bytes, &meta.make);
     Ok(develop_raw(&raw, meta, denoiser))
+}
+
+/// Sony's own distortion, CA and vignetting tables, from the raw's sub-IFD.
+fn embedded_lens(bytes: &[u8], make: &str) -> Option<crate::lensdb::Embedded> {
+    use rawler::formats::tiff::{reader::TiffReader, GenericTiffReader};
+    use rawler::tags::ExifTag;
+    if !make.trim().eq_ignore_ascii_case("sony") {
+        return None;
+    }
+    let tiff = GenericTiffReader::new_with_buffer(bytes, 0, 0, None).ok()?;
+    let ifd = tiff.find_first_ifd_with_tag(ExifTag::DistortionCorrParams)?;
+    let read = |tag: ExifTag| -> Option<Vec<i32>> {
+        let value = &ifd.get_entry(tag)?.value;
+        (0..value.count()).map(|i| value.get_i32(i).ok().flatten()).collect()
+    };
+    crate::lensdb::Embedded::from_sony(&read(ExifTag::DistortionCorrParams)?,
+                                       &read(ExifTag::ChromaticAberrationCorrParams)?,
+                                       &read(ExifTag::VignettingCorrParams)?)
 }
 
 /// Sensor values to linear sRGB: levels, (noise reduction,) white balance,

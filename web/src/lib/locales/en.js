@@ -339,6 +339,8 @@ export default {
   'detail.vignetting': 'corners {ev} EV, {lens} at {aperture}',
   'detail.vignetting.plain': '{lens} at {aperture}',
   'detail.lens': '{lens} @ {focal}',
+  'detail.lens.camera': '{lens} (camera profile)',
+  'detail.lens.cameraOnly': 'camera profile',
   'detail.white_balance': 'from {source}, gains {gains}',
   'detail.white_balance.extreme': 'from {source}, gains {gains}. That is a strong correction; is the patch really neutral?',
   'detail.exposure': '{ev} EV from {source}',

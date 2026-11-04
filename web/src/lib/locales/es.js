@@ -338,6 +338,8 @@ export default {
   'detail.vignetting': 'esquinas {ev} EV, {lens} a {aperture}',
   'detail.vignetting.plain': '{lens} a {aperture}',
   'detail.lens': '{lens} @ {focal}',
+  'detail.lens.camera': '{lens} (perfil de la cámara)',
+  'detail.lens.cameraOnly': 'perfil de la cámara',
   'detail.white_balance': 'de {source}, ganancias {gains}',
   'detail.white_balance.extreme': 'de {source}, ganancias {gains}. Es una corrección fuerte; ¿esa zona es realmente neutra?',
   'detail.exposure': '{ev} EV, medido en {source}',

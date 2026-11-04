@@ -139,15 +139,8 @@ impl Development {
     pub fn from_frame(filename: &str, linear: Image, meta: Meta,
                       exif: Vec<crate::exif::Entry>, db: Option<&Database>) -> Development {
         let (w, h) = (linear.w, linear.h);
-        let mut crop_factor = None;
-        let mut lens_match = None;
-        if let Some(db) = db {
-            if let Some(cam) = db.find_camera(&meta.make, &meta.model) {
-                crop_factor = Some(cam.crop);
-            }
-            lens_match = db.find_lens(&meta.make, &meta.model, &meta.lens_model,
-                                      meta.focal_mm, meta.aperture, 10.0);
-        }
+        let crop_factor = db.and_then(|db| db.find_camera(&meta.make, &meta.model)).map(|c| c.crop);
+        let lens_match = find_lens(db, &meta);
         let prof = profile::derive(&meta, w, h, crop_factor);
         Development {
             filename: filename.to_string(),
@@ -172,13 +165,16 @@ impl Development {
     /// opened (the web app loads a mount's lenses once a photograph says which
     /// it needs).
     pub fn use_lenses(&mut self, db: &Database) {
-        let m = &self.meta;
-        let found = db.find_lens(&m.make, &m.model, &m.lens_model, m.focal_mm, m.aperture, 10.0);
-        if found.as_ref().map(|f| &f.entry.model) != self.lens_match.as_ref().map(|f| &f.entry.model) {
+        let found = find_lens(Some(db), &self.meta);
+        let which = |m: &Option<LensMatch>| m.as_ref().map(|m| (m.source(), m.entry.model.clone()));
+        if which(&found) != which(&self.lens_match) {
             self.lens_match = found;
             self.cache.clear();
             self.baseline = None;
             self.graded = None;
+            self.full_frame = None;
+            self.decided_full = None;
+            self.masks = None;
         }
     }
 
@@ -414,6 +410,18 @@ impl Development {
     }
 }
 
+/// The lens in the database, or failing that the corrections the camera
+/// wrote into the file.
+fn find_lens(db: Option<&Database>, meta: &Meta) -> Option<LensMatch> {
+    let found = db.and_then(|db| db.find_lens(&meta.make, &meta.model, &meta.lens_model,
+                                              meta.focal_mm, meta.aperture, 10.0));
+    found.or_else(|| {
+        let crop = db.and_then(|db| db.find_camera(&meta.make, &meta.model)).map_or(1.0, |c| c.crop);
+        meta.embedded_lens.clone().map(|e| LensMatch::from_embedded(
+            e, &meta.model, &meta.lens_model, crop, meta.focal_mm, meta.aperture))
+    })
+}
+
 /// Lens work is the first quarter of a render; grading is the rest.
 fn after_lens<'a>(progress: Option<&'a mut dyn FnMut(f32, &str)>)
                   -> Option<Box<dyn FnMut(f32, &str) + 'a>> {
@@ -609,7 +617,7 @@ impl Development {
         };
         for (stage, key) in stages.iter().zip(keys.iter()) {
             let info = kit::with(
-                json!({"applied": settings.on(key), "lens": m.lens,
+                json!({"applied": settings.on(key), "lens": m.lens, "source": m.source(),
                        "focal": format!("{}mm", trim_num(m.focal)),
                        "aperture": format!("f/{}", trim_num(m.aperture))}),
                 measured.get(*stage).cloned().unwrap_or(Value::Null));
@@ -653,7 +661,8 @@ impl Development {
             "profile": self.profile.values(),
             "notes": self.profile.notes,
             "lens_calibration": self.lens_match.as_ref().map(|m| json!({
-                "lens": m.lens, "focal": kit::round_to(m.focal, 1), "aperture": kit::round_to(m.aperture, 2)})),
+                "lens": m.lens, "focal": kit::round_to(m.focal, 1), "aperture": kit::round_to(m.aperture, 2),
+                "source": m.source()})),
             // Null when not asked for; false when the sensor is not one it
             // knows (not a 2 x 2 Bayer mosaic).
             "deep_denoise": self.deep_denoise.map(|n| n.is_some()),
@@ -685,7 +694,8 @@ fn detail(key: &str, info: &Value) -> Value {
                                     .unwrap_or(json!("not_applied"))}});
     }
     let g = |k: &str| obj.get(k).cloned().unwrap_or(Value::Null);
-    let lens_bits = json!({"lens": g("lens"), "focal": g("focal"), "aperture": g("aperture")});
+    let lens_bits = json!({"lens": g("lens"), "focal": g("focal"), "aperture": g("aperture"),
+                           "source": g("source")});
     match key {
         "lens_vignetting" => {
             let mut p = lens_bits.as_object().unwrap().clone();

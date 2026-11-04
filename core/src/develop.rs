@@ -204,7 +204,7 @@ impl Development {
 
         // Borrowed until a stage has to write to it, so a full-size frame
         // is only copied when nothing else makes a new one.
-        let mut src = match long_edge {
+        let mut src = match self.working_edge(s, long_edge, crop) {
             None => Cow::Borrowed(&self.linear),
             Some(e) => Cow::Owned(kit::thumbnail(&self.linear, e)),
         };
@@ -270,10 +270,10 @@ impl Development {
         let (src, lens_info, eff_crop) = self.corrected(settings, long_edge, crop, &mut progress);
         self.report_lens(settings, &lens_info, &mut report);
 
-        let scale = match long_edge {
-            None => 1.0,
-            Some(_) => src.w.max(src.h) as f32 / self.linear.w.max(self.linear.h) as f32,
-        };
+        // Of the whole frame, not of what the framing kept of it.
+        let native = self.linear.w.max(self.linear.h);
+        let scale = self.working_edge(settings, long_edge, crop)
+            .map_or(1.0, |e| (e as f32 / native as f32).min(1.0));
 
         // When the canvas is shown uncropped, the estimators must still measure
         // only the rectangle being kept, see geometry::stats_view.
@@ -284,7 +284,7 @@ impl Development {
         let args = ProcessArgs {
             stats_rect,
             render_scale: scale,
-            focus_sigma: self.focus_sigma_at(src.w.max(src.h)),
+            focus_sigma: self.focus_sigma_at((native as f32 * scale).round() as usize),
             progress: graded_progress.as_mut().map(|f| &mut **f as &mut dyn FnMut(f32, &str)),
             ..self.process_args(settings, &masks, Window::whole(&src))
         };
@@ -354,8 +354,25 @@ impl Development {
         }
     }
 
-    /// The blur focus recovery aims at, in pixels of a render `long` pixels on
-    /// its long edge. The width was measured at a fixed working size, so it is
+    /// How large to make the frame before framing it, for a picture `long_edge`
+    /// on its long edge once framed. A crop is cut from a frame up to three
+    /// times larger, or a tight one would come out a fraction of the size.
+    fn working_edge(&self, s: &Settings, long_edge: Option<usize>, crop: bool) -> Option<usize> {
+        let e = long_edge?;
+        let (w, h) = (self.linear.w, self.linear.h);
+        let native = w.max(h);
+        let Some((_, _, cw, ch)) = geometry::effective_crop(w, h, &s.framing).filter(|_| crop) else {
+            return Some(e);
+        };
+        let (canvas_h, canvas_w) = geometry::canvas_size(w, h, &s.framing);
+        let kept = (cw * canvas_w as f32).max(ch * canvas_h as f32).max(1.0);
+        let wanted = (e as f32 * native as f32 / kept).round() as usize;
+        Some(wanted.clamp(e, 3 * e))
+    }
+
+    /// The blur focus recovery aims at, in pixels of a render whose whole
+    /// frame is `long` pixels on its long edge, cropped or not. The width was
+    /// measured at a fixed working size, so it is
     /// scaled from there.
     fn focus_sigma_at(&mut self, long: usize) -> f32 {
         match self.focus_width() {
@@ -399,7 +416,7 @@ impl Development {
         let mut report = Report::new();
         let mut graded_progress = after_lens(progress);
         let args = ProcessArgs {
-            focus_sigma: self.focus_sigma_at(fw.max(fh)),
+            focus_sigma: self.focus_sigma_at(self.linear.w.max(self.linear.h)),
             decided: Some(decided),
             progress: graded_progress.as_mut().map(|f| &mut **f as &mut dyn FnMut(f32, &str)),
             ..self.process_args(settings, &masks, window)
@@ -839,6 +856,26 @@ mod tests {
             }
         }
         assert!(worst < 1.0 / 1024.0, "the piece is {worst} off the whole frame");
+    }
+
+    /// Half the frame asked for at 160 pixels is cut from the frame at 320,
+    /// and sharpened as the whole frame at 320 is.
+    #[test]
+    fn a_crop_does_not_change_the_scale() {
+        let mut img = Image::new(640, 420);
+        for (i, px) in img.px_mut().iter_mut().enumerate() {
+            let (x, y) = ((i % 640) as f32, (i / 640) as f32);
+            let texture = 0.05 * ((x * 0.31).sin() * (y * 0.27).cos());
+            *px = [0.1 + 0.2 * x / 640.0 + texture, 0.1 + texture, 0.08 + 0.1 * y / 420.0];
+        }
+        let mut dev = Development::from_frame("test", img, Meta::default(), Vec::new(), None);
+        let whole = Settings::default();
+        let cropped = Settings::from_json(&json!({"framing": {"crop": [0.25, 0.25, 0.5, 0.5]}}));
+        let (a, ra) = dev.render(&whole, Some(320), true, None);
+        let (b, rb) = dev.render(&cropped, Some(160), true, None);
+        assert_eq!(a.w.max(a.h), 320);
+        assert_eq!(b.w.max(b.h), 160, "the crop came out {}x{}", b.w, b.h);
+        assert_eq!(ra.get("sharpening")["amount"], rb.get("sharpening")["amount"]);
     }
 
     /// Each toggle reports what its own stage did, not a neighbour's.

@@ -3,6 +3,7 @@
 import * as api from './api.js';
 import { app, resetForNewPhoto, settingsFor, usable, FRAME, UPLOAD, DOWNLOAD } from './state.svelte.js';
 import { fileKey, recall } from './memory.js';
+import { rememberedLens } from './lenschoice.js';
 import { t } from './i18n.svelte.js';
 import { errorText, isRaw } from './format.js';
 import { zip } from './zip.js';
@@ -93,6 +94,9 @@ export async function openFile(file, { roll = null, index = 0 } = {}) {
       app.busyKey = 'busy.denoise';
       info = { ...info, ...(await api.upload(file, { deep: true })), id: info.id };
     }
+    // A lens chosen for this camera and lens before, unless this file
+    // remembers a choice of its own.
+    if (!own && !saved) app.settings.lens = rememberedLens(info);
     app.id = info.id;
     app.info = info;
     app.rollAt = roll ? 0 : index;

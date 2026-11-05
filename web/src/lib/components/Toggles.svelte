@@ -1,7 +1,8 @@
 <script>
   import { app } from '$lib/state.svelte.js';
   import { t } from '$lib/i18n.svelte.js';
-  import { toggleDetail, toggleSummary } from '$lib/format.js';
+  import { lensName, toggleDetail, toggleSummary } from '$lib/format.js';
+  import { rememberLens } from '$lib/lenschoice.js';
 
   const groups = $derived([...new Set(app.toggles.map((t) => t.group))]);
 
@@ -16,12 +17,37 @@
   function flip(toggle) {
     app.settings.enabled[toggle.id] = !toggle.enabled;
   }
+
+  // What the lens can be set to: whatever the file says, the camera's own
+  // corrections, or any calibrated lens of the camera's mount.
+  const lensChoices = $derived(app.info?.lens_choices ?? []);
+  const canChoose = $derived(lensChoices.length > 0 || !!app.info?.lens_camera);
+  const automatic = $derived(app.info?.lens_calibration
+    ? t('lens.auto', { lens: lensName(app.info.lens_calibration) })
+    : t('lens.auto.none'));
+
+  function chooseLens(choice) {
+    app.settings.lens = choice;
+    rememberLens(app.info, choice);
+  }
 </script>
 
 <div class="toggles">
   {#each groups as group}
     <div class="tgroup">
       <h3>{t(`group.${group.toLowerCase()}`)}</h3>
+      {#if group === 'Lens' && canChoose}
+        <div class="field">
+          <select id="lens-choice" aria-label={t('lens.choose')} value={app.settings.lens}
+                  onchange={(event) => chooseLens(event.currentTarget.value)}>
+            <option value="">{automatic}</option>
+            {#if app.info?.lens_camera}<option value="camera">{t('lens.camera')}</option>{/if}
+            {#each lensChoices as choice (choice.model)}
+              <option value={choice.model}>{choice.name}</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
       {#each app.toggles.filter((t) => t.group === group) as toggle (toggle.id)}
         <button
           class="chip"

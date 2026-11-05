@@ -36,11 +36,14 @@ export const lookDescription = (id, fallback = '') => {
 };
 export const formatLabel = (id) => t(`format.${id}`);
 
-/** The lens a correction was calibrated for, or the camera's own profile of it. */
-const lensName = (p) =>
-  p.source === 'camera'
-    ? t(p.lens ? 'detail.lens.camera' : 'detail.lens.cameraOnly', { lens: p.lens })
-    : p.lens;
+/** The lens a correction was calibrated for, or the camera's own profile of
+ *  it, and whether it was only guessed from the focal length and aperture. */
+export const lensName = (p) => {
+  if (p.source === 'camera') {
+    return t(p.lens ? 'detail.lens.camera' : 'detail.lens.cameraOnly', { lens: p.lens });
+  }
+  return p.guessed ? t('detail.lens.guessed', { lens: p.lens }) : p.lens;
+};
 
 /** One line under a correction's name, saying what it did. */
 export function toggleDetail(detail) {

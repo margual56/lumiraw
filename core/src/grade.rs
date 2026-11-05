@@ -204,6 +204,9 @@ pub struct Settings {
     pub monochrome: f32,
     pub vignette: f32,
     pub grain: f32,
+    /// The lens to correct for: empty to find it from the file, "camera" for
+    /// the corrections the camera wrote, or a lens's model in the database.
+    pub lens: String,
     pub enabled: HashMap<String, bool>,
 }
 
@@ -236,6 +239,7 @@ impl Default for Settings {
             monochrome: 0.0,
             vignette: 0.0,
             grain: 0.0,
+            lens: String::new(),
             enabled: HashMap::new(),
         }
     }
@@ -273,6 +277,9 @@ impl Settings {
         s.spots = crate::local::spots_from_json(obj.get("spots"));
         if let Some(p) = obj.get("preset").and_then(|x| x.as_str()) {
             s.preset = p.to_string();
+        }
+        if let Some(l) = obj.get("lens").and_then(|x| x.as_str()) {
+            s.lens = l.to_string();
         }
         s.curves = curve::Stack::from_json(obj.get("curves"));
         s.mixer = crate::mixer::Mixer::from_json(obj.get("mixer"));

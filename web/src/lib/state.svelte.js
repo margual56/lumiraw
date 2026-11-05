@@ -63,6 +63,9 @@ export const defaultSettings = () => ({
   monochrome: 0,
   vignette: 0,
   grain: 0,
+  // The lens corrected for: '' to find it from the file, 'camera' for the
+  // camera's own corrections, or a lens's model in the lens database.
+  lens: '',
   enabled: {},
 });
 

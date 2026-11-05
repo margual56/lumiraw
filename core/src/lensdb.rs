@@ -55,8 +55,11 @@ pub struct LensEntry {
     pub model: String,
     #[serde(default)]
     pub mount: String,
+    /// The crop factor and shape of the sensor the lens was calibrated on.
     #[serde(default = "one")]
     pub crop: f32,
+    #[serde(default = "three_two")]
+    pub aspect: f32,
     #[serde(default)]
     pub dist: Vec<DistEntry>,
     #[serde(default)]
@@ -67,6 +70,10 @@ pub struct LensEntry {
 
 fn one() -> f32 {
     1.0
+}
+
+fn three_two() -> f32 {
+    1.5
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -92,9 +99,26 @@ pub struct LensMatch {
     /// The camera's own corrections, when lensfun does not know the lens;
     /// `entry` is then empty.
     pub embedded: Option<Embedded>,
+    /// Found from a focal range and an aperture alone, so maybe the wrong lens.
+    pub guessed: bool,
 }
 
 impl LensMatch {
+    fn lensfun(cam: &CameraEntry, entry: &LensEntry, shown: &str, focal: f32, aperture: f32,
+               distance: f32, guessed: bool) -> LensMatch {
+        LensMatch {
+            camera: cam.model.clone(),
+            lens: shown.to_string(),
+            crop: cam.crop,
+            focal: if focal > 0.0 { focal } else { 50.0 },
+            aperture: if aperture > 0.0 { aperture } else { 8.0 },
+            distance: if distance > 0.0 { distance } else { 10.0 },
+            entry: entry.clone(),
+            embedded: None,
+            guessed,
+        }
+    }
+
     /// A match on the corrections the camera wrote into the file.
     pub fn from_embedded(embedded: Embedded, camera: &str, lens: &str, crop: f32, focal: f32,
                          aperture: f32) -> LensMatch {
@@ -107,10 +131,22 @@ impl LensMatch {
             distance: 10.0,
             entry: LensEntry {
                 maker: String::new(), model: String::new(), mount: String::new(), crop,
-                dist: Vec::new(), tca: Vec::new(), vign: Vec::new(),
+                aspect: 1.5, dist: Vec::new(), tca: Vec::new(), vign: Vec::new(),
             },
             embedded: Some(embedded),
+            guessed: false,
         }
+    }
+
+    /// One unit of lensfun's radius in this image, in pixels: half the
+    /// calibration sensor's short side (`diagonal` false, for distortion and
+    /// CA) or half its diagonal (vignetting), scaled to this camera's sensor.
+    /// A full-frame calibration on an APS-C body reaches past the corners.
+    fn calibration_unit(&self, w: usize, h: usize, diagonal: bool) -> f32 {
+        let half_diag = ((w as f32 - 1.0).powi(2) + (h as f32 - 1.0).powi(2)).sqrt() / 2.0;
+        let sensors = if self.entry.crop > 0.0 && self.crop > 0.0 { self.crop / self.entry.crop } else { 1.0 };
+        let shape = if diagonal { 1.0 } else { self.entry.aspect.max(1.0).hypot(1.0) };
+        (half_diag * sensors / shape).max(1.0)
     }
 
     /// Where the calibration came from: `"lensfun"` or `"camera"`.
@@ -200,12 +236,13 @@ impl Database {
         }
     }
 
-    /// The mount whose lenses this photograph's lens has to be looked up among,
-    /// when they have not been loaded.
-    pub fn missing_mount(&self, make: &str, model: &str, lens: &str) -> Option<String> {
+    /// The mount whose lenses this camera's lens has to be looked up among,
+    /// when they have not been loaded. Wanted even with no lens named, for
+    /// choosing one by hand.
+    pub fn missing_mount(&self, make: &str, model: &str) -> Option<String> {
         let loaded = self.mounts.as_ref()?;
         let mount = self.find_camera(make, model)?.mount.to_lowercase();
-        (!norm(lens).is_empty() && !loaded.contains(&mount)).then_some(mount)
+        (!loaded.contains(&mount)).then_some(mount)
     }
 
     /// The camera body on its own: worth doing even when the lens is unknown,
@@ -223,75 +260,132 @@ impl Database {
             .or_else(|| self.cameras.iter().find(|c| norm(&c.model) == m))
     }
 
+    /// The camera, and the calibrated lenses that fit it. `None` while its
+    /// mount's part of the database has not arrived: another mount's lenses
+    /// must not answer in the meantime.
+    fn candidates(&self, make: &str, model: &str) -> Option<(&CameraEntry, Vec<&LensEntry>)> {
+        let cam = self.find_camera(make, model)?;
+        let mount = cam.mount.to_lowercase();
+        if self.mounts.as_ref().is_some_and(|loaded| !loaded.contains(&mount)) {
+            return None;
+        }
+        let mut lenses: Vec<&LensEntry> = self.lenses.iter()
+            .filter(|l| mount.is_empty() || l.mount.to_lowercase() == mount)
+            .collect();
+        if lenses.is_empty() {
+            lenses = self.lenses.iter().collect();
+        }
+        Some((cam, lenses))
+    }
+
+    /// Every calibrated lens for this camera's mount, each once, by maker and
+    /// model: what a lens can be chosen from.
+    pub fn lenses_for(&self, make: &str, model: &str) -> Vec<LensEntry> {
+        let Some((_, mut lenses)) = self.candidates(make, model) else { return Vec::new() };
+        lenses.sort_by_key(|l| (l.maker.to_lowercase(), l.model.to_lowercase()));
+        lenses.dedup_by_key(|l| (norm(&l.maker), norm(&l.model)));
+        lenses.into_iter().cloned().collect()
+    }
+
     pub fn find_lens(&self, make: &str, model: &str, lens: &str, focal: f32, aperture: f32,
                      distance: f32) -> Option<LensMatch> {
-        let cam = self.find_camera(make, model)?;
+        let (cam, candidates) = self.candidates(make, model)?;
         let want = norm(lens);
         if want.is_empty() {
             return None;
         }
-        let mount = cam.mount.to_lowercase();
-        // A part of the database without this mount cannot answer yet, and
-        // must not answer from another mount's lenses in the meantime.
-        if self.mounts.as_ref().is_some_and(|loaded| !loaded.contains(&mount)) {
-            return None;
-        }
-        let mut candidates: Vec<&LensEntry> = self
-            .lenses
-            .iter()
-            .filter(|l| mount.is_empty() || l.mount.to_lowercase() == mount)
-            .collect();
-        if candidates.is_empty() {
-            candidates = self.lenses.iter().collect();
-        }
         // Exact name first; then either name containing the other, which is
         // what catches "E 55-210mm F4.5-6.3 OSS" against the database's "E
         // 55-210mm f/4.5-6.3 OSS" once punctuation is stripped.
-        let named = candidates.iter().find(|l| norm(&l.model) == want).or_else(|| {
-            candidates.iter().find(|l| {
+        if let Some(hit) = candidates.iter().find(|l| norm(&l.model) == want) {
+            return Some(LensMatch::lensfun(cam, hit, lens, focal, aperture, distance, false));
+        }
+        // A name that is nothing but a focal range and an aperture is how Sony
+        // bodies report other makers' lenses ("E 18-50mm F2.8" for Sigma's
+        // 18-50mm F2.8 DC DN). Contained in "E 35mm f/1.8 OSS" it is still
+        // not that lens; it can only be the mount's one lens with that range
+        // and aperture, if there is only one, and that is a guess.
+        let bare = spec(lens).filter(|(_, rest)| rest.iter().all(|t| MOUNT_PREFIXES.contains(&t.as_str())));
+        let Some((want_spec, _)) = bare else {
+            let hit = candidates.iter().find(|l| {
                 let m = norm(&l.model);
                 !m.is_empty() && (m.contains(&want) || want.contains(&m))
-            })
-        });
-        // Last, a name that is nothing but a focal range and an aperture,
-        // which is how Sony bodies report other makers' lenses ("E 18-50mm
-        // F2.8" for Sigma's 18-50mm F2.8 DC DN): the mount's one lens with
-        // those, if there is only one.
-        let (hit, shown): (&LensEntry, String) = match named {
-            Some(l) => (l, lens.to_string()),
-            None => {
-                let (want_spec, rest) = spec(lens)?;
-                if !rest.iter().all(|t| MOUNT_PREFIXES.contains(&t.as_str())) {
-                    return None;
-                }
-                let same: Vec<&&LensEntry> = candidates.iter()
-                    .filter(|l| spec(&l.model).is_some_and(|(s, _)| same_spec(s, want_spec)))
-                    .collect();
-                // Listed twice under the same name is still the one lens.
-                let first = same.first()?;
-                if same.iter().any(|l| norm(&l.model) != norm(&first.model)) {
-                    return None;
-                }
-                let model = &first.model;
-                let shown = if model.to_lowercase().starts_with(&first.maker.to_lowercase()) {
-                    model.clone()
-                } else {
-                    format!("{} {}", first.maker, model)
-                };
-                (first, shown)
-            }
+            })?;
+            return Some(LensMatch::lensfun(cam, hit, lens, focal, aperture, distance, false));
         };
-        Some(LensMatch {
-            camera: cam.model.clone(),
-            lens: shown,
-            crop: cam.crop,
-            focal: if focal > 0.0 { focal } else { 50.0 },
-            aperture: if aperture > 0.0 { aperture } else { 8.0 },
-            distance: if distance > 0.0 { distance } else { 10.0 },
-            entry: hit.clone(),
-            embedded: None,
-        })
+        let same: Vec<&LensEntry> = candidates.into_iter()
+            .filter(|l| spec(&l.model).is_some_and(|(s, _)| same_spec(s, want_spec)))
+            .collect();
+        let hit = only_one(&same)?;
+        Some(LensMatch::lensfun(cam, hit, &full_name(hit), focal, aperture, distance, true))
     }
+
+    /// The lens the maker's own lens number names ("Sigma", "18-50mm F2.8 DC
+    /// DN | C"), in lensfun, whose names for the same lens differ ("18-50mm
+    /// F2.8 DC DN | Contemporary 021"): the same maker and specification, and
+    /// of those the one sharing most words with it.
+    pub fn find_identified(&self, make: &str, model: &str, maker: &str, lens: &str, focal: f32,
+                           aperture: f32, distance: f32) -> Option<LensMatch> {
+        let (cam, candidates) = self.candidates(make, model)?;
+        let (want_spec, _) = spec(lens)?;
+        let maker_n = norm(maker);
+        let wanted = words(lens);
+        let mut scored: Vec<(&LensEntry, usize)> = candidates.into_iter()
+            .filter(|l| norm(&l.maker) == maker_n)
+            .filter(|l| spec(&l.model).is_some_and(|(s, _)| same_spec(s, want_spec)))
+            .map(|l| (l, words(&l.model).iter().filter(|w| wanted.contains(w)).count()))
+            .collect();
+        let best = scored.iter().map(|(_, n)| *n).max()?;
+        scored.retain(|(_, n)| *n == best);
+        let tied: Vec<&LensEntry> = scored.into_iter().map(|(l, _)| l).collect();
+        let hit = only_one(&tied)?;
+        Some(LensMatch::lensfun(cam, hit, &full_name(hit), focal, aperture, distance, false))
+    }
+
+    /// A lens chosen by hand, by its model name in the database.
+    pub fn find_chosen(&self, make: &str, model: &str, chosen: &str, focal: f32, aperture: f32,
+                       distance: f32) -> Option<LensMatch> {
+        let (cam, candidates) = self.candidates(make, model)?;
+        let hit = candidates.into_iter().find(|l| l.model == chosen)?;
+        Some(LensMatch::lensfun(cam, hit, &full_name(hit), focal, aperture, distance, false))
+    }
+}
+
+/// Whether two lens names give different focal ranges or apertures; false
+/// when either gives none.
+pub fn specs_differ(a: &str, b: &str) -> bool {
+    matches!((spec(a), spec(b)), (Some((x, _)), Some((y, _))) if !same_spec(x, y))
+}
+
+/// The lens, if every entry is the same one: listed twice under the same name
+/// is still the one lens.
+fn only_one<'a>(lenses: &[&'a LensEntry]) -> Option<&'a LensEntry> {
+    let first = *lenses.first()?;
+    lenses.iter().all(|l| norm(&l.model) == norm(&first.model)).then_some(first)
+}
+
+/// "Sigma 18-50mm F2.8 DC DN | Contemporary 021", with the maker in front
+/// unless the model already starts with it.
+pub fn full_name(l: &LensEntry) -> String {
+    if l.model.to_lowercase().starts_with(&l.maker.to_lowercase()) {
+        l.model.clone()
+    } else {
+        format!("{} {}", l.maker, l.model)
+    }
+}
+
+/// The words of a lens name, with Sigma's line letters spelt out.
+fn words(name: &str) -> Vec<String> {
+    name.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric() && c != '.')
+        .filter(|w| !w.is_empty())
+        .map(|w| match w {
+            "c" => "contemporary".to_string(),
+            "a" => "art".to_string(),
+            "s" => "sports".to_string(),
+            _ => w.to_string(),
+        })
+        .collect()
 }
 
 /// What a lens name may carry besides its specification and still say
@@ -550,8 +644,8 @@ fn bracket_values(sorted: &[f32], x: f32) -> (f32, f32, f32) {
 }
 
 // Applying the models
-/// Undo the lens' brightness falloff.  Vignetting coordinates are normalised
-/// by the half diagonal (verified against liblensfun).
+/// Undo the lens' brightness falloff. Radii are over the half diagonal of the
+/// sensor the lens was calibrated on, as liblensfun has them.
 pub fn apply_vignetting(img: &mut Image, m: &LensMatch) -> Value {
     let k = vignetting_at(&m.entry, m.focal, m.aperture, m.distance);
     let embedded = m.embedded.as_ref().filter(|e| e.has_vignetting());
@@ -561,11 +655,16 @@ pub fn apply_vignetting(img: &mut Image, m: &LensMatch) -> Value {
     let before = corner_mean(img);
     let cx = (img.w as f32 - 1.0) / 2.0;
     let cy = (img.h as f32 - 1.0) / 2.0;
-    let half_diag = (cx * cx + cy * cy).sqrt().max(1.0);
+    // The camera's tables are for its own sensor; lensfun's for the one it
+    // was calibrated on.
+    let unit = match embedded {
+        Some(_) => (cx * cx + cy * cy).sqrt().max(1.0),
+        None => m.calibration_unit(img.w, img.h, true),
+    };
     for y in 0..img.h {
-        let dy = (y as f32 - cy) / half_diag;
+        let dy = (y as f32 - cy) / unit;
         for x in 0..img.w {
-            let dx = (x as f32 - cx) / half_diag;
+            let dx = (x as f32 - cx) / unit;
             let r2 = dx * dx + dy * dy;
             let c = match embedded {
                 Some(e) => spline(&e.vign, r2.sqrt()),
@@ -627,8 +726,7 @@ pub fn apply_geometry(img: &Image, m: &LensMatch, distortion: bool, tca: bool) -
     let (w, h) = (img.w, img.h);
     let cx = (w as f32 - 1.0) / 2.0;
     let cy = (h as f32 - 1.0) / 2.0;
-    // Geometry normalisation: half the *shorter* side (verified against liblensfun).
-    let unit = (w.min(h) as f32) / 2.0;
+    let unit = m.calibration_unit(w, h, false);
     let scale = if dk.model == 0 { 1.0 } else { autoscale(&|ru| dist_ratio(&dk, ru), w, h, unit, cx, cy) };
 
     // Sampled straight from the interleaved frame, rather than from three
@@ -812,11 +910,11 @@ mod tests {
             }
             let Some(file) = index["chunks"][&mount].as_str() else { continue };
             let mut partial = cameras_only.clone();
-            assert_eq!(partial.missing_mount(&cam.maker, &cam.model, "Some Lens"), Some(mount.clone()));
+            assert_eq!(partial.missing_mount(&cam.maker, &cam.model), Some(mount.clone()));
             assert!(partial.find_lens(&cam.maker, &cam.model, "Some Lens", 50.0, 8.0, 10.0).is_none(),
                     "a lens was found before its mount was loaded");
             partial.extend(read(&format!("lenses/{file}.json")));
-            assert_eq!(partial.missing_mount(&cam.maker, &cam.model, "Some Lens"), None);
+            assert_eq!(partial.missing_mount(&cam.maker, &cam.model), None);
             for lens in whole.lenses.iter().filter(|l| l.mount.to_lowercase() == mount) {
                 let a = whole.find_lens(&cam.maker, &cam.model, &lens.model, 50.0, 8.0, 10.0);
                 let b = partial.find_lens(&cam.maker, &cam.model, &lens.model, 50.0, 8.0, 10.0);
@@ -843,11 +941,37 @@ mod tests {
         assert!(whole.find_lens("SONY", "ILCE-5000", "E 18-50mm F2.8 XYZ", 18.7, 2.8, 10.0).is_none());
     }
 
+    /// The maker's lens number names the lens in its own words; lensfun's
+    /// differ, but the maker, the specification and the words agree.
+    #[test]
+    fn an_identified_lens_is_found_under_lensfuns_name() {
+        let whole = read("lensfun.json");
+        let m = whole.find_identified("SONY", "ILCE-5000", "Sigma", "18-50mm F2.8 DC DN | C",
+                                      18.7, 2.8, 10.0).unwrap();
+        assert_eq!(m.entry.model, "18-50mm F2.8 DC DN | Contemporary 021");
+        assert!(!m.guessed);
+        let own = whole.find_identified("SONY", "ILCE-5000", "Sony", "E PZ 16-50mm F3.5-5.6 OSS",
+                                        16.0, 3.5, 10.0).unwrap();
+        assert_eq!(own.entry.model, "E PZ 16-50mm f/3.5-5.6 OSS");
+        assert!(whole.find_identified("SONY", "ILCE-5000", "Viltrox", "40mm F2.5 FE Air",
+                                      40.0, 2.5, 10.0).is_none());
+    }
+
+    /// "E 35mm F1.8" is contained in "E 35mm f/1.8 OSS", but three lenses on
+    /// the mount are 35mm f/1.8, and the name says which of them it is not.
+    #[test]
+    fn a_bare_name_is_not_matched_by_being_contained() {
+        let whole = read("lensfun.json");
+        assert!(whole.find_lens("SONY", "ILCE-5000", "E 35mm F1.8", 35.0, 1.8, 10.0).is_none());
+        let m = whole.find_lens("SONY", "ILCE-5000", "E 18-50mm F2.8", 18.7, 2.8, 10.0).unwrap();
+        assert!(m.guessed);
+    }
+
     #[test]
     fn two_lenses_with_the_same_specification_are_not_guessed_between() {
         let lens = |model: &str| LensEntry {
             maker: "Someone".into(), model: model.into(), mount: "Sony E".into(), crop: 1.5,
-            dist: Vec::new(), tca: Vec::new(), vign: Vec::new(),
+            aspect: 1.5, dist: Vec::new(), tca: Vec::new(), vign: Vec::new(),
         };
         let db = Database {
             cameras: vec![CameraEntry { maker: "Sony".into(), model: "ILCE-5000".into(),
@@ -856,6 +980,47 @@ mod tests {
             mounts: None,
         };
         assert!(db.find_lens("SONY", "ILCE-5000", "E 30mm F1.4", 30.0, 1.4, 10.0).is_none());
+    }
+
+    /// A lens calibrated on full frame, on a body with a smaller sensor, sees
+    /// only the middle of its field: the APS-C picture corrects as that part
+    /// of the full-frame picture does, point for point.
+    #[test]
+    fn a_full_frame_calibration_fits_a_smaller_sensor() {
+        let entry = LensEntry {
+            maker: "Someone".into(), model: "50mm F2".into(), mount: "Sony E".into(), crop: 1.0,
+            aspect: 1.5,
+            dist: vec![DistEntry { f: 50.0, m: "poly5".into(), k1: -0.03, ..DistEntry::default() }],
+            tca: Vec::new(),
+            vign: vec![VignEntry { f: 50.0, ap: 2.0, d: 10.0, k1: -0.3, k2: 0.0, k3: 0.0 }],
+        };
+        let on = |crop: f32| LensMatch {
+            camera: "body".into(), lens: "50mm F2".into(), crop, focal: 50.0, aperture: 2.0,
+            distance: 10.0, entry: entry.clone(), embedded: None, guessed: false,
+        };
+        // The same pixels: a full-frame picture, and its middle as APS-C has it.
+        let (fw, fh, cw, ch) = (901, 601, 601, 401);
+        let dot = |w: usize, h: usize| {
+            let mut img = Image::new(w, h);
+            let (x, y) = (w / 2 + 150, h / 2 + 100);
+            img.d[(y * w + x) * 3..][..3].fill(1.0);
+            img
+        };
+        let found = |img: &Image| {
+            let i = (0..img.w * img.h).max_by(|a, b| img.d[a * 3].total_cmp(&img.d[b * 3])).unwrap();
+            ((i % img.w) as i32 - (img.w / 2) as i32, (i / img.w) as i32 - (img.h / 2) as i32)
+        };
+        let (full, _) = apply_geometry(&dot(fw, fh), &on(1.0), true, false);
+        let (aps, _) = apply_geometry(&dot(cw, ch), &on(1.5), true, false);
+        assert_eq!(found(&full), found(&aps));
+
+        let flat = |w, h| { let mut i = Image::new(w, h); i.d.fill(0.5); i };
+        let (mut full, mut aps) = (flat(fw, fh), flat(cw, ch));
+        apply_vignetting(&mut full, &on(1.0));
+        apply_vignetting(&mut aps, &on(1.5));
+        let at = |img: &Image, dx: usize, dy: usize| img.d[((img.h / 2 + dy) * img.w + img.w / 2 + dx) * 3];
+        assert!((at(&full, 280, 190) - at(&aps, 280, 190)).abs() < 1e-3,
+                "{} against {}", at(&full, 280, 190), at(&aps, 280, 190));
     }
 
     /// The tables from a Sigma 18-50mm F2.8 at 18.7mm, as an ILCE-5000 wrote them.
@@ -907,7 +1072,7 @@ mod tests {
         let whole = read("lensfun.json");
         let sony = whole.cameras.iter().find(|c| c.mount.to_lowercase() == "sony e").unwrap();
         assert!(partial.find_lens(&sony.maker, &sony.model, "EF 50mm f/1.8 II", 50.0, 8.0, 10.0).is_none());
-        assert_eq!(partial.missing_mount(&sony.maker, &sony.model, "E 16-55mm F2.8 G").as_deref(),
+        assert_eq!(partial.missing_mount(&sony.maker, &sony.model).as_deref(),
                    Some("sony e"));
     }
 }

@@ -139,15 +139,8 @@ impl Development {
     pub fn from_frame(filename: &str, linear: Image, meta: Meta,
                       exif: Vec<crate::exif::Entry>, db: Option<&Database>) -> Development {
         let (w, h) = (linear.w, linear.h);
-        let mut crop_factor = None;
-        let mut lens_match = None;
-        if let Some(db) = db {
-            if let Some(cam) = db.find_camera(&meta.make, &meta.model) {
-                crop_factor = Some(cam.crop);
-            }
-            lens_match = db.find_lens(&meta.make, &meta.model, &meta.lens_model,
-                                      meta.focal_mm, meta.aperture, 10.0);
-        }
+        let crop_factor = db.and_then(|db| db.find_camera(&meta.make, &meta.model)).map(|c| c.crop);
+        let lens_match = find_lens(db, &meta);
         let prof = profile::derive(&meta, w, h, crop_factor);
         Development {
             filename: filename.to_string(),
@@ -172,13 +165,16 @@ impl Development {
     /// opened (the web app loads a mount's lenses once a photograph says which
     /// it needs).
     pub fn use_lenses(&mut self, db: &Database) {
-        let m = &self.meta;
-        let found = db.find_lens(&m.make, &m.model, &m.lens_model, m.focal_mm, m.aperture, 10.0);
-        if found.as_ref().map(|f| &f.entry.model) != self.lens_match.as_ref().map(|f| &f.entry.model) {
+        let found = find_lens(Some(db), &self.meta);
+        let which = |m: &Option<LensMatch>| m.as_ref().map(|m| (m.source(), m.entry.model.clone()));
+        if which(&found) != which(&self.lens_match) {
             self.lens_match = found;
             self.cache.clear();
             self.baseline = None;
             self.graded = None;
+            self.full_frame = None;
+            self.decided_full = None;
+            self.masks = None;
         }
     }
 
@@ -208,7 +204,7 @@ impl Development {
 
         // Borrowed until a stage has to write to it, so a full-size frame
         // is only copied when nothing else makes a new one.
-        let mut src = match long_edge {
+        let mut src = match self.working_edge(s, long_edge, crop) {
             None => Cow::Borrowed(&self.linear),
             Some(e) => Cow::Owned(kit::thumbnail(&self.linear, e)),
         };
@@ -274,10 +270,10 @@ impl Development {
         let (src, lens_info, eff_crop) = self.corrected(settings, long_edge, crop, &mut progress);
         self.report_lens(settings, &lens_info, &mut report);
 
-        let scale = match long_edge {
-            None => 1.0,
-            Some(_) => src.w.max(src.h) as f32 / self.linear.w.max(self.linear.h) as f32,
-        };
+        // Of the whole frame, not of what the framing kept of it.
+        let native = self.linear.w.max(self.linear.h);
+        let scale = self.working_edge(settings, long_edge, crop)
+            .map_or(1.0, |e| (e as f32 / native as f32).min(1.0));
 
         // When the canvas is shown uncropped, the estimators must still measure
         // only the rectangle being kept, see geometry::stats_view.
@@ -288,7 +284,7 @@ impl Development {
         let args = ProcessArgs {
             stats_rect,
             render_scale: scale,
-            focus_sigma: self.focus_sigma_at(src.w.max(src.h)),
+            focus_sigma: self.focus_sigma_at((native as f32 * scale).round() as usize),
             progress: graded_progress.as_mut().map(|f| &mut **f as &mut dyn FnMut(f32, &str)),
             ..self.process_args(settings, &masks, Window::whole(&src))
         };
@@ -358,8 +354,25 @@ impl Development {
         }
     }
 
-    /// The blur focus recovery aims at, in pixels of a render `long` pixels on
-    /// its long edge. The width was measured at a fixed working size, so it is
+    /// How large to make the frame before framing it, for a picture `long_edge`
+    /// on its long edge once framed. A crop is cut from a frame up to three
+    /// times larger, or a tight one would come out a fraction of the size.
+    fn working_edge(&self, s: &Settings, long_edge: Option<usize>, crop: bool) -> Option<usize> {
+        let e = long_edge?;
+        let (w, h) = (self.linear.w, self.linear.h);
+        let native = w.max(h);
+        let Some((_, _, cw, ch)) = geometry::effective_crop(w, h, &s.framing).filter(|_| crop) else {
+            return Some(e);
+        };
+        let (canvas_h, canvas_w) = geometry::canvas_size(w, h, &s.framing);
+        let kept = (cw * canvas_w as f32).max(ch * canvas_h as f32).max(1.0);
+        let wanted = (e as f32 * native as f32 / kept).round() as usize;
+        Some(wanted.clamp(e, 3 * e))
+    }
+
+    /// The blur focus recovery aims at, in pixels of a render whose whole
+    /// frame is `long` pixels on its long edge, cropped or not. The width was
+    /// measured at a fixed working size, so it is
     /// scaled from there.
     fn focus_sigma_at(&mut self, long: usize) -> f32 {
         match self.focus_width() {
@@ -403,7 +416,7 @@ impl Development {
         let mut report = Report::new();
         let mut graded_progress = after_lens(progress);
         let args = ProcessArgs {
-            focus_sigma: self.focus_sigma_at(fw.max(fh)),
+            focus_sigma: self.focus_sigma_at(self.linear.w.max(self.linear.h)),
             decided: Some(decided),
             progress: graded_progress.as_mut().map(|f| &mut **f as &mut dyn FnMut(f32, &str)),
             ..self.process_args(settings, &masks, window)
@@ -412,6 +425,18 @@ impl Development {
         let rgb = finish(rgb, settings, window, &mut report);
         Region { image: rgb.crop(x - x0, y - y0, w, h), x, y, full_w: fw, full_h: fh }
     }
+}
+
+/// The lens in the database, or failing that the corrections the camera
+/// wrote into the file.
+fn find_lens(db: Option<&Database>, meta: &Meta) -> Option<LensMatch> {
+    let found = db.and_then(|db| db.find_lens(&meta.make, &meta.model, &meta.lens_model,
+                                              meta.focal_mm, meta.aperture, 10.0));
+    found.or_else(|| {
+        let crop = db.and_then(|db| db.find_camera(&meta.make, &meta.model)).map_or(1.0, |c| c.crop);
+        meta.embedded_lens.clone().map(|e| LensMatch::from_embedded(
+            e, &meta.model, &meta.lens_model, crop, meta.focal_mm, meta.aperture))
+    })
 }
 
 /// Lens work is the first quarter of a render; grading is the rest.
@@ -609,7 +634,7 @@ impl Development {
         };
         for (stage, key) in stages.iter().zip(keys.iter()) {
             let info = kit::with(
-                json!({"applied": settings.on(key), "lens": m.lens,
+                json!({"applied": settings.on(key), "lens": m.lens, "source": m.source(),
                        "focal": format!("{}mm", trim_num(m.focal)),
                        "aperture": format!("f/{}", trim_num(m.aperture))}),
                 measured.get(*stage).cloned().unwrap_or(Value::Null));
@@ -653,7 +678,8 @@ impl Development {
             "profile": self.profile.values(),
             "notes": self.profile.notes,
             "lens_calibration": self.lens_match.as_ref().map(|m| json!({
-                "lens": m.lens, "focal": kit::round_to(m.focal, 1), "aperture": kit::round_to(m.aperture, 2)})),
+                "lens": m.lens, "focal": kit::round_to(m.focal, 1), "aperture": kit::round_to(m.aperture, 2),
+                "source": m.source()})),
             // Null when not asked for; false when the sensor is not one it
             // knows (not a 2 x 2 Bayer mosaic).
             "deep_denoise": self.deep_denoise.map(|n| n.is_some()),
@@ -685,7 +711,8 @@ fn detail(key: &str, info: &Value) -> Value {
                                     .unwrap_or(json!("not_applied"))}});
     }
     let g = |k: &str| obj.get(k).cloned().unwrap_or(Value::Null);
-    let lens_bits = json!({"lens": g("lens"), "focal": g("focal"), "aperture": g("aperture")});
+    let lens_bits = json!({"lens": g("lens"), "focal": g("focal"), "aperture": g("aperture"),
+                           "source": g("source")});
     match key {
         "lens_vignetting" => {
             let mut p = lens_bits.as_object().unwrap().clone();
@@ -829,6 +856,26 @@ mod tests {
             }
         }
         assert!(worst < 1.0 / 1024.0, "the piece is {worst} off the whole frame");
+    }
+
+    /// Half the frame asked for at 160 pixels is cut from the frame at 320,
+    /// and sharpened as the whole frame at 320 is.
+    #[test]
+    fn a_crop_does_not_change_the_scale() {
+        let mut img = Image::new(640, 420);
+        for (i, px) in img.px_mut().iter_mut().enumerate() {
+            let (x, y) = ((i % 640) as f32, (i / 640) as f32);
+            let texture = 0.05 * ((x * 0.31).sin() * (y * 0.27).cos());
+            *px = [0.1 + 0.2 * x / 640.0 + texture, 0.1 + texture, 0.08 + 0.1 * y / 420.0];
+        }
+        let mut dev = Development::from_frame("test", img, Meta::default(), Vec::new(), None);
+        let whole = Settings::default();
+        let cropped = Settings::from_json(&json!({"framing": {"crop": [0.25, 0.25, 0.5, 0.5]}}));
+        let (a, ra) = dev.render(&whole, Some(320), true, None);
+        let (b, rb) = dev.render(&cropped, Some(160), true, None);
+        assert_eq!(a.w.max(a.h), 320);
+        assert_eq!(b.w.max(b.h), 160, "the crop came out {}x{}", b.w, b.h);
+        assert_eq!(ra.get("sharpening")["amount"], rb.get("sharpening")["amount"]);
     }
 
     /// Each toggle reports what its own stage did, not a neighbour's.

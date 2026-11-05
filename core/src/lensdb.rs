@@ -89,6 +89,101 @@ pub struct LensMatch {
     pub aperture: f32,
     pub distance: f32,
     pub entry: LensEntry,
+    /// The camera's own corrections, when lensfun does not know the lens;
+    /// `entry` is then empty.
+    pub embedded: Option<Embedded>,
+}
+
+impl LensMatch {
+    /// A match on the corrections the camera wrote into the file.
+    pub fn from_embedded(embedded: Embedded, camera: &str, lens: &str, crop: f32, focal: f32,
+                         aperture: f32) -> LensMatch {
+        LensMatch {
+            camera: camera.to_string(),
+            lens: lens.to_string(),
+            crop,
+            focal,
+            aperture,
+            distance: 10.0,
+            entry: LensEntry {
+                maker: String::new(), model: String::new(), mount: String::new(), crop,
+                dist: Vec::new(), tca: Vec::new(), vign: Vec::new(),
+            },
+            embedded: Some(embedded),
+        }
+    }
+
+    /// Where the calibration came from: `"lensfun"` or `"camera"`.
+    pub fn source(&self) -> &'static str {
+        if self.embedded.is_some() { "camera" } else { "lensfun" }
+    }
+}
+
+/// The lens corrections a Sony body writes into every raw (tags 0x7032,
+/// 0x7035 and 0x7037), read as darktable reads them: one value per knot, the
+/// knots spread evenly over the half diagonal.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Embedded {
+    /// How far out to sample, as a fraction of the radius, for each knot.
+    pub dist: Vec<f32>,
+    /// The red and blue channels' radii relative to green, for each knot.
+    pub ca_r: Vec<f32>,
+    pub ca_b: Vec<f32>,
+    /// How bright each knot's radius is relative to the centre.
+    pub vign: Vec<f32>,
+}
+
+impl Embedded {
+    /// From the raw tag values, each starting with its count (twice the knots
+    /// for chromatic aberration, red then blue). `None` when they do not agree.
+    pub fn from_sony(dist: &[i32], ca: &[i32], vign: &[i32]) -> Option<Embedded> {
+        let n = *dist.first()? as usize;
+        if !(2..=16).contains(&n) || ca.first() != Some(&(2 * n as i32))
+            || vign.first() != Some(&(n as i32))
+            || dist.len() <= n || ca.len() <= 2 * n || vign.len() <= n {
+            return None;
+        }
+        let at = |v: &[i32], i: usize, shift: i32| v[i] as f32 * 2f32.powi(-shift) + 1.0;
+        Some(Embedded {
+            dist: (1..=n).map(|i| at(dist, i, 14)).collect(),
+            ca_r: (1..=n).map(|i| at(ca, i, 21)).collect(),
+            ca_b: (n + 1..=2 * n).map(|i| at(ca, i, 21)).collect(),
+            vign: (1..=n).map(|i| 2f32.powf(0.5 - 2f32.powf(vign[i] as f32 * 2f32.powi(-13) - 1.0)))
+                .collect(),
+        })
+    }
+
+    fn has_distortion(&self) -> bool {
+        self.dist.iter().any(|v| (v - 1.0).abs() > 1e-6)
+    }
+    fn has_tca(&self) -> bool {
+        self.ca_r.iter().chain(&self.ca_b).any(|v| (v - 1.0).abs() > 1e-7)
+    }
+    fn has_vignetting(&self) -> bool {
+        self.vign.iter().any(|v| (v - 1.0).abs() > 1e-6)
+    }
+}
+
+/// A table of values at knots `(i + 0.5) / (n - 1)`, linear between them and
+/// flat past either end, at radius `r`.
+pub fn spline(values: &[f32], r: f32) -> f32 {
+    let n = values.len();
+    if n == 0 {
+        return 1.0;
+    }
+    if n == 1 {
+        return values[0];
+    }
+    let pos = r * (n - 1) as f32 - 0.5;
+    if pos <= 0.0 {
+        return values[0];
+    }
+    let i = pos as usize;
+    if i + 1 >= n {
+        return values[n - 1];
+    }
+    let t = pos - i as f32;
+    values[i] + (values[i + 1] - values[i]) * t
 }
 
 impl Database {
@@ -152,23 +247,88 @@ impl Database {
         // Exact name first; then either name containing the other, which is
         // what catches "E 55-210mm F4.5-6.3 OSS" against the database's "E
         // 55-210mm f/4.5-6.3 OSS" once punctuation is stripped.
-        let hit: &LensEntry = match candidates.iter().find(|l| norm(&l.model) == want) {
-            Some(l) => l,
-            None => candidates.iter().find(|l| {
+        let named = candidates.iter().find(|l| norm(&l.model) == want).or_else(|| {
+            candidates.iter().find(|l| {
                 let m = norm(&l.model);
                 !m.is_empty() && (m.contains(&want) || want.contains(&m))
-            })?,
+            })
+        });
+        // Last, a name that is nothing but a focal range and an aperture,
+        // which is how Sony bodies report other makers' lenses ("E 18-50mm
+        // F2.8" for Sigma's 18-50mm F2.8 DC DN): the mount's one lens with
+        // those, if there is only one.
+        let (hit, shown): (&LensEntry, String) = match named {
+            Some(l) => (l, lens.to_string()),
+            None => {
+                let (want_spec, rest) = spec(lens)?;
+                if !rest.iter().all(|t| MOUNT_PREFIXES.contains(&t.as_str())) {
+                    return None;
+                }
+                let same: Vec<&&LensEntry> = candidates.iter()
+                    .filter(|l| spec(&l.model).is_some_and(|(s, _)| same_spec(s, want_spec)))
+                    .collect();
+                // Listed twice under the same name is still the one lens.
+                let first = same.first()?;
+                if same.iter().any(|l| norm(&l.model) != norm(&first.model)) {
+                    return None;
+                }
+                let model = &first.model;
+                let shown = if model.to_lowercase().starts_with(&first.maker.to_lowercase()) {
+                    model.clone()
+                } else {
+                    format!("{} {}", first.maker, model)
+                };
+                (first, shown)
+            }
         };
         Some(LensMatch {
             camera: cam.model.clone(),
-            lens: lens.to_string(),
+            lens: shown,
             crop: cam.crop,
             focal: if focal > 0.0 { focal } else { 50.0 },
             aperture: if aperture > 0.0 { aperture } else { 8.0 },
             distance: if distance > 0.0 { distance } else { 10.0 },
             entry: hit.clone(),
+            embedded: None,
         })
     }
+}
+
+/// What a lens name may carry besides its specification and still say
+/// nothing about which lens it is.
+const MOUNT_PREFIXES: &[&str] = &["e", "fe", "dt", "pz"];
+
+/// (shortest focal, longest focal, widest aperture)
+type Spec = (f32, f32, f32);
+
+fn same_spec(a: Spec, b: Spec) -> bool {
+    (a.0 - b.0).abs() < 0.05 && (a.1 - b.1).abs() < 0.05 && (a.2 - b.2).abs() < 0.05
+}
+
+/// A lens name's focal range and widest aperture, "18-50mm F2.8" or "50mm
+/// f/1.8", with the words around them.
+fn spec(name: &str) -> Option<(Spec, Vec<String>)> {
+    let lower = name.to_lowercase().replace("f/", "f");
+    let tokens: Vec<&str> = lower.split_whitespace().collect();
+    let range = |s: &str| -> Option<(f32, f32)> {
+        match s.split_once('-') {
+            Some((a, b)) => Some((a.parse().ok()?, b.parse().ok()?)),
+            None => {
+                let v: f32 = s.parse().ok()?;
+                Some((v, v))
+            }
+        }
+    };
+    for i in 0..tokens.len().saturating_sub(1) {
+        let Some(focal) = tokens[i].strip_suffix("mm").and_then(range) else { continue };
+        let Some(ap) = tokens[i + 1].strip_prefix('f').and_then(range) else { continue };
+        let rest = tokens.iter().enumerate()
+            .filter(|(j, _)| *j != i && *j != i + 1)
+            .map(|(_, t)| t.to_string())
+            .collect();
+        return Some(((focal.0, focal.1, ap.0), rest));
+    }
+    None
 }
 
 /// "E 55-210mm F4.5-6.3 OSS" and "E 55-210mm f/4.5-6.3 OSS" are the same lens.
@@ -394,7 +554,8 @@ fn bracket_values(sorted: &[f32], x: f32) -> (f32, f32, f32) {
 /// by the half diagonal (verified against liblensfun).
 pub fn apply_vignetting(img: &mut Image, m: &LensMatch) -> Value {
     let k = vignetting_at(&m.entry, m.focal, m.aperture, m.distance);
-    if !k.found {
+    let embedded = m.embedded.as_ref().filter(|e| e.has_vignetting());
+    if !k.found && embedded.is_none() {
         return json!({"applied": false, "reason": "no_vignetting_calibration"});
     }
     let before = corner_mean(img);
@@ -406,9 +567,13 @@ pub fn apply_vignetting(img: &mut Image, m: &LensMatch) -> Value {
         for x in 0..img.w {
             let dx = (x as f32 - cx) / half_diag;
             let r2 = dx * dx + dy * dy;
-            let r4 = r2 * r2;
-            let r6 = r4 * r2;
-            let c = 1.0 + k.k1 * r2 + k.k2 * r4 + k.k3 * r6;
+            let c = match embedded {
+                Some(e) => spline(&e.vign, r2.sqrt()),
+                None => {
+                    let r4 = r2 * r2;
+                    1.0 + k.k1 * r2 + k.k2 * r4 + k.k3 * r4 * r2
+                }
+            };
             let gain = if c > 1e-3 { 1.0 / c } else { 1.0 };
             let i = (y * img.w + x) * 3;
             for ch in 0..3 {
@@ -450,6 +615,9 @@ fn dist_ratio(k: &DistCoeffs, ru: f32) -> f32 {
 /// Resample for distortion and lateral CA. For every destination pixel we
 /// compute the source coordinate of each colour channel separately.
 pub fn apply_geometry(img: &Image, m: &LensMatch, distortion: bool, tca: bool) -> (Image, Value) {
+    if let Some(e) = &m.embedded {
+        return apply_embedded_geometry(img, e, distortion, tca);
+    }
     let dk = if distortion { distortion_at(&m.entry, m.focal) } else { DistCoeffs::default() };
     let tk = if tca { tca_at(&m.entry, m.focal) } else { TcaCoeffs::default() };
     if dk.model == 0 && tk.model == 0 {
@@ -461,7 +629,7 @@ pub fn apply_geometry(img: &Image, m: &LensMatch, distortion: bool, tca: bool) -
     let cy = (h as f32 - 1.0) / 2.0;
     // Geometry normalisation: half the *shorter* side (verified against liblensfun).
     let unit = (w.min(h) as f32) / 2.0;
-    let scale = autoscale(&dk, w, h, unit, cx, cy);
+    let scale = if dk.model == 0 { 1.0 } else { autoscale(&|ru| dist_ratio(&dk, ru), w, h, unit, cx, cy) };
 
     // Sampled straight from the interleaved frame, rather than from three
     // copies of it split into planes, and once per pixel rather than once per
@@ -520,12 +688,63 @@ pub fn apply_geometry(img: &Image, m: &LensMatch, distortion: bool, tca: bool) -
                  "scale": ((scale * 10000.0).round() / 10000.0)}))
 }
 
+/// Distortion and lateral CA from the camera's own tables. Radii are over the
+/// half diagonal; each output pixel samples the frame `dist(r)` times as far
+/// out, red and blue further scaled by their own tables.
+fn apply_embedded_geometry(img: &Image, e: &Embedded, distortion: bool, tca: bool) -> (Image, Value) {
+    let distortion = distortion && e.has_distortion();
+    let tca = tca && e.has_tca();
+    if !distortion && !tca {
+        return (img.clone(), json!({"applied": false, "reason": "no_geometry_calibration"}));
+    }
+    let (w, h) = (img.w, img.h);
+    let cx = (w as f32 - 1.0) / 2.0;
+    let cy = (h as f32 - 1.0) / 2.0;
+    let unit = (cx * cx + cy * cy).sqrt().max(1.0);
+    let dist = |r: f32| if distortion { spline(&e.dist, r) } else { 1.0 };
+    let scale = if distortion { autoscale(&dist, w, h, unit, cx, cy) } else { 1.0 };
+
+    let mut out = Image::new(w, h);
+    for y in 0..h {
+        let ny = (y as f32 - cy) / unit;
+        for x in 0..w {
+            let nx = (x as f32 - cx) / unit;
+            let ru = (nx * nx + ny * ny).sqrt() / scale;
+            let base = dist(ru) / scale;
+            let i = (y * w + x) * 3;
+            for c in 0..3 {
+                let chan = match (tca, c) {
+                    (true, 0) => spline(&e.ca_r, ru),
+                    (true, 2) => spline(&e.ca_b, ru),
+                    _ => 1.0,
+                };
+                let f = base * chan;
+                out.d[i + c] = bilinear(img, c, cx + nx * unit * f, cy + ny * unit * f);
+            }
+        }
+    }
+    (out, json!({"applied": true, "distortion": distortion, "tca": tca,
+                 "scale": ((scale * 10000.0).round() / 10000.0)}))
+}
+
+/// Channel `c` of `img` at a fractional position, clamped to the frame.
+fn bilinear(img: &Image, c: usize, sx: f32, sy: f32) -> f32 {
+    let (w, h) = (img.w, img.h);
+    let x = sx.clamp(0.0, w as f32 - 1.001);
+    let y = sy.clamp(0.0, h as f32 - 1.001);
+    let (x0, y0) = (x as usize, y as usize);
+    let (x1, y1) = ((x0 + 1).min(w - 1), (y0 + 1).min(h - 1));
+    let (fx, fy) = (x - x0 as f32, y - y0 as f32);
+    let p = |x: usize, y: usize| img.d[(y * w + x) * 3 + c];
+    let top = p(x0, y0) * (1.0 - fx) + p(x1, y0) * fx;
+    let bot = p(x0, y1) * (1.0 - fx) + p(x1, y1) * fx;
+    top * (1.0 - fy) + bot * fy
+}
+
 /// The smallest zoom that leaves no empty edge after correction, lensfun's
 /// `MODIFY_SCALE` with an automatic factor.  Monotone in `scale`, so bisect.
-fn autoscale(dk: &DistCoeffs, w: usize, h: usize, unit: f32, cx: f32, cy: f32) -> f32 {
-    if dk.model == 0 {
-        return 1.0;
-    }
+/// `ratio` is how far out a radius (in `unit`s) samples, relative to itself.
+fn autoscale(ratio: &dyn Fn(f32) -> f32, w: usize, h: usize, unit: f32, cx: f32, cy: f32) -> f32 {
     let mut samples = Vec::new();
     let steps = 32;
     for i in 0..=steps {
@@ -540,7 +759,7 @@ fn autoscale(dk: &DistCoeffs, w: usize, h: usize, unit: f32, cx: f32, cy: f32) -
             let nx = (x - cx) / unit;
             let ny = (y - cy) / unit;
             let ru = (nx * nx + ny * ny).sqrt() / scale;
-            let f = if ru > 1e-9 { dist_ratio(dk, ru) } else { 1.0 } / scale;
+            let f = if ru > 1e-9 { ratio(ru) } else { 1.0 } / scale;
             let sx = cx + nx * unit * f;
             let sy = cy + ny * unit * f;
             sx >= 0.0 && sx <= w as f32 - 1.0 && sy >= 0.0 && sy <= h as f32 - 1.0
@@ -607,6 +826,74 @@ mod tests {
             }
         }
         assert!(compared > 1_000, "compared only {compared}");
+    }
+
+    /// Sony bodies name a third-party lens by its focal range and aperture
+    /// alone; the one lens of the mount with those is the one meant.
+    #[test]
+    fn a_lens_named_only_by_its_specification_is_found() {
+        let whole = read("lensfun.json");
+        let m = whole.find_lens("SONY", "ILCE-5000", "E 18-50mm F2.8", 18.7, 2.8, 10.0).unwrap();
+        assert_eq!(m.entry.model, "18-50mm F2.8 DC DN | Contemporary 021");
+        assert_eq!(m.lens, "Sigma 18-50mm F2.8 DC DN | Contemporary 021");
+        // Sony's own lenses still go by name.
+        let own = whole.find_lens("SONY", "ILCE-5000", "E 55-210mm F4.5-6.3 OSS", 55.0, 4.5, 10.0).unwrap();
+        assert_eq!(own.lens, "E 55-210mm F4.5-6.3 OSS");
+        // A name with more in it than the specification is not guessed at.
+        assert!(whole.find_lens("SONY", "ILCE-5000", "E 18-50mm F2.8 XYZ", 18.7, 2.8, 10.0).is_none());
+    }
+
+    #[test]
+    fn two_lenses_with_the_same_specification_are_not_guessed_between() {
+        let lens = |model: &str| LensEntry {
+            maker: "Someone".into(), model: model.into(), mount: "Sony E".into(), crop: 1.5,
+            dist: Vec::new(), tca: Vec::new(), vign: Vec::new(),
+        };
+        let db = Database {
+            cameras: vec![CameraEntry { maker: "Sony".into(), model: "ILCE-5000".into(),
+                                        mount: "Sony E".into(), crop: 1.534 }],
+            lenses: vec![lens("30mm F1.4 DC DN"), lens("30mm F1.4 Something Else")],
+            mounts: None,
+        };
+        assert!(db.find_lens("SONY", "ILCE-5000", "E 30mm F1.4", 30.0, 1.4, 10.0).is_none());
+    }
+
+    /// The tables from a Sigma 18-50mm F2.8 at 18.7mm, as an ILCE-5000 wrote them.
+    fn sigma_tables() -> Embedded {
+        Embedded::from_sony(
+            &[11, 18, 0, -57, -137, -252, -392, -564, -751, -934, -1078, -1175, 0, 0, 0, 0, 0],
+            &[22, 1408, 1280, 1024, 1024, 896, 896, 768, 768, 640, 384, -256, -256, 0, 128, 256,
+              384, 256, 256, 384, 512, 896, 1536, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            &[11, 0, 192, 256, 384, 640, 1280, 2368, 4224, 6656, 9472, 12672, 0, 0, 0, 0, 0],
+        ).unwrap()
+    }
+
+    #[test]
+    fn the_cameras_tables_decode() {
+        let e = sigma_tables();
+        assert_eq!((e.dist.len(), e.ca_r.len(), e.ca_b.len(), e.vign.len()), (11, 11, 11, 11));
+        assert!((spline(&e.dist, 0.0) - (1.0 + 18.0 / 16384.0)).abs() < 1e-6);
+        assert!((spline(&e.dist, 1.2) - (1.0 - 1175.0 / 16384.0)).abs() < 1e-6);
+        assert!((e.ca_b[0] - (1.0 - 256.0 / 2097152.0)).abs() < 1e-7);
+        assert_eq!(e.vign[0], 1.0);
+        assert!(e.vign[10] < 0.6, "the corner is darker: {}", e.vign[10]);
+        assert!(Embedded::from_sony(&[11, 0], &[22], &[11]).is_none());
+    }
+
+    /// Barrel distortion pulls the corners in; undoing it pushes a dot near
+    /// one further out.
+    #[test]
+    fn the_cameras_tables_undo_barrel_distortion() {
+        let (w, h) = (300, 200);
+        let mut img = Image::new(w, h);
+        let at = |img: &mut Image, x: usize, y: usize| img.d[(y * w + x) * 3..][..3].fill(1.0);
+        at(&mut img, 40, 30);
+        let m = LensMatch::from_embedded(sigma_tables(), "ILCE-5000", "E 18-50mm F2.8", 1.534, 18.7, 2.8);
+        let (out, info) = apply_geometry(&img, &m, true, false);
+        assert_eq!(info["applied"], true);
+        let brightest = (0..w * h).max_by(|a, b| out.d[a * 3].total_cmp(&out.d[b * 3])).unwrap();
+        let (x, y) = (brightest % w, brightest / w);
+        assert!(x < 40 && y < 30, "the dot went to {x},{y}");
     }
 
     /// Another mount's lenses already loaded must not stand in for the

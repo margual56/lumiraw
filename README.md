@@ -26,6 +26,27 @@ cd desktop && npm ci && npx tauri build --bundles appimage   # or nsis on Window
 
 On Linux it needs WebKitGTK 4.1 and GTK 3 development packages.
 
+## Deploying
+
+The site is static, so it goes on Cloudflare Pages as it is, with no
+Functions. Connect the repository and set:
+
+- Build command: `npm run build`
+- Build output directory: `web/build`
+- Root directory: empty (the repository's root)
+- Production branch: `main`
+
+Pages picks the Node version from `.node-version`. It doesn't need Rust, as
+the wasm modules are committed. `web/static/_headers` (the CSP and caching)
+and `web/static/_redirects` end up in the build and Pages applies them; a
+site that embeds the app on another domain needs adding to `frame-ancestors`
+there. To deploy by hand instead:
+
+```
+npm run build
+npx wrangler pages deploy web/build --project-name lumiraw
+```
+
 ## Releasing
 
 Nothing to do by hand. Once CI passes on main, the Release workflow bumps the

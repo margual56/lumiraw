@@ -16,9 +16,10 @@ export default {
     // Registered by hand in the root layout, and not at all in the desktop
     // app, which has its files on disk already.
     serviceWorker: { register: false },
-    // The language picker isn't a link, so list the Spanish pages here.
+    // The language picker isn't a link, so list the Spanish pages here, and
+    // the demo, which nothing in the navigation links to.
     prerender: {
-      entries: ['*', ...PAGES.map((path) => (path === '/' ? '/es' : `/es${path}`))],
+      entries: ['*', '/demo', '/es/demo', ...PAGES.map((path) => (path === '/' ? '/es' : `/es${path}`))],
     },
   },
 };

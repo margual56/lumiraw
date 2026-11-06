@@ -699,6 +699,7 @@ mod tests {
             linear: img,
             meta: Meta { shutter_s: 0.01, iso: 100.0, aperture: 8.0, ..Default::default() },
             exif: Vec::new(),
+            saturation: Vec::new(),
         }
     }
 

@@ -88,7 +88,8 @@ impl Bracket {
         }
         let reference = &self.frames[notes.reference];
         let photo = Photo::from_merge(&format!("{} (merged)", reference.name), image,
-                                      reference.meta.clone(), reference.exif.clone(), lenses);
+                                      merge::merged_meta(&self.frames, &notes),
+                                      reference.exif.clone(), lenses);
         self.frames.clear();
         if let Some(cb) = progress.as_mut() {
             cb(1.0, "done");

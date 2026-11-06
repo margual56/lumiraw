@@ -23,6 +23,9 @@
   let auto = $state(true);
   let sound = $state(false);
   let still = $state(false);
+  let paused = $state(false);   // clicked to pause, until clicked again
+  let held = $state(false);     // pressed and held, until let go
+  let press;                    // the timer that turns a press into a hold
   let scroller;
   const sections = [];
   const videos = [];
@@ -34,7 +37,7 @@
       if (!video) return;
       // Captions while it is silent; the voice says the same with sound on.
       if (video.textTracks[0]) video.textTracks[0].mode = sound ? 'hidden' : 'showing';
-      if (i !== active || still) { video.pause(); return; }
+      if (i !== active || still || paused || held) { video.pause(); return; }
       video.muted = !sound;
       video.play().catch(() => {
         // Sound needs a click first; carry on without it.
@@ -47,6 +50,7 @@
     if (i < 0 || i === active) return;
     active = i;
     progress = 0;
+    paused = held = false;
     const video = videos[i];
     if (video) video.currentTime = 0;
     sync();
@@ -93,6 +97,34 @@
     else if (e.key === 'Home') { e.preventDefault(); go(0); }
     else if (e.key === 'End') { e.preventDefault(); go(reels.length - 1); }
     else if (e.key === 'm') toggleSound();
+  }
+
+  /** A click pauses or resumes; holding it down pauses until it is let go. */
+  function pressDown(e) {
+    if (still || e.button > 0) return;
+    clearTimeout(press);
+    press = setTimeout(() => { press = null; held = true; sync(); }, 250);
+  }
+
+  function pressUp() {
+    if (held) { held = false; sync(); return; }
+    if (!press) return;
+    clearTimeout(press);
+    press = null;
+    paused = !paused;
+    sync();
+  }
+
+  /** The press turned into a scroll, or left the video: nothing was clicked. */
+  function pressCancel() {
+    clearTimeout(press);
+    press = null;
+    if (held) { held = false; sync(); }
+  }
+
+  function resume() {
+    paused = false;
+    sync();
   }
 
   function ended(i) {
@@ -184,9 +216,17 @@
                      const v = e.currentTarget;
                      if (i === active) progress = v.duration ? v.currentTime / v.duration : 0;
                    }}
-                   onended={() => ended(i)}>
+                   onended={() => ended(i)}
+                   onpointerdown={pressDown} onpointerup={pressUp}
+                   onpointercancel={pressCancel} onpointerleave={pressCancel}
+                   oncontextmenu={(e) => { if (!still) e.preventDefault(); }}>
               <track kind="captions" srclang="en" label="English" src={media(`${reel.id}.vtt`)} default />
             </video>
+            {#if paused && i === active && !still}
+              <button type="button" class="resume" onclick={resume} aria-label={t('demo.play')}>
+                <svg aria-hidden="true" viewBox="0 0 24 24" width="40" height="40"><path fill="currentColor" d="M8 19V5l11 7-11 7Z" /></svg>
+              </button>
+            {/if}
           </figure>
         {:else}
           <div class="body">
@@ -282,8 +322,17 @@
     video {
       display: block; width: 100%; aspect-ratio: 16 / 9; max-height: calc(100dvh - 150px);
       object-fit: contain; background: #000;
+      cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
     }
+    video[controls] { cursor: auto; }
     video::cue { font-size: 1.1em; background: rgb(0 0 0 / .72); }
+  }
+  .resume {
+    position: absolute; top: calc(50% + 16px); left: 50%; translate: -50% -50%;
+    display: grid; place-items: center; width: 84px; height: 84px; padding: 0 0 0 6px;
+    border: 0; border-radius: 50%; cursor: pointer;
+    background: rgb(0 0 0 / .55); color: #fff; backdrop-filter: blur(6px);
+    &:hover { background: rgb(0 0 0 / .7); }
   }
   .chrome {
     display: flex; align-items: center; gap: 14px; height: 32px; padding: 0 12px;
@@ -350,6 +399,7 @@
     .text { margin-top: 8px; font-size: 15px; }
     .eyebrow { margin-bottom: 8px; }
     .chrome { display: none; }
+    .resume { top: 50%; width: 64px; height: 64px; }
     .rail {
       top: auto; bottom: 16px; right: 16px; left: 16px; transform: none;
       flex-direction: row; justify-content: flex-end; gap: 12px;

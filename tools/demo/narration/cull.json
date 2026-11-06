@@ -1,0 +1,9 @@
+{
+ "intro": "Back from a shoot with hundreds of frames? LumiRaw's cull page helps you find the keepers.",
+ "drop": "Drop in the whole folder. Every photo is scored, right in your browser, for how it looks and how sharp it is. It reads the preview the camera stored inside each raw file, so even a big shoot is quick.",
+ "results": "Near-identical shots, like a burst or a bracket, are grouped together, and only the best of each group is picked. Blown highlights and crushed shadows are flagged under every photo.",
+ "tune": "You decide what counts more: a sharp, clean frame, or how the picture looks. And how many to keep, as a number, or a percentage of the shoot.",
+ "pick": "Click any photo to pick it, or to leave it out. Your call always wins.",
+ "develop": "When you're happy, send the picks straight to the developer, lined up and ready to go.",
+ "outro": "LumiRaw. Raw photos, developed in your browser, at lumiraw dot app."
+}

@@ -10,13 +10,39 @@ pub struct Frame {
     pub meta: Meta,
     /// The tags this frame was shot with.
     pub exif: Vec<crate::exif::Entry>,
+    /// How near each pixel came to clipping on the sensor, in 255ths
+    /// (`Decoded::saturation`); empty when not known, and then the frame's
+    /// own values are all there is to judge by.
+    pub saturation: Vec<u8>,
 }
 
 impl Frame {
     pub fn open(name: &str, bytes: &[u8]) -> Result<Frame, decode::DecodeError> {
-        let decoded = decode::decode(bytes)?;
+        let decoded = decode::decode_with_saturation(bytes)?;
         Ok(Frame { name: name.to_string(), linear: decoded.img, meta: decoded.meta,
-                   exif: decode::collect_exif(bytes) })
+                   exif: decode::collect_exif(bytes), saturation: decoded.saturation })
+    }
+
+    /// How full the sensor was at a pixel, 0..1: its fullest channel against
+    /// that channel's ceiling. Without the sensor's word for it, the brightest
+    /// value the pixel has.
+    pub fn fullness(&self, i: usize, px: [f32; 3]) -> f32 {
+        match self.saturation.get(i) {
+            Some(v) => *v as f32 / 255.0,
+            None => px[0].max(px[1]).max(px[2]),
+        }
+    }
+
+    /// Whether this frame's values at pixel `i` are clear of the sensor's
+    /// ceiling, 0..1, per output channel.
+    fn headroom_at(&self, i: usize, px: [f32; 3]) -> [f32; 3] {
+        match self.saturation.get(i) {
+            // One channel clipped on the sensor spoils all three once the
+            // colour matrix has mixed them, and highlight reconstruction has
+            // filled it with a guess.
+            Some(v) => [headroom(*v as f32 / 255.0); 3],
+            None => [headroom(px[0]), headroom(px[1]), headroom(px[2])],
+        }
     }
 
     /// How much light this frame was given, in arbitrary but consistent units.
@@ -237,6 +263,10 @@ pub struct Notes {
     /// frame, or lost in the noise of the brightest.
     pub uncovered: f32,
     pub range_stops: f32,
+    /// How many stops below the reference frame's light the merged frame is
+    /// expressed in: it is in the darkest frame's, so a value at 1 was clipped
+    /// in every frame.
+    pub units_stops: f32,
 }
 
 // Reading the exposure off the pixels.
@@ -291,17 +321,26 @@ const CEILING: f32 = 0.97;
 /// How many stops apart two frames are according to their pixels, and how
 /// tightly the frame agrees with itself about that number.
 pub fn measured_stops(a: &Image, b: &Image) -> Option<(f32, f32)> {
+    measured_stops_clear_of(a, &[], b, &[])
+}
+
+/// `measured_stops`, leaving out what either frame's sensor clipped (see
+/// `Frame::saturation`; empty when not known).
+pub fn measured_stops_clear_of(a: &Image, a_full: &[u8], b: &Image, b_full: &[u8])
+                               -> Option<(f32, f32)> {
     let (ta, tb) = (kit::thumbnail(a, MEASURE_EDGE), kit::thumbnail(b, MEASURE_EDGE));
     if ta.w != tb.w || ta.h != tb.h {
         return None;
     }
+    let (fa, fb) = (fullest(a_full, a, &ta), fullest(b_full, b, &tb));
     let mut ratios = Vec::new();
-    for (pa, pb) in ta.px().iter().zip(tb.px()) {
+    for (i, (pa, pb)) in ta.px().iter().zip(tb.px()).enumerate() {
         let la = pa[0].max(pa[1]).max(pa[2]);
         let lb = pb[0].max(pb[1]).max(pb[2]);
+        let clear = |full: &[f32], level: f32| full.get(i).copied().unwrap_or(level) < TRUSTED_HIGH;
         // Both readings have to be off the noise floor and clear of the
         // ceiling, or the ratio measures a limit rather than the light.
-        if la > TRUSTED_LOW && la < TRUSTED_HIGH && lb > TRUSTED_LOW && lb < TRUSTED_HIGH {
+        if la > TRUSTED_LOW && clear(&fa, la) && lb > TRUSTED_LOW && clear(&fb, lb) {
             ratios.push(lb / la);
         }
     }
@@ -350,7 +389,31 @@ fn headroom(value: f32) -> f32 {
 
 /// Whether the reference frame is entitled to an opinion about this pixel.
 pub fn arbitrable(level: f32) -> bool {
-    signal(level) > 0.0 && level < TRUSTED_HIGH
+    arbitrable_at(level, level)
+}
+
+/// `arbitrable`, with how full the sensor was there (`Frame::fullness`).
+fn arbitrable_at(level: f32, fullness: f32) -> bool {
+    signal(level) > 0.0 && fullness < TRUSTED_HIGH
+}
+
+/// The fullest any sensor pixel got under each pixel of `thumb`, a smaller
+/// copy of `full_size`; empty when `saturation` is.
+fn fullest(saturation: &[u8], full_size: &Image, thumb: &Image) -> Vec<f32> {
+    if saturation.len() != full_size.w * full_size.h {
+        return Vec::new();
+    }
+    let mut out = vec![0f32; thumb.w * thumb.h];
+    for y in 0..full_size.h {
+        let ty = (y * thumb.h / full_size.h).min(thumb.h - 1);
+        for x in 0..full_size.w {
+            let tx = (x * thumb.w / full_size.w).min(thumb.w - 1);
+            let v = saturation[y * full_size.w + x] as f32 / 255.0;
+            let o = &mut out[ty * thumb.w + tx];
+            *o = o.max(v);
+        }
+    }
+    out
 }
 
 /// Merge a bracket into one scene-linear frame.
@@ -388,8 +451,10 @@ pub fn merge(frames: &[Frame], options: Options) -> Result<(Image, Notes), Strin
         if j == reference {
             continue;
         }
-        let Some((measured, spread)) = measured_stops(&frames[reference].linear,
-                                                      &frames[j].linear) else { continue };
+        let (a, b) = (&frames[reference], &frames[j]);
+        let Some((measured, spread)) = measured_stops_clear_of(&a.linear, &a.saturation,
+                                                               &b.linear, &b.saturation)
+            else { continue };
         notes.measured[j] = Some(measured);
         if overrules(notes.stops[j], measured, spread) {
             // Overruling a file's own metadata is the strongest thing this code
@@ -453,8 +518,9 @@ pub fn merge(frames: &[Frame], options: Options) -> Result<(Image, Notes), Strin
                 let level = px[0].max(px[1]).max(px[2]);
                 let here = signal(level) * snr[j];
                 if here > 0.0 {
+                    let room = frame.headroom_at(sy * w + sx, px);
                     for c in 0..3 {
-                        let trust = here * headroom(px[c]);
+                        let trust = here * room[c];
                         if trust > 0.0 {
                             weight[dst + c] += trust;
                             sum[dst + c] += px[c] * scale[j] * trust;
@@ -462,8 +528,10 @@ pub fn merge(frames: &[Frame], options: Options) -> Result<(Image, Notes), Strin
                     }
                 }
                 // Whatever happens, remember the frame that came closest to a
-                // usable reading, so no pixel is left without a value.
-                let score = -(level - 0.35).abs();
+                // usable reading, so no pixel is left without a value. Where
+                // every frame clipped, that is the one that clipped least.
+                let full = frame.fullness(sy * w + sx, px);
+                let score = -(level - 0.35).abs() - if full >= CEILING { full } else { 0.0 };
                 if score > fallback_score[y * w + x] {
                     fallback_score[y * w + x] = score;
                     for c in 0..3 {
@@ -540,7 +608,34 @@ pub fn merge(frames: &[Frame], options: Options) -> Result<(Image, Notes), Strin
             / (GHOST_LOOSE_SIGMAS - GHOST_TIGHT_SIGMAS)).clamp(0.0, 1.0);
         notes.ghosted = deghost(&mut out, frames, &scale, &notes.shifts, reference, k, sigmas);
     }
+
+    // Handed on in the darkest frame's light, so that 1 is its ceiling, as in
+    // any other frame: development reads a value at the top as clipped and
+    // exposes around it, and the highlights the darker frames held are not.
+    let darkest = scale.iter().cloned().fold(1.0f32, f32::max);
+    if darkest > 1.0 {
+        let to_darkest = 1.0 / darkest;
+        for v in out.d.iter_mut() {
+            *v *= to_darkest;
+        }
+    }
+    notes.units_stops = darkest.log2();
     Ok((out, notes))
+}
+
+/// What the merged frame is to be developed as: the reference frame's
+/// metadata, but no one frame's exposure compensation. A bracket is shot
+/// around the exposure that was wanted, so that is the middle of its
+/// compensations; the reference's alone would brighten a -2/+2 bracket by
+/// what the +2 frame was for.
+pub fn merged_meta(frames: &[Frame], notes: &Notes) -> Meta {
+    let mut meta = frames[notes.reference].meta.clone();
+    let comps: Vec<f32> = frames.iter().map(|f| f.meta.exposure_comp).collect();
+    let (lo, hi) = comps.iter().fold((f32::MAX, f32::MIN), |(l, h), c| (l.min(*c), h.max(*c)));
+    meta.exposure_comp = if comps.is_empty() { 0.0 } else { 0.5 * (lo + hi) };
+    meta.bracket_stops = notes.range_stops;
+    meta.kept_above_stops = notes.units_stops;
+    meta
 }
 
 /// Walk the pixels the reference frame is entitled to arbitrate.
@@ -556,7 +651,7 @@ fn visit(frames: &[Frame], shifts: &[(i32, i32)], reference: usize, scale: &[f32
             let px = [frames[reference].linear.d[src], frames[reference].linear.d[src + 1],
                       frames[reference].linear.d[src + 2]];
             let level = px[0].max(px[1]).max(px[2]);
-            if !arbitrable(level) {
+            if !arbitrable_at(level, frames[reference].fullness(sy * w + sx, px)) {
                 continue;
             }
             look((y * w + x) * 3, level, [px[0] * s, px[1] * s, px[2] * s]);
@@ -750,6 +845,7 @@ mod tests {
                 linear: img,
                 meta: meta(0.01 * 2f32.powf(*stops), 100.0),
                 exif: Vec::new(),
+                saturation: Vec::new(),
             });
         }
         frames
@@ -924,6 +1020,53 @@ mod tests {
         assert!(arbitrable(0.35), "a well exposed reference frame was not allowed to speak");
     }
 
+    /// Where the sensor clipped, highlight reconstruction leaves a value that
+    /// looks like any other; the sensor's own word is what tells them apart.
+    #[test]
+    fn what_the_sensor_clipped_is_not_trusted_however_it_looks() {
+        let (w, h) = (64usize, 48usize);
+        // The left half clipped on the sensor in the bright frame and was
+        // filled in at 0.5; the dark frame, two stops down, saw 0.2 there,
+        // which is 0.8 in the bright frame's light.
+        let shot = |left: f32, right: f32, full: u8, shutter: f32| {
+            let mut linear = Image::new(w, h);
+            let mut saturation = vec![0u8; w * h];
+            for y in 0..h {
+                for x in 0..w {
+                    let v = if x < w / 2 { left } else { right };
+                    linear.d[(y * w + x) * 3..][..3].fill(v);
+                    saturation[y * w + x] = if x < w / 2 { full } else { 100 };
+                }
+            }
+            Frame { name: String::new(), linear, meta: meta(shutter, 100.0), exif: Vec::new(),
+                    saturation }
+        };
+        let frames = vec![shot(0.2, 0.1, 60, 0.0025), shot(0.5, 0.4, 255, 0.01)];
+        let (merged, notes) = merge(&frames, Options { align: false, deghost: Some(0.0) }).unwrap();
+
+        // In the darkest frame's light, so the dark frame's values come back.
+        assert!((notes.units_stops - 2.0).abs() < 0.01, "{notes:?}");
+        let at = |x: usize| merged.d[(h / 2 * w + x) * 3];
+        assert!((at(8) - 0.2).abs() < 0.005, "the reconstructed guess was used: {}", at(8));
+        assert!((at(w - 8) - 0.1).abs() < 0.005, "the unclipped half went wrong: {}", at(w - 8));
+    }
+
+    /// A -2/+2 bracket was shot around the exposure wanted, not the +2 one.
+    #[test]
+    fn a_merged_frame_is_developed_as_the_bracket_meant() {
+        let mut frames = vec![shot("a", 0, 0.0025, "", 35.0), shot("b", 0, 0.01, "", 35.0),
+                              shot("c", 0, 0.04, "", 35.0)];
+        for (f, comp) in frames.iter_mut().zip([-2.0, 0.0, 2.0]) {
+            f.meta.exposure_comp = comp;
+        }
+        frames[1].meta.exposure_comp = 1.0;
+        let notes = Notes { reference: 1, range_stops: 4.0, units_stops: 2.0, ..Notes::default() };
+        let meta = merged_meta(&frames, &notes);
+        assert_eq!(meta.exposure_comp, 0.0, "the middle of the bracket");
+        assert_eq!((meta.bracket_stops, meta.kept_above_stops), (4.0, 2.0));
+        assert_eq!(meta.shutter_s, frames[1].meta.shutter_s, "otherwise the reference's");
+    }
+
     /// One frame, described the way the grouping reads it: when it was taken,
     /// how long for, and through what.
     fn shot(name: &str, captured_s: i64, shutter: f32, lens: &str, focal: f32) -> Frame {
@@ -939,6 +1082,7 @@ mod tests {
                 ..meta(shutter, 100.0)
             },
             exif: Vec::new(),
+            saturation: Vec::new(),
         }
     }
 

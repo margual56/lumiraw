@@ -167,6 +167,12 @@ pub fn tune(preset: &Preset, p: &CaptureProfile) -> Preset {
     // A high-ISO frame is usually a dark scene: pushing it to a daylight
     // midtone both lies about the light and drags up the noise floor.
     target_key *= (1.0 - 0.30 * p.noise_prior).clamp(0.6, 1.0);
+    // A dark scene is dark: a dusk or a lit room is not brought up to a sunny
+    // day's middle grey, though it is not left buried either (the rescue and
+    // the tone map see to that).
+    if let (Some(ev), false) = (p.scene_ev, p.flash) {
+        target_key *= 0.6 + 0.4 * kit::smoothstep(2.0, 10.0, ev);
+    }
     out.target_key = target_key.clamp(0.04, 0.30);
 
     // Never ask for more shadow lift than the sensor can deliver cleanly.
@@ -238,6 +244,18 @@ mod tests {
         let thirty_seconds = Meta { shutter_s: 30.0, iso: 100.0, ..Default::default() };
         let ev = derive(&thirty_seconds, 6000, 4000, Some(1.5)).scene_ev.expect("a scene EV");
         assert!(ev < 2.0, "thirty seconds at ISO 100 read as EV {ev}");
+    }
+
+    /// A dark scene is not exposed for a sunny day's middle grey.
+    #[test]
+    fn a_dark_scene_keeps_a_darker_target() {
+        let preset = Preset::default();
+        let at = |shutter_s: f32| {
+            let meta = Meta { shutter_s, iso: 100.0, aperture: 4.0, ..Default::default() };
+            tune(&preset, &derive(&meta, 6000, 4000, Some(1.5))).target_key
+        };
+        assert!(at(1.0 / 2.0) < 0.8 * at(1.0 / 1000.0), "dusk {} against day {}",
+                at(1.0 / 2.0), at(1.0 / 1000.0));
     }
 
     /// A camera that balanced the shot itself is trusted with it; a fixed

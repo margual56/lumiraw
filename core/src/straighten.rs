@@ -428,7 +428,7 @@ fn verticals(cells: &[Cell], frame: &Frame, support: f32) -> Option<(f64, f32)> 
                 .map(|(c, (x, m))| (*x, m * (1.0 - c.y as f64 / y_v)))
                 .collect()
         };
-        fit = theil_sen(&scaled, min_base)?;
+        fit = repeated_median(&scaled, min_base)?;
         if fit.1.abs() < 1e-12 {
             return None;
         }
@@ -476,22 +476,32 @@ fn verticals(cells: &[Cell], frame: &Frame, support: f32) -> Option<(f64, f32)> 
     Some((perspective, agreement))
 }
 
-/// Median of the pairwise slopes, and the intercept that goes with it.
-fn theil_sen(points: &[(f64, f64)], min_base: f64) -> Option<(f64, f64)> {
-    let mut slopes = Vec::new();
+/// Siegel's repeated median of the pairwise slopes (for each point the
+/// median of its slopes to the others, then the median of those), and the
+/// intercept that goes with it. A plain median of all the pairs gives way
+/// once about 29 % of the points are something else, a tree in front of a
+/// building for one; this holds until half are.
+fn repeated_median(points: &[(f64, f64)], min_base: f64) -> Option<(f64, f64)> {
+    let mut per_point = Vec::new();
+    let mut pairs = 0usize;
     for (i, a) in points.iter().enumerate() {
-        for b in points.iter().skip(i + 1) {
+        let mut slopes = Vec::new();
+        for (j, b) in points.iter().enumerate() {
             let dx = b.0 - a.0;
-            if dx.abs() < min_base {
+            if i == j || dx.abs() < min_base {
                 continue;
             }
             slopes.push((b.1 - a.1) / dx);
         }
+        pairs += slopes.len();
+        if !slopes.is_empty() {
+            per_point.push(median(&slopes));
+        }
     }
-    if slopes.len() < MIN_PAIRS {
+    if pairs / 2 < MIN_PAIRS || per_point.is_empty() {
         return None;
     }
-    let slope = median(&slopes);
+    let slope = median(&per_point);
     // The intercept that puts the line through the middle of the data, which
     // is the usual companion to a Theil-Sen slope.
     let residuals: Vec<f64> = points.iter().map(|(x, y)| y - slope * x).collect();
@@ -608,10 +618,8 @@ mod tests {
         );
     }
 
-    /// A quarter of the near-vertical edges pointing somewhere else entirely,
-    /// which is what a tree in front of a building amounts to. A third is past
-    /// what the detector holds out against: it passed once only because every
-    /// warp used to blur by half a pixel (see PIPELINE-AUDIT.md, S1).
+    /// A third of the near-vertical edges pointing somewhere else entirely,
+    /// which is what a tree in front of a building amounts to.
     #[test]
     fn a_converging_frame_survives_distractors() {
         let shift = 0.2f64;
@@ -620,10 +628,10 @@ mod tests {
             &Framing { perspective_v: -shift, ..Framing::default() },
             true,
         );
-        // Bars leaning the other way, over the left quarter.
+        // Bars leaning the other way, over the left third.
         let (w, h) = (img.w, img.h);
         for y in 0..h {
-            for x in 0..w / 4 {
+            for x in 0..w / 3 {
                 let skew = x as isize - (y as isize * 3) / 10;
                 if skew.rem_euclid(37) < 5 {
                     for c in 0..3 {

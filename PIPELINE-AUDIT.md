@@ -119,7 +119,7 @@ their own commits.
       corners); needs a flat field to settle. (`lensdb.rs`) *On the evenly lit
       wall (DSC05663, 16 mm f/3.5) the camera's table leaves the bottom corners
       within 0.02 EV of their edges; still worth a real flat field.*
-- [ ] **S1** Found while fixing G3: the straightening detector stops offering
+- [x] **S1** Found while fixing G3: the straightening detector stops offering
       a perspective correction once about a third of the near-vertical edges
       disagree; its test only passed that case because of G3's blur. The test
       now uses a quarter. (`straighten.rs`)

@@ -154,6 +154,15 @@ brightness is the mean lightness difference ×100.
       stops over the camera's rendering: the buried-shadow rescue lifts it.
       Rescue against a photographer's silhouette is taste, and the guard
       rails forbid crushing most of a frame; left as it is.
+- [-] **N16** On the synthetic colour chart (`tests/known.rs`) the dark end comes
+      out below the published values (black 52 → 20, neutral 3.5 85 → 56);
+      hue, chroma, neutrality and cast removal are right. A tone curve that is
+      the identity below a knee was tried: it moved the chart's darks up but
+      made real photos' shadows lighter than the camera's own JPEGs (darkest
+      percent 0.193 against the camera's 0.150) and cut contrast to 0.84, so
+      it was rejected. The published values are a linear rendering, which no
+      camera uses; for tone, the cameras' JPEGs are the reference, and against
+      them the shadows match.
 - [-] **N10** High-ISO noise is about three times the camera JPEG's at ISO
       6400. Not a bug: noise reduction runs at its automatic maximum there
       (colour 0.85, luminance 0.55, sharpening off); the camera smooths far

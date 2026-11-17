@@ -99,6 +99,11 @@ pub struct LensMatch {
     /// The camera's own corrections, when lensfun does not know the lens;
     /// `entry` is then empty.
     pub embedded: Option<Embedded>,
+    /// The camera's own vignetting table when lensfun does know the lens: the
+    /// camera measured its own lens on its own sensor, and lensfun's
+    /// calibrations can be far off (three times too strong, in stops, for the
+    /// E PZ 16-50), so it is used for vignetting before them.
+    pub camera_vignetting: Option<Embedded>,
     /// Found from a focal range and an aperture alone, so maybe the wrong lens.
     pub guessed: bool,
 }
@@ -115,6 +120,7 @@ impl LensMatch {
             distance: if distance > 0.0 { distance } else { 10.0 },
             entry: entry.clone(),
             embedded: None,
+            camera_vignetting: None,
             guessed,
         }
     }
@@ -134,6 +140,7 @@ impl LensMatch {
                 aspect: 1.5, dist: Vec::new(), tca: Vec::new(), vign: Vec::new(),
             },
             embedded: Some(embedded),
+            camera_vignetting: None,
             guessed: false,
         }
     }
@@ -644,11 +651,37 @@ fn bracket_values(sorted: &[f32], x: f32) -> (f32, f32, f32) {
 }
 
 // Applying the models
+/// The most vignetting correction may brighten any pixel, in stops: a real
+/// lens rarely loses more than two at its corners, and a calibration that
+/// asks for far more (a polynomial running toward zero past the image circle)
+/// would only blow the corners and multiply their noise.
+const MAX_VIGNETTING_EV: f32 = 2.5;
+
+/// Correction up to this many stops is applied as it is; beyond it, it is
+/// eased into `MAX_VIGNETTING_EV`.
+const VIGNETTING_KNEE_EV: f32 = 1.5;
+
+/// The gain that undoes a falloff to `c` of the light, capped smoothly.
+fn vignetting_gain(c: f32) -> f32 {
+    let ev = if c > 1e-6 { -c.log2() } else { f32::INFINITY };
+    let ev = if ev <= VIGNETTING_KNEE_EV {
+        ev
+    } else if ev.is_finite() {
+        let room = MAX_VIGNETTING_EV - VIGNETTING_KNEE_EV;
+        VIGNETTING_KNEE_EV + room * ((ev - VIGNETTING_KNEE_EV) / room).tanh()
+    } else {
+        MAX_VIGNETTING_EV
+    };
+    ev.exp2()
+}
+
 /// Undo the lens' brightness falloff. Radii are over the half diagonal of the
-/// sensor the lens was calibrated on, as liblensfun has them.
+/// sensor the lens was calibrated on, as liblensfun has them; the camera's own
+/// table, when the file has one, is preferred to lensfun's calibration.
 pub fn apply_vignetting(img: &mut Image, m: &LensMatch) -> Value {
     let k = vignetting_at(&m.entry, m.focal, m.aperture, m.distance);
-    let embedded = m.embedded.as_ref().filter(|e| e.has_vignetting());
+    let embedded = m.embedded.as_ref().or(m.camera_vignetting.as_ref())
+        .filter(|e| e.has_vignetting());
     if !k.found && embedded.is_none() {
         return json!({"applied": false, "reason": "no_vignetting_calibration"});
     }
@@ -673,7 +706,7 @@ pub fn apply_vignetting(img: &mut Image, m: &LensMatch) -> Value {
                     1.0 + k.k1 * r2 + k.k2 * r4 + k.k3 * r4 * r2
                 }
             };
-            let gain = if c > 1e-3 { 1.0 / c } else { 1.0 };
+            let gain = vignetting_gain(c);
             let i = (y * img.w + x) * 3;
             for ch in 0..3 {
                 img.d[i + ch] *= gain;
@@ -681,7 +714,8 @@ pub fn apply_vignetting(img: &mut Image, m: &LensMatch) -> Value {
         }
     }
     let gain = corner_mean(img) / before.max(1e-9);
-    json!({"applied": true, "corner_gain_ev": ((gain.max(1e-6).log2() * 1000.0).round() / 1000.0)})
+    json!({"applied": true, "source": if embedded.is_some() { "camera" } else { "lensfun" },
+           "corner_gain_ev": ((gain.max(1e-6).log2() * 1000.0).round() / 1000.0)})
 }
 
 fn corner_mean(img: &Image) -> f32 {
@@ -885,6 +919,21 @@ fn autoscale(ratio: &dyn Fn(f32) -> f32, w: usize, h: usize, unit: f32, cx: f32,
 mod tests {
     use super::*;
 
+    /// The cap eases in: small corrections are exact, a collapsing polynomial
+    /// is held at the cap rather than dropping back to no correction at all.
+    #[test]
+    fn vignetting_gain_is_capped_smoothly() {
+        assert!((vignetting_gain(0.5) - 2.0).abs() < 1e-5, "one stop is one stop");
+        let mut last = 1.0;
+        for i in 1..=400 {
+            let g = vignetting_gain(1.0 - i as f32 / 400.0);
+            assert!(g >= last, "the gain fell back at c = {}", 1.0 - i as f32 / 400.0);
+            assert!(g <= MAX_VIGNETTING_EV.exp2() + 1e-3);
+            last = g;
+        }
+        assert!((vignetting_gain(0.0) - MAX_VIGNETTING_EV.exp2()).abs() < 1e-3);
+    }
+
     fn read(path: &str) -> Database {
         let full = concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/lib/wasm/");
         Database::parse(&std::fs::read(format!("{full}{path}")).expect(path)).expect(path)
@@ -996,7 +1045,8 @@ mod tests {
         };
         let on = |crop: f32| LensMatch {
             camera: "body".into(), lens: "50mm F2".into(), crop, focal: 50.0, aperture: 2.0,
-            distance: 10.0, entry: entry.clone(), embedded: None, guessed: false,
+            distance: 10.0, entry: entry.clone(), embedded: None, camera_vignetting: None,
+            guessed: false,
         };
         // The same pixels: a full-frame picture, and its middle as APS-C has it.
         let (fw, fh, cw, ch) = (901, 601, 601, 401);

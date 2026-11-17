@@ -483,7 +483,13 @@ fn find_lens(db: Option<&Database>, meta: &Meta) -> Option<LensMatch> {
             .and_then(|(maker, lens)| db.find_identified(&meta.make, &meta.model, maker, lens, f, a, d))
             .or_else(|| db.find_lens(&meta.make, &meta.model, &meta.lens_model, f, a, d))
     });
-    found.or_else(|| camera_lens(db, meta))
+    match found {
+        Some(mut m) => {
+            m.camera_vignetting = meta.embedded_lens.clone();
+            Some(m)
+        }
+        None => camera_lens(db, meta),
+    }
 }
 
 /// The corrections the camera wrote into the file, as a lens.

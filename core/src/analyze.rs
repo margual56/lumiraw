@@ -47,61 +47,104 @@ pub fn soft_limit(x: f32, limit: f32) -> f32 {
 
 // White balance
 /// How much of the automatic white balance's green-magenta correction is
-/// kept; see `auto_white_balance`.
-pub const TINT_TRUST: f32 = 0.2;
+/// kept; see `auto_white_balance`. Green-magenta is rarely the light's own
+/// doing, but with an estimate taken from neutral surfaces it can be trusted
+/// for more than half.
+pub const TINT_TRUST: f32 = 0.6;
 
-/// Refine the camera's white balance with a shades-of-grey estimate.
+/// How far from the camera's own neutral (log2 of R/G and B/G) a pixel may
+/// sit and still be taken for a grey surface: wide on the first pass, narrow
+/// once the estimate has settled.
+const GREY_REACH: [f32; 4] = [0.5, 0.35, 0.25, 0.25];
+
+/// The share of the measured pixels that must look grey before the estimate
+/// is trusted at all, and the share at which it is trusted fully.
+const GREYS_NEEDED: (f32, f32) = (0.02, 0.15);
+
+/// Corrections up to this size (or 60 % of the limit, if less) are delivered
+/// in full; beyond it the soft limit takes over.
+const WB_KNEE_EV: f32 = 0.5;
+
+/// Refine the camera's white balance from the surfaces that look grey.
+///
+/// Only pixels near the camera's neutral take part, weighted by how near, and
+/// the estimate is refined over a few passes. A blue sky, a red rock or a
+/// field of flowers is not a grey surface under a coloured light, and letting
+/// it vote (as a shades-of-grey estimate does) tints the whole picture the
+/// opposite way. Too few greys, and the camera's balance stands.
 pub fn auto_white_balance(thumb: &Image, strength: f32, limit_ev: f32) -> ([f32; 3], Value) {
     let y = kit::luminance(thumb);
     let pct = kit::percentiles(&y.d, &[3.0, 97.0]);
-    let (lo, hi) = (pct[0], pct[1]);
-
-    let mut sums = [0f64; 3];
-    let mut count = 0usize;
-    let p = 6.0f32;
-    for (i, px) in thumb.px().iter().enumerate() {
-        let maxc = px[0].max(px[1]).max(px[2]);
-        if y.d[i] > lo.max(EPS) && y.d[i] < hi && maxc < 0.98 {
-            for c in 0..3 {
-                sums[c] += px[c].max(EPS).powf(p) as f64;
-            }
-            count += 1;
-        }
-    }
-    if count < 64 {
+    let (lo, hi) = (pct[0].max(EPS), pct[1]);
+    let candidates: Vec<usize> = (0..y.d.len())
+        .filter(|&i| {
+            let px = &thumb.px()[i];
+            y.d[i] > lo && y.d[i] < hi && px[0].max(px[1]).max(px[2]) < 0.98
+                && px.iter().all(|v| *v > EPS)
+        })
+        .collect();
+    if candidates.len() < 64 {
         return ([1.0, 1.0, 1.0], json!({"applied": false}));
     }
-    let mut est = [0f32; 3];
-    for c in 0..3 {
-        est[c] = ((sums[c] / count as f64).powf(1.0 / p as f64) as f32).max(EPS);
+
+    let mut light = [1.0f32; 3];
+    let mut greys = 0.0f32;
+    for reach in GREY_REACH {
+        let (mut sum, mut total, mut count) = ([0f64; 3], 0f64, 0usize);
+        for &i in &candidates {
+            let px = &thumb.px()[i];
+            let rg = (px[0] / light[0] / (px[1] / light[1])).log2();
+            let bg = (px[2] / light[2] / (px[1] / light[1])).log2();
+            let off = rg.hypot(bg);
+            if off >= reach {
+                continue;
+            }
+            let w = (1.0 - off / reach) as f64;
+            for c in 0..3 {
+                sum[c] += w * (px[c] / y.d[i]) as f64;
+            }
+            total += w;
+            count += 1;
+        }
+        greys = count as f32 / candidates.len() as f32;
+        if total <= 0.0 {
+            break;
+        }
+        light = sum.map(|v| (v / total) as f32);
+        let l = kit::luminance_px(&light).max(EPS);
+        light = light.map(|v| v / l);
     }
-    let mean = (est[0] + est[1] + est[2]) / 3.0;
-    let mut log_gain = [0f32; 3];
-    for c in 0..3 {
-        log_gain[c] = (mean / est[c]).log2();
+    let trust = kit::smoothstep(GREYS_NEEDED.0, GREYS_NEEDED.1, greys);
+    if trust <= 0.0 {
+        return ([1.0, 1.0, 1.0], json!({"applied": false, "greys": round_to(greys, 3)}));
     }
+
+    // Into warm-cool and green-magenta, which are not equally to be trusted
+    // and are limited together, as one correction: limited channel by channel,
+    // the unequal compression of red and blue would turn part of a warm-cool
+    // correction into green or magenta.
+    let log_gain = light.map(|v| -v.max(EPS).log2());
+    let temp = (log_gain[0] - log_gain[2]) / 2.0;                         // along (1, 0, -1)
+    let tint = (2.0 * log_gain[1] - log_gain[0] - log_gain[2]) / 3.0;     // along (-1/2, 1, -1/2)
+    let (temp, tint) = (temp * strength * trust, tint * TINT_TRUST * strength * trust);
+    let size = temp.hypot(tint);
+    let knee = WB_KNEE_EV.min(0.6 * limit_ev);
+    let limited = if size <= knee { size } else { knee + soft_limit(size - knee, limit_ev - knee) };
+    let k = if size > 0.0 { limited / size } else { 0.0 };
+    let (temp, tint) = (temp * k, tint * k);
+    let mut log_gain = [temp - 0.5 * tint, tint, -temp - 0.5 * tint];
     let lw = [0.2126f32, 0.7152, 0.0722];
     let weighted: f32 = (0..3).map(|c| log_gain[c] * lw[c]).sum::<f32>() / lw.iter().sum::<f32>();
     for g in log_gain.iter_mut() {
         *g -= weighted;
     }
-    // Warm-cool and green-magenta are not equally to be trusted.
-    let temp = (log_gain[0] - log_gain[2]) / 2.0;                           // along (1, 0, -1)
-    let tint = (2.0 * log_gain[1] - log_gain[0] - log_gain[2]) / 3.0;       // along (-1/2, 1, -1/2)
-    let tint = tint * TINT_TRUST;
-    log_gain = [temp - 0.5 * tint, tint, -temp - 0.5 * tint];
-    let weighted: f32 = (0..3).map(|c| log_gain[c] * lw[c]).sum::<f32>() / lw.iter().sum::<f32>();
-    let mut gains = [0f32; 3];
-    for c in 0..3 {
-        // Restraint belongs in the soft limit, not in a flat multiplier.
-        log_gain[c] = soft_limit((log_gain[c] - weighted) * strength, limit_ev);
-        gains[c] = log_gain[c].exp2();
-    }
+    let gains = log_gain.map(|g| g.exp2());
     (
         gains,
         json!({"applied": true,
                "gains": gains.map(|g| round_to(g, 4)),
-               "shift_ev": log_gain.map(|g| round_to(g, 3))}),
+               "shift_ev": log_gain.map(|g| round_to(g, 3)),
+               "greys": round_to(greys, 3)}),
     )
 }
 
@@ -452,7 +495,13 @@ pub fn focus_sigma(width: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    /// A frame whose bright parts lean both cool and magenta.
+    /// Temperature and tint of a set of gains, log2.
+    fn temp_tint(gains: [f32; 3]) -> (f32, f32) {
+        let log = gains.map(|g| g.log2());
+        ((log[0] - log[2]) / 2.0, (2.0 * log[1] - log[0] - log[2]) / 3.0)
+    }
+
+    /// Greys under a light that leans cool and magenta.
     #[test]
     fn automatic_balance_trusts_temperature_more_than_tint() {
         let (w, h) = (64usize, 64usize);
@@ -460,14 +509,69 @@ mod tests {
         for (i, px) in thumb.d.chunks_exact_mut(3).enumerate() {
             let v = 0.05 + 0.6 * (i % 97) as f32 / 97.0;
             // Cool (more blue than red) and magenta (less green than both).
-            px.copy_from_slice(&[v, v * 0.85, v * 1.3]);
+            px.copy_from_slice(&[v, v * 0.9, v * 1.2]);
         }
         let (gains, _) = auto_white_balance(&thumb, 1.0, 2.0);
-        let log: Vec<f32> = gains.iter().map(|g| g.log2()).collect();
-        let temp = (log[0] - log[2]) / 2.0;
-        let tint = (2.0 * log[1] - log[0] - log[2]) / 3.0;
-        assert!(temp > 0.15, "the blue was not taken out: {log:?}");
-        assert!(tint > 0.0 && tint < 0.35 * temp, "tint corrected too hard: {log:?}");
+        let (temp, tint) = temp_tint(gains);
+        // The cast is 0.13 warm-cool and 0.19 green-magenta, log2.
+        assert!((temp - 0.13).abs() < 0.02, "the blue was not taken out: {gains:?}");
+        assert!((tint - TINT_TRUST * 0.19).abs() < 0.02,
+                "tint should be corrected by {TINT_TRUST} of the cast: {gains:?}");
+    }
+
+    /// Colourful surfaces under a neutral light: the greys are already grey,
+    /// and the sky and the rock must not talk the balance into a tint.
+    #[test]
+    fn colourful_surfaces_do_not_tint_the_greys() {
+        let (w, h) = (80usize, 60usize);
+        let mut thumb = Image::new(w, h);
+        for (i, px) in thumb.d.chunks_exact_mut(3).enumerate() {
+            let v = 0.05 + 0.5 * (i % 89) as f32 / 89.0;
+            let colour: [f32; 3] = match i % 5 {
+                0 => [0.35, 0.55, 1.0],   // sky
+                1 => [1.0, 0.55, 0.3],    // warm rock
+                2 => [0.4, 0.8, 0.25],    // foliage
+                _ => [1.0, 1.0, 1.0],     // grey
+            };
+            for c in 0..3 {
+                px[c] = v * colour[c];
+            }
+        }
+        let (gains, info) = auto_white_balance(&thumb, 1.0, 0.8);
+        let (temp, tint) = temp_tint(gains);
+        assert!(temp.abs() < 0.02 && tint.abs() < 0.02,
+                "a neutral scene was pushed to {temp} / {tint}: {info}");
+    }
+
+    /// A correction purely along warm-cool stays purely along it, however
+    /// hard the limit bites.
+    #[test]
+    fn limiting_a_warm_correction_adds_no_tint() {
+        let (w, h) = (64usize, 64usize);
+        let mut thumb = Image::new(w, h);
+        for (i, px) in thumb.d.chunks_exact_mut(3).enumerate() {
+            let v = 0.05 + 0.6 * (i % 97) as f32 / 97.0;
+            // Warm: red up and blue down by the same amount, green as is.
+            px.copy_from_slice(&[v * 2f32.powf(0.3), v, v * 2f32.powf(-0.3)]);
+        }
+        // A tight limit, so that it bites.
+        let (gains, _) = auto_white_balance(&thumb, 1.0, 0.2);
+        let (temp, tint) = temp_tint(gains);
+        assert!(temp < -0.12 && temp > -0.2, "the limit did not hold the warmth: {gains:?}");
+        assert!(tint.abs() < 0.01, "a warm-cool correction came out with tint {tint}");
+    }
+
+    /// Nothing grey to go by, and the camera's balance stands.
+    #[test]
+    fn no_greys_means_no_correction() {
+        let (w, h) = (64usize, 64usize);
+        let mut thumb = Image::new(w, h);
+        for (i, px) in thumb.d.chunks_exact_mut(3).enumerate() {
+            let v = 0.05 + 0.6 * (i % 97) as f32 / 97.0;
+            px.copy_from_slice(&[v * 0.4, v * 0.9, v * 0.3]);   // a field of leaves
+        }
+        let (gains, _) = auto_white_balance(&thumb, 1.0, 0.8);
+        assert_eq!(gains, [1.0, 1.0, 1.0]);
     }
 
     use super::*;

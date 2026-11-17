@@ -850,7 +850,12 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
         for i in 0..n {
             let c = chroma.d[i];
             let hue = kit::fast_atan2(b.d[i], a.d[i]);
-            let mut weight = 1.0 - kit::smoothstep(0.10, 0.30, c);
+            // Neither what is already vivid, nor what is meant to be neutral
+            // (its colour is a white balance error), nor what is nearly white,
+            // where there is no room left in the gamut.
+            let mut weight = (1.0 - kit::smoothstep(0.10, 0.30, c))
+                * kit::smoothstep(0.5 * analyze::NEUTRAL_CHROMA, 2.0 * analyze::NEUTRAL_CHROMA, c)
+                * (1.0 - kit::smoothstep(0.85, 0.97, light_new.d[i]));
             weight *= 1.0 - s.skin_protect * s.skin.likeness(hue, c);
             let gain = 1.0 + (boost - 1.0) * weight;
             a.d[i] *= gain;

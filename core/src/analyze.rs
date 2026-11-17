@@ -229,12 +229,18 @@ pub fn auto_contrast(lightness: &Plane, target_spread: f32, max_amount: f32)
 }
 
 // Colour
+/// Chroma below which a pixel is taken as neutral: what is left there is a
+/// white balance error or noise, and neither should be boosted.
+pub const NEUTRAL_CHROMA: f32 = 0.02;
+
 /// Saturation boost from how colourful the frame already is, measured on the
-/// 80th percentile of chroma over well-lit pixels.
+/// 80th percentile of chroma over well-lit coloured pixels. A frame of mostly
+/// greys is not asking for colour; counting them would make it ask hardest.
 pub fn auto_vibrance(chroma: &Plane, lightness: &Plane, target_chroma: f32, max_boost: f32)
     -> (f32, Value) {
     let sel: Vec<f32> = (0..chroma.d.len())
-        .filter(|i| lightness.d[*i] > 0.15 && lightness.d[*i] < 0.95)
+        .filter(|i| lightness.d[*i] > 0.15 && lightness.d[*i] < 0.95
+                    && chroma.d[*i] > NEUTRAL_CHROMA)
         .map(|i| chroma.d[i])
         .collect();
     if sel.len() < 64 {
@@ -625,6 +631,21 @@ mod tests {
         }
         let (_, white, _) = auto_levels(&dim, &dim, 0.6, 0.15);
         assert!(white >= LOWEST_WHITE, "white point pulled to {white}");
+    }
+
+    /// Greys are not a reason to add colour.
+    #[test]
+    fn a_grey_frame_is_not_asked_to_be_colourful() {
+        let (w, h) = (64, 64);
+        let mut chroma = Plane::new(w, h);
+        let mut light = Plane::new(w, h);
+        for i in 0..w * h {
+            light.d[i] = 0.5;
+            // Mostly a faint white balance error, a little real colour.
+            chroma.d[i] = if i % 10 == 0 { 0.09 } else { 0.012 };
+        }
+        let (boost, info) = auto_vibrance(&chroma, &light, 0.078, 1.55);
+        assert!(boost < 1.05, "the greys asked for {boost}: {info}");
     }
 
     /// The floor is a property of the capture, so the same floor has to give

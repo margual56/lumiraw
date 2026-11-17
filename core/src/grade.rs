@@ -698,8 +698,13 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     let levels = if frozen {
         d.levels
     } else {
+        let mut peak = Plane::new(img.w, img.h);
+        for (v, px) in peak.d.iter_mut().zip(img.px()) {
+            *v = px[0].max(px[1]).max(px[2]).max(0.0).cbrt();
+        }
         let (black, white, info) =
-            analyze::auto_levels(&measured(&lightness, stats_rect), p.levels_strength, 0.15);
+            analyze::auto_levels(&measured(&lightness, stats_rect),
+                                 &measured(&peak, stats_rect), p.levels_strength, 0.15);
         let levels_applied = info.get("applied").and_then(|v| v.as_bool()).unwrap_or(false);
         if s.on("levels") && levels_applied {
             report.add("levels", info);
@@ -713,9 +718,8 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     d.levels = levels;
     let mut light_new = Plane::new(img.w, img.h);
     if let Some((black, white)) = levels {
-        let span = (white - black).max(1e-6);
         for i in 0..n {
-            light_new.d[i] = ((lightness.d[i] - black) / span).clamp(0.0, 1.0);
+            light_new.d[i] = analyze::levels(lightness.d[i], black, white);
         }
     } else {
         light_new.d.copy_from_slice(&lightness.d);

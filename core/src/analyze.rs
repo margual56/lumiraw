@@ -20,6 +20,23 @@ pub const MAX_RESCUE_EV: f32 = 3.5;
 /// Below this a pixel is black however much detail it holds.
 pub const BLACK_LIGHTNESS: f32 = 0.0534;
 
+/// The darkest a frame without a true white may have its white point put: a
+/// white point is a stretch of the whole picture, and a dim scene is allowed
+/// to stay dim. About a quarter of a stop.
+const LOWEST_WHITE: f32 = 0.95;
+
+/// Map an Oklab lightness through a black and white point, in linear light.
+///
+/// Lightness is close to the cube root of luminance, so the same offset taken
+/// off L is several stops in the shadows; taken off luminance it removes a
+/// pedestal and leaves the shadows' gradation alone.
+#[inline]
+pub fn levels(l: f32, black: f32, white: f32) -> f32 {
+    let (yb, yw) = (black.powi(3), white.powi(3));
+    let y = l.max(0.0).powi(3);
+    ((y - yb) / (yw - yb).max(1e-6)).clamp(0.0, 1.0).cbrt()
+}
+
 const THIRD_STOP: f32 = 1.259_921_f32;
 
 /// Smoothly saturate at ±limit instead of clipping hard.
@@ -160,27 +177,28 @@ pub fn auto_tone_compression(thumb: &Image, comfortable_stops: f32, floor: f32) 
 }
 
 // Display-referred tone
-/// Robust black/white point from percentiles, moved only part of the way.
-pub fn auto_levels(lightness: &Plane, strength: f32, clip_pct: f64) -> (f32, f32, Value) {
-    let p = kit::percentiles(&lightness.d,
-                             &[clip_pct, 100.0 - clip_pct, (CRUSH_BUDGET * 100.0) as f64]);
-    let wanted = p[0] * strength;
-    let white = p[1] + (1.0 - p[1]) * strength;
-
-    // A black point read off a percentile assumes the shadows are spread out.
-    let budget_level = p[2];
-    let ceiling = (budget_level - BLACK_LIGHTNESS * white) / (1.0 - BLACK_LIGHTNESS);
-    let black = wanted.min(ceiling).max(0.0);
+/// Robust black/white point from percentiles, each moved the same fraction of
+/// the way, for `levels` to apply in linear light. A raw has had its black
+/// level taken off already, so the black point only ever removes a pedestal.
+///
+/// The white point is read from `peak`, the lightness of each pixel's
+/// brightest channel: a saturated sky can sit well below white in lightness
+/// with its blue already at the top, and stretching it would clip the blue.
+pub fn auto_levels(lightness: &Plane, peak: &Plane, strength: f32, clip_pct: f64)
+    -> (f32, f32, Value) {
+    let black = (kit::percentile(&lightness.d, clip_pct) * strength).max(0.0);
+    let top = kit::percentile(&peak.d, 100.0 - clip_pct);
+    let white = (1.0 - (1.0 - top) * strength).max(LOWEST_WHITE);
 
     if white - black < 0.25 {
         return (0.0, 1.0, json!({"applied": false}));
     }
+    let stretch = 1.0 / (white.powi(3) - black.powi(3));
     (
         black,
         white,
         json!({"applied": true, "black": round_to(black, 4), "white": round_to(white, 4),
-               "wanted_black": round_to(wanted, 4),
-               "stretch": round_to(1.0 / (white - black), 3)}),
+               "stretch": round_to(stretch, 3)}),
     )
 }
 
@@ -568,11 +586,35 @@ mod tests {
             *v = if i % 3 == 0 { 0.55 + (i % 7) as f32 * 0.01 }
                  else { 0.11 + (i % 5) as f32 * 0.002 };
         }
-        let (black, white, info) = auto_levels(&dark, 0.6, 0.15);
-        let survives = |l: f32| (l - black) / (white - black) > BLACK_LIGHTNESS;
+        let (black, white, info) = auto_levels(&dark, &dark, 0.6, 0.15);
+        let survives = |l: f32| levels(l, black, white) > BLACK_LIGHTNESS;
         let lost = dark.d.iter().filter(|l| !survives(**l)).count() as f32 / dark.d.len() as f32;
         assert!(lost <= CRUSH_BUDGET + 0.02,
                 "the black point pinned {:.1}% of the frame: {info}", lost * 100.0);
+    }
+
+    /// A black point removes a pedestal: a shadow a little above it keeps most
+    /// of its light, and the midtones barely move.
+    #[test]
+    fn the_black_point_is_taken_off_light_not_lightness() {
+        let (black, white) = (0.11, 0.99);
+        let ev = |l: f32| (levels(l, black, white) / l).powi(3).log2();
+        assert!(ev(0.2) > -0.3, "a shadow at L 0.2 lost {} EV", ev(0.2));
+        assert!(ev(0.5).abs() < 0.05, "the midtones moved {} EV", ev(0.5));
+        assert_eq!(levels(0.0, black, white), 0.0);
+        assert!((levels(white, black, white) - 1.0).abs() < 1e-5);
+    }
+
+    /// A dim frame with no true white keeps its highlights where they were,
+    /// near enough.
+    #[test]
+    fn a_frame_without_white_is_not_stretched_to_one() {
+        let mut dim = Plane::new(100, 100);
+        for (i, v) in dim.d.iter_mut().enumerate() {
+            *v = 0.2 + 0.6 * (i % 100) as f32 / 100.0;
+        }
+        let (_, white, _) = auto_levels(&dim, &dim, 0.6, 0.15);
+        assert!(white >= LOWEST_WHITE, "white point pulled to {white}");
     }
 
     /// The floor is a property of the capture, so the same floor has to give

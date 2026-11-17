@@ -876,7 +876,15 @@ mod tests {
     /// wheels pointing the way of that tint.
     #[test]
     fn matching_a_tinted_copy_finds_the_tint() {
-        let mut dev = development();
+        // A frame with real shadows and highlights in it: wheels are fitted
+        // zone by zone, and a zone with nothing in it has nothing to say.
+        let mut img = Image::new(96, 64);
+        for (i, px) in img.px_mut().iter_mut().enumerate() {
+            let (x, y) = ((i % 96) as f32 / 96.0, (i / 96) as f32 / 64.0);
+            let level = 0.002 * 400f32.powf(x);
+            *px = [level * (0.9 + 0.2 * y), level, level * (1.1 - 0.2 * y)];
+        }
+        let mut dev = Development::from_frame("test", img, Meta::default(), Vec::new(), None);
         let plain = Settings::default();
         let mut tinted = plain.clone();
         tinted.wheels.shadows = crate::wheels::Wheel { hue: 220.0, amount: 0.7, lum: 0.0 };

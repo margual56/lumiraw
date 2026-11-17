@@ -30,6 +30,10 @@ pub struct Preset {
     pub max_boost: f32,
     pub sharpen: f32,
     pub denoise: bool,
+    /// How much of what the highlight guard held back the tone map gives back
+    /// to the rest of the frame: all of it by day, none of it by night, when
+    /// dark is what the picture is (see `profile::tune`).
+    pub give_back: f32,
 }
 
 impl Default for Preset {
@@ -47,6 +51,7 @@ impl Default for Preset {
             max_boost: 1.55,
             sharpen: 0.55,
             denoise: true,
+            give_back: 1.0,
         }
     }
 }
@@ -118,12 +123,15 @@ pub struct Decisions {
     pub vibrance: f32,
     /// The colour of the air dehazing measured, when it ran.
     pub air: Option<[f32; 3]>,
+    /// How many stops the highlight guard held the exposure back: the tone map
+    /// gives them back to everything below the highlights.
+    pub held_back: f32,
 }
 
 impl Default for Decisions {
     fn default() -> Self {
         Decisions { wb: None, exposure: 1.0, tone: (1.0, 0.0), levels: None,
-                    contrast: (0.0, 0.5), vibrance: 1.0, air: None }
+                    contrast: (0.0, 0.5), vibrance: 1.0, air: None, held_back: 0.0 }
     }
 }
 
@@ -491,17 +499,24 @@ pub fn adapt(img: &mut Image, gains: [f32; 3]) {
 pub fn apply_exposure(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
                       frame: Option<Rect>, d: &mut Decisions, frozen: bool,
                       report: &mut Report) -> f32 {
-    let gain = if frozen { d.exposure } else { decide_exposure(img, thumb, s, p, frame, report) };
+    let gain = if frozen {
+        d.exposure
+    } else {
+        let (gain, held) = decide_exposure(img, thumb, s, p, frame, report);
+        d.held_back = held;
+        gain
+    };
     d.exposure = gain;
     img.scale(gain);
     gain
 }
 
+/// The exposure gain, and how many stops the highlight guard held it back.
 fn decide_exposure(img: &Image, thumb: &Image, s: &Settings, p: &Preset, frame: Option<Rect>,
-                   report: &mut Report) -> f32 {
+                   report: &mut Report) -> (f32, f32) {
     if !s.on("exposure") {
         report.skipped("exposure", "switched_off", json!({}));
-        return s.exposure_bias.exp2();
+        return (s.exposure_bias.exp2(), 0.0);
     }
     if let Some(patch) = s.exposure_rect.and_then(|r| sample_rect(img, r, frame)) {
         // Geometric mean: a few bright specks in the selection should not
@@ -517,14 +532,15 @@ fn decide_exposure(img: &Image, thumb: &Image, s: &Settings, p: &Preset, frame: 
         report.add("exposure", json!({"applied": true, "source": "selection",
             "patch_level": round_to(level, 5), "gain_ev": round_to(gain.log2(), 3),
             "bias_ev": round_to(s.exposure_bias, 2)}));
-        return gain * s.exposure_bias.exp2();
+        return (gain * s.exposure_bias.exp2(), 0.0);
     }
     let (mut gain, info) =
         analyze::auto_exposure(thumb, p.target_key, p.exposure_strength, 3.2);
     gain *= s.exposure_bias.exp2();
+    let held = info.get("highlight_guard_ev").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
     report.add("exposure", with(info, json!({"source": "automatic",
                                               "bias_ev": round_to(s.exposure_bias, 2)})));
-    gain
+    (gain, held)
 }
 
 /// Haze out or in, on the frame and on the thumbnail the tone map measures.
@@ -588,11 +604,23 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
             }
         }
         let q = kit::percentiles(&sample, &[(analyze::CRUSH_BUDGET * 100.0) as f64, 55.0, 99.5]);
-        let (low, mut anchor, high) = (q[0], q[1], q[2]);
-        // Shadows the exposure could not lift without blowing the highlights
-        // are lifted here instead: the pivot moves up toward the highlights,
-        // so everything below it rises and the highlights stay put; then, if
-        // that is not enough, the compression deepens.
+        let (low, middle, high) = (q[0], q[1], q[2]);
+        let mut anchor = middle;
+        // The stops the highlight guard held the exposure back are given back
+        // to the middle of the frame here: pivoting on the highlights, so they
+        // stay where the guard put them, and compressing just enough to lift
+        // the middle by as much, so a room is not left dark for its window;
+        // but taking no more than a third of the contrast for it, or a scene
+        // whose highlights sit close above its middle is flattened, and a
+        // night is turned into dusk.
+        let held = (d.held_back * p.give_back).clamp(0.0, analyze::MAX_RESCUE_EV);
+        if held > 0.0 && high > middle {
+            anchor = high;
+            factor = factor.min((1.0 - held / (high - middle)).max(HELD_FLOOR));
+        }
+        // Shadows still below the display's floor are lifted the same way:
+        // the pivot moves up toward the highlights, so everything below it
+        // rises; then, if that is not enough, the compression deepens.
         let need = (analyze::DISPLAY_FLOOR.log2() - low).clamp(0.0, analyze::MAX_RESCUE_EV);
         if need > 0.0 && high > low {
             if factor < 0.999 {
@@ -609,7 +637,8 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
     };
     d.tone = (factor, anchor);
     let info = with(info, json!({"compression": round_to(factor, 3),
-                                 "shadow_lift_ev": round_to(lift, 2)}));
+                                 "shadow_lift_ev": round_to(lift, 2),
+                                 "held_back_ev": round_to(d.held_back, 2)}));
     report.add("tone mapping", info);
     if factor >= 0.995 && (detail_boost - 1.0).abs() < 1e-3 {
         return factor;
@@ -628,6 +657,9 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
 
 /// The most the tone map compresses a scene's range.
 const TONE_FLOOR: f32 = 0.45;
+
+/// The most it compresses to give back what the highlight guard held back.
+const HELD_FLOOR: f32 = 0.65;
 
 /// Scene-linear -> display-linear with a filmic shoulder.
 pub fn filmic(img: &mut Image) {

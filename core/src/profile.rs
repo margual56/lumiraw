@@ -181,6 +181,9 @@ pub fn tune(preset: &Preset, p: &CaptureProfile) -> Preset {
     // daylight mostly does and a city at night does not.
     if let (Some(ev), false) = (p.scene_ev, p.flash) {
         out.wb_strength = preset.wb_strength * (0.3 + 0.7 * kit::smoothstep(2.0, 7.0, ev));
+        // A night is dark on purpose: what the highlight guard held back for
+        // the street lights stays held back, and the night stays a night.
+        out.give_back = preset.give_back * kit::smoothstep(2.0, 7.0, ev);
     }
     out
 }

@@ -45,7 +45,7 @@ impl Default for Preset {
         Preset {
             name: "natural".into(),
             wb_strength: 1.0,
-            exposure_strength: 1.0,
+            exposure_strength: 0.5,
             target_key: 0.10,
             comfortable_stops: 6.5,
             detail_boost: 1.15,
@@ -80,7 +80,7 @@ pub fn preset_by_name(name: &str) -> Preset {
         "flat" => Preset {
             name: "flat".into(),
             wb_strength: 0.8,
-            exposure_strength: 0.85,
+            exposure_strength: 0.425,
             comfortable_stops: 8.0,
             detail_boost: 1.0,
             levels_strength: 0.35,

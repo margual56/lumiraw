@@ -150,11 +150,11 @@ pub fn auto_white_balance(thumb: &Image, strength: f32, limit_ev: f32) -> ([f32;
 
 // Exposure
 /// Where a normally metered raw lands against the target key: the file is
-/// scaled to the sensor's white level, which sits two and a half stops or so
-/// above what the camera metered for, to keep highlight headroom. The soft
-/// limit restrains departures from this, not from zero, or every ordinary
-/// frame is held a fraction of a stop dark.
-pub const METERED_EV: f32 = 2.5;
+/// scaled to the sensor's white level, which sits about two stops above what
+/// the camera metered for, to keep highlight headroom (measured against the
+/// cameras' own JPEGs of the same frames). Departures are counted, and
+/// restrained, from this, not from zero.
+pub const METERED_EV: f32 = 2.0;
 
 /// How far past white the highlight guard lets the brightest highlights go
 /// (the 99.5th percentile of what it measures): the filmic shoulder rolls the
@@ -204,8 +204,13 @@ pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f3
     // three agree.
     let key = (sample.iter().map(|v| (*v as f64).cbrt()).sum::<f64>() / sample.len() as f64)
         .powi(3) as f32;
-    let wanted = (target_key / key.max(EPS)).log2() * strength;
-    let delta = METERED_EV + soft_limit(wanted - METERED_EV, limit_ev);
+    // The camera's own metering is where a raw lands; only part of a frame's
+    // departure from it (`strength`) is corrected. A camera keeps a dark stone
+    // wall dark and a white one bright, and correcting all of the difference
+    // pulled every frame to the same middle, further from the camera's
+    // rendering than its metering already was.
+    let departure = (target_key / key.max(EPS)).log2() - METERED_EV;
+    let delta = METERED_EV + soft_limit(departure * strength, limit_ev);
     let key_gain = delta.exp2();
 
     // The highlight guard, on what the shoulder has to hold. Pixels the raw
@@ -829,6 +834,16 @@ mod tests {
         let (plain, windowed) = (room(false), room(true));
         assert!((windowed / plain).log2().abs() < 0.03,
                 "a 5 % window moved the key by {} EV", (windowed / plain).log2());
+    }
+
+    /// A dark-toned subject, metered normally, keeps part of its tone: half of
+    /// its departure from the camera's metering is corrected, not all of it.
+    #[test]
+    fn a_dark_subject_keeps_part_of_its_tone() {
+        let dark = frame(0.13 / 2f32.powf(METERED_EV + 2.0), 0.3, 120, 90);
+        let (gain, info) = auto_exposure(&dark, 0.13, 0.5, 3.2);
+        let lifted = gain.log2() - METERED_EV;
+        assert!((lifted - 1.0).abs() < 0.2, "two stops dark was lifted {lifted}: {info}");
     }
 
     /// A properly exposed frame must come out exactly as it did before the

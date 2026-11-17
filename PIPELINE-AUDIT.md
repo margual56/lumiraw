@@ -20,6 +20,7 @@ left on what the camera's own balance made neutral):
 | + decode (D1, D3)          | 0.82  | 0.00    | 0.08                  | 95     | 5.2  |
 | + geometry, lens, dehaze   | 0.82  | 0.00    | 0.08                  | 95     | 5.2  |
 | + key, blown white (E7, D4)| 0.79  | 0.01    | 0.08                  | 97     | 5.3  |
+| + N1, N2                   | 0.23  | 0.01    | 0.05                  | 114    | 5.3  |
 
 The last row is unchanged because the bench renders without the lens database
 and at default settings (no rotation, no dehaze); those fixes are measured in
@@ -90,6 +91,15 @@ their own commits.
       (`develop.rs`, `grade.rs`)
 - [x] **D4** Blown highlights neutralised for the camera's WB, then tinted by
       auto WB. (`decode.rs`, `grade.rs`)
+
+## Found by the end-to-end tests
+
+- [x] **N1** With the highlight guard always on, a room with a window five
+      stops brighter was left two stops dark: the tone map only lifted shadows
+      actually buried. The held-back stops are now given back below the
+      highlights, by day; a night stays a night. (`grade.rs`, `profile.rs`)
+- [x] **N2** The filmic curve's hue restoration could turn a bright saturated
+      colour out of the gamut (an orange to 1.29 in red). (`grade.rs`)
 
 ## Other
 

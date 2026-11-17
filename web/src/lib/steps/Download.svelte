@@ -4,10 +4,12 @@
   import Slider from '$lib/components/Slider.svelte';
   import { app } from '$lib/state.svelte.js';
   import { NAME } from '$lib/brand.js';
-  import { t, n } from '$lib/i18n.svelte.js';
+  import { t, n, localized } from '$lib/i18n.svelte.js';
   import { lookLabel, formatLabel, stageText, errorText, saveFile } from '$lib/format.js';
+  import { goto } from '$app/navigation';
   import { exportOnce } from '$lib/api.js';
   import { exportRoll } from '$lib/roll.svelte.js';
+  import { handOff } from '$lib/slice.js';
 
   let format = $state('jpeg');
   let quality = $state(92);
@@ -56,6 +58,36 @@
       working = false;
       app.busy = false;
       batch = null;
+    }
+  }
+
+  /** Develop the photograph as set here and take it to the slicing page. In
+   *  the format chosen when the browser can read it back, losslessly when
+   *  not (16-bit PNG and TIFF are not pictures a canvas can open). */
+  async function slice() {
+    working = true;
+    app.exportState = '';
+    app.job = { progress: 0, stage: 'starting', stage_params: {}, elapsed: 0 };
+    const started = performance.now();
+    try {
+      const readable = ['jpeg', 'png8', 'webp'].includes(format);
+      const { blob, filename, captured } = await exportOnce({
+        settings: app.settings,
+        format: readable ? format : 'png8',
+        quality,
+        max_size: maxSize || null,
+        original_name: app.info.original_name,
+      }, (progress, stage) => {
+        app.job = { progress, stage, stage_params: {},
+                    elapsed: (performance.now() - started) / 1000 };
+      });
+      handOff({ blob, name: filename || app.info.original_name, captured });
+      await goto(localized('/slice'));
+    } catch (err) {
+      app.exportState = errorText(err);
+    } finally {
+      working = false;
+      app.job = null;
     }
   }
 
@@ -123,6 +155,9 @@
     <button class="go" onclick={download} disabled={working}>
       {working ? t('download.working') : t('download.button')}
     </button>
+
+    <button class="ghost roll" onclick={slice} disabled={working}>{t('slice.fromDevelop')}</button>
+    <p class="hint small">{t('slice.fromDevelopHint')}</p>
 
     {#if app.roll.length > 1}
       <button class="ghost roll" onclick={downloadRoll} disabled={working || !kept}>

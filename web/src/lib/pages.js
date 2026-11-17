@@ -6,6 +6,7 @@ export const TOOLS = [
   { path: '/', key: 'site.develop' },
   { path: '/merge', key: 'site.merge' },
   { path: '/cull', key: 'site.cull' },
+  { path: '/slice', key: 'site.slice' },
   { path: '/sky', key: 'site.sky' },
   { path: '/calculators', key: 'site.calc' },
 ];

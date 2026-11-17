@@ -101,26 +101,50 @@ their own commits.
 - [x] **N2** The filmic curve's hue restoration could turn a bright saturated
       colour out of the gamut (an orange to 1.29 in red). (`grade.rs`)
 
-## Found by comparing with the camera's own JPEG
+## Found by comparing with the camera's own JPEG, and with darktable
 
 Each raw carries the JPEG the camera made of it. Against that, over the 20
-demo raws (b and a are Oklab ×1000 on what the camera rendered neutral;
-colour and contrast are relative to the camera's, 1 being the same):
+demo raws, with each render cropped to the JPEG's frame (the ILCE-5000's is a
+16:9 centre crop; an earlier comparison that did not crop misaligned them and
+overstated the tint): Δab is the Oklab error ×1000 on what the camera
+rendered neutral; colour and contrast are medians relative to the camera's;
+brightness is the mean lightness difference ×100.
 
-|                         | blue-yellow error | green-magenta | colour (median) | contrast |
-|-------------------------|-------------------|---------------|-----------------|----------|
-| `main`                  | 12.6              | −3.2          | 0.80            | 1.14     |
-| before N3–N5            | 8.1               | −6.3          | 0.92            | 0.92     |
-| after N3–N5             | 5.8               | −3.6          | 0.97            | 0.96     |
+|                    | Δab  | colour | contrast | brightness | darkest 1 % / median L |
+|--------------------|------|--------|----------|------------|------------------------|
+| camera JPEG        | 0    | 1.00   | 1.00     | 0          | 0.150 / 0.419          |
+| `main`             | 14.0 | 0.78   | 1.12     | −0.8       | 0.094 / 0.442          |
+| before N6–N9       | 4.6  | 0.96   | 0.90     | +9.2       | 0.208 / 0.595          |
+| after N6–N9        | 5.3  | 0.87   | 0.98     | +4.1       | 0.163 / 0.529          |
+| darktable defaults | 5.5  | 0.75   | 0.85     | −4.8       | 0.132 / 0.376          |
 
 - [x] **N3** The automatic white balance refined a camera's own auto
-      balance and made it worse (the cat pushed blue by eleven). When the
-      camera chose the balance (EXIF auto), it is kept. (`profile.rs`)
-- [x] **N4** Contrast had dropped below the camera's (0.92): the curve's floor
-      and amount come back up, now that the curve only adds midtone contrast.
+      balance and made it worse (the cat pushed blue). When the camera chose
+      the balance (EXIF auto), it is kept. (`profile.rs`)
+- [x] **N4** Contrast had dropped below the camera's: the curve's floor and
+      amount come back up, now that the curve only adds midtone contrast.
       (`analyze.rs`, `grade.rs`)
 - [x] **N5** Vibrance gave colourful frames nothing; the look now has its own
       saturation, kept short of the gamut's edge. (`grade.rs`)
+- [x] **N6** A frame came out a stop brighter than the camera's, with no true
+      blacks: the tone map handed back all the guard held, compressing around
+      the highlights and lifting the deepest shadows furthest. It now gives
+      back half, as a lift that fades out toward the highlights. (`grade.rs`)
+- [x] **N7** The exposure's target was twice the camera's key: 0.13 to 0.10.
+      (`grade.rs`)
+- [x] **N8** A lens with no f-number left the scene's brightness unknown, so
+      night fades never applied; dark scenes were exposed for daylight.
+      (`profile.rs`)
+- [x] **N9** Automatic contrast gets a constant boost; the curve no longer
+      brightens a colour already near the gamut's top. (`analyze.rs`,
+      `grade.rs`)
+- [-] **N10** High-ISO noise is about three times the camera JPEG's at ISO
+      6400. Not a bug: noise reduction runs at its automatic maximum there
+      (colour 0.85, luminance 0.55, sharpening off); the camera smooths far
+      harder at the cost of texture. How much is taste.
+- [-] **N11** Colourful pixels are 6–19 % less saturated than Sony's look, and
+      blues lean toward purple as in every matrix decoder. A look choice, and
+      a hue-twist table for the blues; not done.
 
 ## Other
 

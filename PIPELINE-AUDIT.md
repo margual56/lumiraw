@@ -59,8 +59,11 @@ their own commits.
 - [x] **L1** lensfun vignetting for the E PZ 16-50 over-corrects corners by
       ~1.5 EV (×32 at the extreme corner). Cross-check with the camera's own
       table, cap the gain, smooth the clamp. (`lensdb.rs`, `develop.rs`)
-- [ ] **T3** ACES toe already carries a contrast look; stacked with T1/T2.
+- [-] **T3** ACES toe already carries a contrast look; stacked with T1/T2.
       Revisit once T1/T2 are fixed. (`grade.rs::filmic`)
+      *Left as the look: it only crushed when stacked on the old black point
+      and S-curve; with T1 and T2 fixed, under 1 % of pixels fall below code 8
+      across the demo raws.*
 
 ## Tint
 
@@ -107,10 +110,11 @@ their own commits.
       0.09 EV, which the automatic exposure renormalises; it only shows with
       automatic exposure off. A real fix needs per-model white levels, which
       the files do not give and which would have to be measured per body.*
-- [~] **E6** Clipped fraction measured on a thumbnail averages away small lamps;
-      guard switches on/off at a hard 0.5 %. (`analyze.rs`) *Hard switch gone
-      (the guard measures unclipped pixels instead); still measured on the
-      thumbnail.*
+- [x] **E6** Clipped fraction measured on a thumbnail averages away small lamps;
+      guard switches on/off at a hard 0.5 %. (`analyze.rs`)
+      *The guard measures over unclipped pixels and ignores small sources,
+      so a thumbnail averaging tiny lamps away loses nothing it would use;
+      only the reported clipped fraction is still a thumbnail's.*
 - [x] **E7** Key log-mean includes highlights (−0.15 EV on a correct scene).
       (`analyze.rs`)
 - [x] **E8** UI's "applied EV" includes the user's bias on one path and not the
@@ -121,7 +125,11 @@ their own commits.
       within 0.02 EV of their edges; still worth a real flat field.*
 - [x] **S1** Found while fixing G3: the straightening detector stops offering
       a perspective correction once about a third of the near-vertical edges
-      disagree; its test only passed that case because of G3's blur. The test
-      now uses a quarter. (`straighten.rs`)
-- [ ] **D6** WB adaptation in camera space rather than XYZ (saturated colours
+      disagree; its test only passed that case because of G3's blur.
+      (`straighten.rs`) *The fit is a repeated median now, which holds until
+      half the edges disagree; the test is back to a third.*
+- [-] **D6** WB adaptation in camera space rather than XYZ (saturated colours
       under tungsten). Accuracy improvement, not a tint. (`decode.rs`)
+      *Left for now: it changes saturated colours under tungsten, not
+      neutrals, and judging it needs a colour reference (a chart shot);
+      LibRaw uses the same method, so it is no reference.*

@@ -14,6 +14,7 @@ const session = {
   stacked: null,   // { mode, align, files } when the photograph is a finished stack
   gathering: null, // the same, for a stack still being gathered
   lut: null,       // the loaded .cube's bytes
+  profile: null,   // the loaded ICC profile's bytes (the printer's)
   models: {},      // network name -> its bytes, as each was first needed
 };
 
@@ -263,6 +264,9 @@ async function recover() {
   await ready;
   try {
     if (saved.lut) withBytes(new Uint8Array(saved.lut), (p, n) => wasm.ar_lut_load(p, n));
+    if (saved.profile) {
+      withBytes(new Uint8Array(saved.profile), (p, n) => wasm.ar_profile_load(p, n));
+    }
     for (const [name, bytes] of Object.entries(saved.models)) loadModel(name, bytes);
     if (saved.frames.length || saved.merged) await replayMerge();
     if (!saved.merged) await restorePhoto();
@@ -272,7 +276,8 @@ async function recover() {
     ready = init();
     await ready;
     Object.assign(session, { photo: null, frames: [], merged: null, stacked: null,
-                             gathering: null, lut: null, models: {} });
+                             gathering: null, lut: null, profile: null,
+                             models: {} });
   }
 }
 
@@ -280,9 +285,11 @@ function settingsPointer(settings, fn) {
   return withString(JSON.stringify(settings ?? {}), fn);
 }
 
-async function render({ settings, size, uncropped, live }) {
-  const rc = settingsPointer(settings, (sp, sl) =>
-    wasm.ar_render(sp, sl, size ?? 1300, uncropped ? 0 : 1));
+/** `proof` is an intent ('perceptual', 'relative') to show the picture through
+ *  the printer's profile with, or '' for the picture as it is. */
+async function render({ settings, size, uncropped, live, proof = '' }) {
+  const rc = settingsPointer(settings, (sp, sl) => withString(proof, (pp, pl) =>
+    wasm.ar_render(sp, sl, size ?? 1300, uncropped ? 0 : 1, pp, pl)));
   const info = readJson();
   if (rc !== 0) fail(info);
   const { w, h, pixels } = primary();
@@ -300,9 +307,10 @@ async function render({ settings, size, uncropped, live }) {
 }
 
 /** A piece of the picture at full size, for the 100 % view. */
-async function region({ settings, centre, width, height }) {
+async function region({ settings, centre, width, height, proof = '' }) {
   const rc = settingsPointer(settings, (sp, sl) =>
-    wasm.ar_render_region(sp, sl, centre[0], centre[1], width, height));
+    withString(proof, (pp, pl) =>
+      wasm.ar_render_region(sp, sl, centre[0], centre[1], width, height, pp, pl)));
   const info = readJson();
   if (rc !== 0) fail(info);
   const { w, h, pixels } = primary();
@@ -345,8 +353,9 @@ function captured({ buffer }) {
   return readJson();
 }
 
-async function compare({ settings, size }) {
-  const rc = settingsPointer(settings, (sp, sl) => wasm.ar_compare(sp, sl, size ?? 1300));
+async function compare({ settings, size, proof = '' }) {
+  const rc = settingsPointer(settings, (sp, sl) => withString(proof, (pp, pl) =>
+    wasm.ar_compare(sp, sl, size ?? 1300, pp, pl)));
   const info = readJson();
   if (rc !== 0) fail(info);
   const after = primary();
@@ -413,14 +422,18 @@ async function curves({ settings }) {
   return info;
 }
 
-/** Read a `.cube` file into the module, where it stays. */
-async function lutLoad({ buffer }) {
-  const rc = withBytes(new Uint8Array(buffer), (p, n) => wasm.ar_lut_load(p, n));
+/** Read a file into the module with `load`, and keep it in the session under
+ *  `key` so that a fresh module can be given it again. */
+function loadInto(buffer, load, key) {
+  const rc = withBytes(new Uint8Array(buffer), load);
   const info = readJson();
   if (rc !== 0) fail(info);
-  session.lut = buffer;
+  session[key] = buffer;
   return info;
 }
+
+/** Read a `.cube` file into the module, where it stays. */
+const lutLoad = ({ buffer }) => loadInto(buffer, (p, n) => wasm.ar_lut_load(p, n), 'lut');
 
 function lutClear() {
   session.lut = null;
@@ -428,15 +441,35 @@ function lutClear() {
   return readJson();
 }
 
-async function exportImage({ settings, format, quality, max_size, original_name }) {
+/** The printer's profile, read into the module, where it stays. */
+const profileLoad = ({ buffer }) =>
+  loadInto(buffer, (p, n) => wasm.ar_profile_load(p, n), 'profile');
+
+/** Back to the built-in profile. */
+function profileClear() {
+  session.profile = null;
+  wasm.ar_profile_clear();
+  return readJson();
+}
+
+/** What the printer's profile is. */
+function profile() {
+  wasm.ar_profile();
+  return readJson();
+}
+
+/** `space` is 'srgb', or 'cmyk:' and an intent, as `exportSpace` gives it. */
+async function exportImage({ settings, format, quality, max_size, original_name,
+                             space = 'srgb' }) {
   // There is no clock in the wasm, so the host passes the time in.
   const now = stamp();
   const stem = (original_name || 'photo').replace(/\.[^.]+$/, '');
   const rc = settingsPointer(settings, (sp, sl) =>
     withString(format, (fp, fl) =>
       withString(now, (np, nl) =>
-        wasm.ar_export(sp, sl, fp, fl, quality ?? 92,
-                       max_size ? Number(max_size) : 0, np, nl))));
+        withString(space, (cp, cl) =>
+          wasm.ar_export(sp, sl, fp, fl, quality ?? 92,
+                         max_size ? Number(max_size) : 0, np, nl, cp, cl)))));
   const info = readJson();
   if (rc !== 0) fail(info);
   let blob;
@@ -545,7 +578,7 @@ async function stackFinish() {
 
 const HANDLERS = { open, render, region, releaseRegion, thumbnail, preview, captured,
                    compare, looks, curves, match, skin, mask,
-                   lutLoad, lutClear,
+                   lutLoad, lutClear, profile, profileLoad, profileClear,
                    export: exportImage,
                    mergeAdd, mergeRemove, mergeReset, mergeFinish, mergeCheck,
                    exposure, stackBegin, stackAdd, stackReset, stackFinish };

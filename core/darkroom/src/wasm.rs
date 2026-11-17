@@ -1,6 +1,8 @@
 //! The API as a wasm module, for the web app's worker.
 
-use crate::{Bracket, Stack, StackMode, Edit, Encoded, Export, Lenses, MergeOptions, Photo, Size};
+use crate::{Bracket, ColourSpace, Edit, Encoded, Export, Intent, Lenses, MergeOptions, Photo,
+            Size, Stack, StackMode};
+use std::thread::LocalKey;
 use serde_json::json;
 use std::cell::RefCell;
 
@@ -110,6 +112,18 @@ fn store(img: &kit::Image) {
 fn store_b(img: &kit::Image) {
     PIXELS_B.with(|p| *p.borrow_mut() = crate::rgba8(img));
     SIZE_B.with(|s| *s.borrow_mut() = (img.w as u32, img.h as u32));
+}
+
+/// The proof a preview was asked for: an intent's id, or nothing for none.
+fn proof_at(ptr: *const u8, len: usize) -> Option<Intent> {
+    Intent::from_id(&text_at(ptr, len))
+}
+
+/// Proof a stored preview through the printer's profile, if one was asked for.
+fn proof(pixels: &'static LocalKey<RefCell<Vec<u8>>>, intent: Option<Intent>)
+         -> Result<(), String> {
+    let Some(intent) = intent else { return Ok(()) };
+    pixels.with(|p| crate::colour::proof_rgba8(&mut p.borrow_mut(), intent))
 }
 
 fn with_photo<T>(f: impl FnOnce(&mut Photo) -> T) -> Option<T> {
@@ -274,7 +288,7 @@ pub extern "C" fn ar_open_denoised(name_ptr: *const u8, name_len: usize, ptr: *c
 /// canvas.
 #[no_mangle]
 pub extern "C" fn ar_render(settings_ptr: *const u8, settings_len: usize, long_edge: i32,
-                            crop: i32) -> i32 {
+                            crop: i32, proof_ptr: *const u8, proof_len: usize) -> i32 {
     let edit = edit_at(settings_ptr, settings_len);
     let out = with_photo(|photo| {
         let mut cb = |f: f32, code: &str| progress(f, code);
@@ -287,6 +301,9 @@ pub extern "C" fn ar_render(settings_ptr: *const u8, settings_len: usize, long_e
     match out {
         Some(d) => {
             store(&d.image);
+            if let Err(why) = proof(&PIXELS, proof_at(proof_ptr, proof_len)) {
+                return set_error(&why, "bad_profile");
+            }
             set_json(json!({"width": d.image.w, "height": d.image.h, "report": d.report.to_json(),
                             "toggles": d.toggles,
                             "crop": d.crop.map(|c| vec![c.0, c.1, c.2, c.3])}));
@@ -299,7 +316,8 @@ pub extern "C" fn ar_render(settings_ptr: *const u8, settings_len: usize, long_e
 /// A piece of the picture at full size for the 100 % view.
 #[no_mangle]
 pub extern "C" fn ar_render_region(settings_ptr: *const u8, settings_len: usize, cx: f32, cy: f32,
-                                   w: i32, h: i32) -> i32 {
+                                   w: i32, h: i32, proof_ptr: *const u8, proof_len: usize)
+                                   -> i32 {
     let edit = edit_at(settings_ptr, settings_len);
     let out = with_photo(|photo| {
         let mut cb = |f: f32, code: &str| progress(f, code);
@@ -308,6 +326,9 @@ pub extern "C" fn ar_render_region(settings_ptr: *const u8, settings_len: usize,
     match out {
         Some(r) => {
             store(&r.image);
+            if let Err(why) = proof(&PIXELS, proof_at(proof_ptr, proof_len)) {
+                return set_error(&why, "bad_profile");
+            }
             set_json(json!({"x": r.x, "y": r.y, "width": r.image.w, "height": r.image.h,
                             "full_width": r.full_w, "full_height": r.full_h}));
             0
@@ -369,7 +390,8 @@ pub extern "C" fn ar_exposure(ptr: *const u8, len: usize) -> i32 {
 /// Before/after: the developed picture in the primary buffer, the same with
 /// every automatic correction off in the secondary one.
 #[no_mangle]
-pub extern "C" fn ar_compare(settings_ptr: *const u8, settings_len: usize, long_edge: i32) -> i32 {
+pub extern "C" fn ar_compare(settings_ptr: *const u8, settings_len: usize, long_edge: i32,
+                             proof_ptr: *const u8, proof_len: usize) -> i32 {
     let edit = edit_at(settings_ptr, settings_len);
     let size = size_of(long_edge);
     let out = with_photo(|photo| {
@@ -382,6 +404,10 @@ pub extern "C" fn ar_compare(settings_ptr: *const u8, settings_len: usize, long_
         Some((after, before)) => {
             store(&after.image);
             store_b(&before);
+            let intent = proof_at(proof_ptr, proof_len);
+            if let Err(why) = proof(&PIXELS, intent).and_then(|_| proof(&PIXELS_B, intent)) {
+                return set_error(&why, "bad_profile");
+            }
             set_json(json!({"width": after.image.w, "height": after.image.h,
                             "report": after.report.to_json(), "toggles": after.toggles}));
             progress(1.0, "done");
@@ -393,17 +419,20 @@ pub extern "C" fn ar_compare(settings_ptr: *const u8, settings_len: usize, long_
 
 /// Export: the file in the bytes buffer, or, for WebP, the picture in the pixel
 /// buffer and its EXIF block in the bytes buffer for the worker to splice in
-/// after the browser encodes it.
+/// after the browser encodes it. `space` is a `ColourSpace` code: `srgb`, or
+/// `cmyk:perceptual` / `cmyk:relative` through the printer's profile.
 #[no_mangle]
 pub extern "C" fn ar_export(settings_ptr: *const u8, settings_len: usize,
                             fmt_ptr: *const u8, fmt_len: usize, quality: i32,
-                            long_edge: i32, now_ptr: *const u8, now_len: usize) -> i32 {
+                            long_edge: i32, now_ptr: *const u8, now_len: usize,
+                            space_ptr: *const u8, space_len: usize) -> i32 {
     let edit = edit_at(settings_ptr, settings_len);
     let export = Export {
         format: text_at(fmt_ptr, fmt_len),
         quality: quality.clamp(1, 100) as u8,
         long_edge: if long_edge > 0 { Some(long_edge as usize) } else { None },
         modified: Some(text_at(now_ptr, now_len)),
+        space: ColourSpace::from_code(&text_at(space_ptr, space_len)),
     };
     let out = with_photo(|photo| {
         let mut cb = |f: f32, code: &str| progress(f, code);
@@ -566,6 +595,34 @@ pub extern "C" fn ar_lut_load(ptr: *const u8, len: usize) -> i32 {
 pub extern "C" fn ar_lut_clear() -> i32 {
     crate::clear_cube();
     set_json(json!({"loaded": false}));
+    0
+}
+
+// -- colour out ------------------------------------------------------------
+
+/// The printer's profile.
+#[no_mangle]
+pub extern "C" fn ar_profile() -> i32 {
+    set_json(crate::colour::describe());
+    0
+}
+
+/// Read an ICC profile and make it the printer's. Nothing leaves the tab.
+#[no_mangle]
+pub extern "C" fn ar_profile_load(ptr: *const u8, len: usize) -> i32 {
+    match crate::colour::load_profile(unsafe { slice(ptr, len) }) {
+        Ok(info) => {
+            set_json(info);
+            0
+        }
+        Err(why) => set_error(&why, "bad_profile"),
+    }
+}
+
+/// Back to the built-in Coated FOGRA39.
+#[no_mangle]
+pub extern "C" fn ar_profile_clear() -> i32 {
+    set_json(crate::colour::clear_profile());
     0
 }
 

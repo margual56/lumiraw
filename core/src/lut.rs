@@ -159,11 +159,6 @@ impl Lut {
         Ok(Lut { size, title, min, max, data })
     }
 
-    fn sample(&self, i: usize, j: usize, k: usize, c: usize) -> f32 {
-        // Red changes fastest, then green, then blue: the format's order.
-        self.data[((k * self.size + j) * self.size + i) * 3 + c]
-    }
-
     /// Apply to a display-linear image, blended by `strength`.
     #[must_use = "the graded picture is returned, not written into the one passed in"]
     pub fn apply(&self, img: &Image, strength: f32) -> Image {
@@ -173,44 +168,47 @@ impl Lut {
     }
 
     fn apply_to(&self, img: &mut Image, strength: f32) {
-        let n = self.size - 1;
         for px in img.px_mut() {
             let src = *px;
             let enc = src.map(kit::srgb_encode_scalar);
             // Into the table's own domain, which is 0..1 unless the file says
             // otherwise.
-            let mut base = [0usize; 3];
-            let mut frac = [0f32; 3];
+            let at = [0, 1, 2].map(|c| (enc[c] - self.min[c]) / (self.max[c] - self.min[c]));
+            let graded = trilinear(&self.data, self.size, at);
             for c in 0..3 {
-                let t = ((enc[c] - self.min[c]) / (self.max[c] - self.min[c])).clamp(0.0, 1.0)
-                    * n as f32;
-                let i = (t as usize).min(n - 1);
-                base[c] = i;
-                frac[c] = t - i as f32;
-            }
-            let (i, j, k) = (base[0], base[1], base[2]);
-            let (fr, fg, fb) = (frac[0], frac[1], frac[2]);
-            for c in 0..3 {
-                // Trilinear: eight corners, three lerps.
-                let c000 = self.sample(i, j, k, c);
-                let c100 = self.sample(i + 1, j, k, c);
-                let c010 = self.sample(i, j + 1, k, c);
-                let c110 = self.sample(i + 1, j + 1, k, c);
-                let c001 = self.sample(i, j, k + 1, c);
-                let c101 = self.sample(i + 1, j, k + 1, c);
-                let c011 = self.sample(i, j + 1, k + 1, c);
-                let c111 = self.sample(i + 1, j + 1, k + 1, c);
-                let c00 = c000 + (c100 - c000) * fr;
-                let c10 = c010 + (c110 - c010) * fr;
-                let c01 = c001 + (c101 - c001) * fr;
-                let c11 = c011 + (c111 - c011) * fr;
-                let c0 = c00 + (c10 - c00) * fg;
-                let c1 = c01 + (c11 - c01) * fg;
-                let graded = kit::srgb_decode_scalar((c0 + (c1 - c0) * fb).clamp(0.0, 1.0));
+                let graded = kit::srgb_decode_scalar(graded[c].clamp(0.0, 1.0));
                 px[c] = src[c] * (1.0 - strength) + graded * strength;
             }
         }
     }
+}
+
+/// Look up `at` (0..1 on each axis, clamped) in a table of `size`³ RGB
+/// triples, red changing fastest, then green, then blue (the .cube order):
+/// trilinear, eight corners and three lerps.
+pub fn trilinear(data: &[f32], size: usize, at: [f32; 3]) -> [f32; 3] {
+    let n = size - 1;
+    let mut base = [0usize; 3];
+    let mut frac = [0f32; 3];
+    for c in 0..3 {
+        let t = at[c].clamp(0.0, 1.0) * n as f32;
+        let i = (t as usize).min(n - 1);
+        base[c] = i;
+        frac[c] = t - i as f32;
+    }
+    let ([i, j, k], [fr, fg, fb]) = (base, frac);
+    let at = |i: usize, j: usize, k: usize| ((k * size + j) * size + i) * 3;
+    let (c000, c100) = (at(i, j, k), at(i + 1, j, k));
+    let (c010, c110) = (at(i, j + 1, k), at(i + 1, j + 1, k));
+    let (c001, c101) = (at(i, j, k + 1), at(i + 1, j, k + 1));
+    let (c011, c111) = (at(i, j + 1, k + 1), at(i + 1, j + 1, k + 1));
+    [0, 1, 2].map(|c| {
+        let lerp = |a: usize, b: usize| data[a + c] + (data[b + c] - data[a + c]) * fr;
+        let (x00, x10) = (lerp(c000, c100), lerp(c010, c110));
+        let (x01, x11) = (lerp(c001, c101), lerp(c011, c111));
+        let (y0, y1) = (x00 + (x10 - x00) * fg, x01 + (x11 - x01) * fg);
+        y0 + (y1 - y0) * fb
+    })
 }
 
 #[cfg(test)]

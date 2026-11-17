@@ -1,7 +1,7 @@
 <script>
   /** The picture at 100 %: one pixel of the file to one pixel of the screen. */
   import { untrack } from 'svelte';
-  import { app, settingsKey } from '$lib/state.svelte.js';
+  import { app, viewKey, proofParam } from '$lib/state.svelte.js';
   import * as api from '$lib/api.js';
   import { t } from '$lib/i18n.svelte.js';
   import { errorText } from '$lib/format.js';
@@ -22,7 +22,7 @@
   let drag = null;
 
   const piece = $derived(app.full);
-  const current = $derived(piece.key === settingsKey());
+  const current = $derived(piece.key === viewKey());
   // Whether what is on screen is all the piece: dragged past its edge, part
   // of the view is the enlarged preview until the next one arrives.
   const whole = $derived.by(() => {
@@ -74,7 +74,7 @@
     if (loading) return;
     const [cw, ch] = viewSize();
     if (!cw || !ch) return;
-    const key = settingsKey();
+    const key = viewKey();
     loading = true;
     error = '';
     try {
@@ -83,6 +83,7 @@
         centre: [...centre],
         width: Math.min(Math.round(cw * SLACK), MOST),
         height: Math.min(Math.round(ch * SLACK), MOST),
+        proof: proofParam(),
       });
       app.full.bitmap?.close();
       app.full = { key, bitmap: out.bitmap, x: out.x, y: out.y, width: out.width,
@@ -93,13 +94,13 @@
       loading = false;
     }
     // Whatever moved or changed while that one was being developed.
-    if (!error && (settingsKey() !== app.full.key || !covered())) develop();
+    if (!error && (viewKey() !== app.full.key || !covered())) develop();
   }
 
   // A new piece once the settings have held still for a moment: a slider on
   // its way somewhere should not start one per position.
   $effect(() => {
-    const key = settingsKey();
+    const key = viewKey();
     if (piece.key === key) return;
     const timer = setTimeout(develop, 500);
     return () => clearTimeout(timer);

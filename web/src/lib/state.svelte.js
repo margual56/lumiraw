@@ -115,6 +115,10 @@ export const app = $state({
   looks: [],                 // the named grades, read out of the wasm once
   curve: null,               // { rgb, r, g, b } baked tables, for the plot
   lut: null,                 // the loaded .cube, if any: { size, title, id, bytes, name }
+  // Colour out. `space` is what the download is written in; the printer's
+  // profile (`profile`, as the module describes it, Coated FOGRA39 until one
+  // is loaded) is what CMYK is written through and what `proof` previews.
+  colour: { space: 'srgb', intent: 'perceptual', proof: false, profile: null },
 
   // What is happening right now, for the progress bar.
   busy: false,
@@ -178,12 +182,33 @@ export function ungraded(settings) {
 
 // Everything a render depends on. Derived once per change: the key is asked
 // for from several components on every edit.
-const key = $derived(`${app.id}|${JSON.stringify(app.settings)}`);
+const keyOf = (settings) => `${app.id}|${JSON.stringify(settings)}`;
+const key = $derived(keyOf(app.settings));
 export const settingsKey = () => key;
 
-const BLANK = JSON.stringify(defaultSettings());
+// The proof each preview is asked for, sent with the request: the intent, or
+// '' for none. The view key is built from the same value, so a preview is
+// never cached under a proof it was not made with. Kept apart from
+// `settingsKey`, which also drives the undo history and what is remembered per
+// photograph, neither of which a proof belongs in.
+const proof = $derived(app.colour.proof ? app.colour.intent : '');
+export const proofParam = () => proof;
+const proofTag = $derived(proof ? `|proof:${proof}:${app.colour.profile?.id ?? ''}` : '');
+const view = $derived(key + proofTag);
+export const viewKey = () => view;
+/** The view key for settings other than the current ones. */
+export const viewKeyOf = (settings) => keyOf(settings) + proofTag;
+
+// What a download is written in, as the module takes it. The choice stays as
+// it was made; an RGB printer's profile only means it cannot be CMYK now.
+const cmykOk = $derived(!app.colour.profile || app.colour.profile.kind === 'cmyk');
+export const canCmyk = () => cmykOk;
+const space = $derived(cmykOk && app.colour.space === 'cmyk'
+  ? `cmyk:${app.colour.intent}` : 'srgb');
+export const exportSpace = () => space;
+
 /** Whether a settings key is for settings nobody has touched. */
-export const isBlank = (k) => k === `${app.id}|${BLANK}`;
+export const isBlank = (k) => k === keyOf(defaultSettings());
 
 /** A crop rectangle or a metering box belongs to the picture it was drawn on;
  *  carrying either onto the next file silently develops it wrongly. */

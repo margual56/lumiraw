@@ -37,6 +37,26 @@ pub struct Developed {
     pub crop: Option<Rect>,
 }
 
+/// The colour space an export is written in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColourSpace {
+    Srgb,
+    /// Through the printer's profile (see `colour`), with this intent.
+    Cmyk(crate::Intent),
+}
+
+impl ColourSpace {
+    /// `srgb`, or `cmyk:` and an intent (`cmyk:relative`); CMYK without an
+    /// intent is perceptual, and anything else is sRGB.
+    pub fn from_code(code: &str) -> ColourSpace {
+        match code.split_once(':').map_or((code, ""), |(s, i)| (s, i)) {
+            ("cmyk", intent) => ColourSpace::Cmyk(
+                crate::Intent::from_id(intent).unwrap_or(crate::Intent::Perceptual)),
+            _ => ColourSpace::Srgb,
+        }
+    }
+}
+
 /// How to save a picture.
 #[derive(Clone, Debug)]
 pub struct Export {
@@ -49,11 +69,14 @@ pub struct Export {
     /// The moment of the export (EXIF `YYYY:MM:DD HH:MM:SS+HH:MM`), for the
     /// file's own modified date. Passed in because wasm has no clock.
     pub modified: Option<String>,
+    /// sRGB, or CMYK for print (JPEG and TIFF only).
+    pub space: ColourSpace,
 }
 
 impl Export {
     pub fn new(format: &str) -> Export {
-        Export { format: format.to_string(), quality: 92, long_edge: None, modified: None }
+        Export { format: format.to_string(), quality: 92, long_edge: None, modified: None,
+                 space: ColourSpace::Srgb }
     }
 }
 
@@ -150,6 +173,12 @@ impl Photo {
     pub fn export(&mut self, edit: &Edit, export: &Export, mut progress: Progress)
                   -> Result<Exported, String> {
         let modified = export.modified.as_deref().filter(|s| !s.is_empty());
+        // Refused before the development, not after it.
+        if let ColourSpace::Cmyk(intent) = export.space {
+            crate::colour::with_profile(|p| {
+                output::check_space(&export.format, output::Space::Cmyk(p, intent))
+            })?;
+        }
         let image = {
             let mut scaled = progress.as_mut().map(|cb| {
                 let f: Box<dyn FnMut(f32, &str) + '_> = Box::new(move |f, code| cb(f * 0.8, code));
@@ -177,8 +206,16 @@ impl Photo {
         let encoded = if export.format == "webp" {
             Encoded::Canvas { exif: output::exif_block(&image, meta, modified) }
         } else {
-            let bytes = output::save(&image, &export.format, export.quality.clamp(1, 100), meta,
-                                     modified)?;
+            let (fmt, quality) = (&export.format, export.quality.clamp(1, 100));
+            let bytes = match export.space {
+                ColourSpace::Srgb => {
+                    output::save_in(&image, fmt, quality, meta, modified, output::Space::Srgb)?
+                }
+                ColourSpace::Cmyk(intent) => crate::colour::with_profile(|profile| {
+                    let space = output::Space::Cmyk(profile, intent);
+                    output::save_in(&image, fmt, quality, meta, modified, space)
+                })?,
+            };
             let spec = output::format_spec(&export.format);
             Encoded::File { bytes, mime: spec.mime, ext: spec.ext }
         };
@@ -191,10 +228,7 @@ impl Photo {
     /// Wheels that bring this photograph's colour toward a reference, given as
     /// sRGB RGBA pixels: the settings' `wheels` to use.
     pub fn match_colour(&mut self, edit: &Edit, rgba: &[u8], w: usize, h: usize) -> Value {
-        let mut reference = Image::new(w, h);
-        for (px, src) in reference.px_mut().iter_mut().zip(rgba.chunks_exact(4)) {
-            *px = [0, 1, 2].map(|c| kit::srgb_decode_scalar(src[c] as f32 / 255.0));
-        }
+        let reference = output::from_rgba8(rgba, w, h);
         self.dev.match_colour(edit, &reference).to_json()
     }
 

@@ -114,7 +114,8 @@ export async function captured(file) {
 }
 
 /** One export, awaited: { blob, filename, captured }. For the batch, which
- *  reports its own progress per photograph. */
+ *  reports its own progress per photograph. The body may carry `space`, as
+ *  `exportSpace()` gives it, besides the format. */
 export const exportOnce = (body, onprogress) => call('export', body, { onprogress });
 
 /** A piece of the picture at full size, around `centre` (fractions of the
@@ -166,13 +167,26 @@ export const skin = (settings) => call('skin', { settings });
 /** The four curves the pipeline will evaluate, baked, for drawing. */
 export const curves = (body) => call('curves', body);
 
-/** Read a `.cube` file into the module. The bytes go no further than the tab. */
-export async function lutLoad(file) {
+/** Send a file's bytes to the module with `type`. They go no further than
+ *  the tab. */
+async function sendFile(type, file) {
   const buffer = await file.arrayBuffer();
-  return call('lutLoad', { buffer }, {}, [buffer]);
+  return call(type, { buffer }, {}, [buffer]);
 }
 
+/** Read a `.cube` file into the module. */
+export const lutLoad = (file) => sendFile('lutLoad', file);
+
 export const lutClear = () => call('lutClear');
+
+/** The printer's profile, `{name, kind, id, builtin, bytes}`: the one loaded,
+ *  or the built-in Coated FOGRA39. */
+export const colourProfile = () => call('profile');
+
+/** Read an ICC profile into the module as the printer's. */
+export const profileLoad = (file) => sendFile('profileLoad', file);
+
+export const profileClear = () => call('profileClear');
 
 /** Building a merge: the frames go over one at a time, then one call to
  *  combine them. The result replaces whatever the wizard was developing. */

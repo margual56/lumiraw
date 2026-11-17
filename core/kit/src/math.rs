@@ -130,3 +130,14 @@ pub fn std_dev(values: &[f32]) -> f32 {
 pub fn median(values: &[f32]) -> f32 {
     percentile(values, 50.0)
 }
+
+/// FNV-1a over bytes, as hex: a short id for a loaded file, so that loading a
+/// different file gives a different cache key.
+pub fn digest(bytes: &[u8]) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in bytes {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100_0000_01b3);
+    }
+    format!("{h:x}")
+}

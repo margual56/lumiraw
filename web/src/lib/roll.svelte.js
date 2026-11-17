@@ -169,7 +169,7 @@ async function thumbnails() {
 }
 
 /** Export every photograph marked to keep, into one zip. */
-export async function exportRoll({ format, quality, max_size, onstatus }) {
+export async function exportRoll({ format, quality, max_size, space, intent, onstatus }) {
   const chosen = app.roll.map((item, i) => ({ item, i })).filter(({ item }) => item.keep);
   const settings = chosen.map(({ i }) => settingsFor(i));
   const now = stamp();
@@ -182,7 +182,7 @@ export async function exportRoll({ format, quality, max_size, onstatus }) {
       try {
         await api.upload(item.file, { deep: settings[n].deep_denoise });
         const out = await api.exportOnce({
-          settings: settings[n], format, quality, max_size,
+          settings: settings[n], format, quality, max_size, space, intent,
           original_name: item.name,
         }, (fraction) => onstatus?.(
           t('roll.exporting', { n: n + 1, total: chosen.length, name: item.name }),

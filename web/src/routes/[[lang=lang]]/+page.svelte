@@ -29,7 +29,7 @@
   import { remember, forget } from '$lib/memory.js';
   import { latest } from '$lib/latest.js';
   import {
-    app, settingsKey, isBlank, stepVisible, setStraight, ungraded, defaultSettings,
+    app, settingsKey, viewKey, viewKeyOf, proofParam, isBlank, stepVisible, setStraight, ungraded, defaultSettings,
     STEPS, UPLOAD, FRAME, REFOCUS, EXPOSURE, WB, VIBRANCE, LOCAL, COMPARE, LOOKS, DOWNLOAD,
   } from '$lib/state.svelte.js';
 
@@ -94,6 +94,8 @@
         }
         // The named grades live in the wasm, so there is only one copy of them.
         app.looks = (await api.looks()).looks ?? [];
+        // The printer's profile lives in the module too, for the same reason.
+        app.colour.profile = await api.colourProfile();
       })
       .catch(() => {});
   });
@@ -114,13 +116,15 @@
 
   async function refresh(step, key) {
     const mine = ++token;
+    // The proof the key was made with travels with each request.
+    const proof = proofParam();
     const done = (fn) => { if (mine === token) fn(); };
     app.busy = true;
     app.busyKey = LABELS[step] ?? 'busy.working';
     app.busyParams = {};
     try {
       if (step === FRAME && app.frame.key !== key) {
-        const out = await api.render({ settings: app.settings, uncropped: true, size: 1100 });
+        const out = await api.render({ settings: app.settings, uncropped: true, size: 1100, proof });
         done(() => {
           // The angle travels with the image.
           app.frame = { key, image: out.image, angle: app.settings.framing.angle };
@@ -132,7 +136,7 @@
       } else if ([REFOCUS, EXPOSURE, WB, VIBRANCE, LOCAL, LOOKS].includes(step)
                  && app.preview.key !== key) {
         const live = app.live;
-        const out = await api.render({ settings: app.settings, size: 1300, live });
+        const out = await api.render({ settings: app.settings, size: 1300, live, proof });
         done(() => {
           // A frame made while dragging is a quick one, and is made again
           // properly once the control is let go.
@@ -144,19 +148,19 @@
       // The grade step's "before", keyed on the settings without the grade,
       // so moving a grade control never develops it again.
       const bare = ungraded(app.settings);
-      const bareKey = `${app.id}|${JSON.stringify(bare)}`;
+      const bareKey = viewKeyOf(bare);
       if (step === LOOKS && app.ungraded.key !== bareKey) {
-        const out = await api.render({ settings: bare, size: 1300 });
+        const out = await api.render({ settings: bare, size: 1300, proof });
         done(() => { app.ungraded = { key: bareKey, image: out.image }; });
       }
       if (step === COMPARE && app.wipe.key !== key) {
-        const out = await api.compare({ settings: app.settings, size: 1300 });
+        const out = await api.compare({ settings: app.settings, size: 1300, proof });
         done(() => {
           app.wipe = { key, before: out.before, after: out.after };
           app.toggles = out.toggles;
         });
       } else if (step === DOWNLOAD && app.output.key !== key) {
-        const out = await api.render({ settings: app.settings, size: 1300 });
+        const out = await api.render({ settings: app.settings, size: 1300, proof });
         done(() => {
           app.output = { key, image: out.image };
           app.toggles = out.toggles;
@@ -177,7 +181,7 @@
 
   $effect(() => {
     const step = app.step;
-    const key = settingsKey();
+    const key = viewKey();
     if (!app.id) return;
     // Settled controls wait for a pause; a dragged one goes straight away.
     const timer = setTimeout(() => schedule(step, key), app.live ? 0 : 200);

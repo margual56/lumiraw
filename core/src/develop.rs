@@ -32,9 +32,6 @@ pub struct Development {
     /// The last "before" rendered, with the settings, size and 3D table it
     /// was rendered from.
     baseline: Option<(Settings, Option<usize>, u64, Image)>,
-    /// What an export would decide for these settings, measured for the last
-    /// region developed; see `decide_at_full_size`.
-    decided_full: Option<(Settings, Decisions)>,
     /// The whole frame at full size, corrected, framed and healed, while
     /// regions of it are being looked at.
     full_frame: Option<(String, Vec<crate::local::Spot>, Image)>,
@@ -60,7 +57,15 @@ struct Graded {
     masks: (bool, bool),
     image: Image,
     report: Report,
+    /// What the automatic corrections decided for it.
+    decided: Decisions,
 }
+
+/// The size every automatic decision is measured at, whatever the size of
+/// the render: the main preview's. An export or the 100 % view measured at
+/// its own size decided a little differently (white balance by a few percent,
+/// exposure by a tenth of a stop), so what was shown was not what was saved.
+const DECIDE_EDGE: usize = 1300;
 
 /// The settings with what only `finish` reads put back to its defaults: two
 /// renders that agree on these agree on everything before `finish`.
@@ -158,7 +163,6 @@ impl Development {
             cache: Vec::new(),
             focus: None,
             baseline: None,
-            decided_full: None,
             full_frame: None,
             graded: None,
             masks: None,
@@ -183,7 +187,6 @@ impl Development {
             self.baseline = None;
             self.graded = None;
             self.full_frame = None;
-            self.decided_full = None;
             self.masks = None;
         }
     }
@@ -289,18 +292,18 @@ impl Development {
         if long_edge.is_none() {
             self.release_region();
         }
+        if let Some(g) = self.kept(settings, long_edge, crop) {
+            let mut report = g.report.clone();
+            let image = g.image.clone();
+            let window = Window::whole(&image);
+            return (finish(image, settings, window, &mut report), report);
+        }
+        // A full-size render applies what the preview decided.
+        let decided = long_edge.is_none().then(|| self.decide(settings));
         let masks = self.masks_for(settings);
         let mask_kinds = (masks.get(crate::masks::Kind::Sky).is_some(),
                           masks.get(crate::masks::Kind::Subject).is_some());
         let upstream = before_finish(settings);
-        if let Some(g) = &self.graded {
-            if long_edge.is_some() && g.long_edge == long_edge && g.crop == crop
-                && g.masks == mask_kinds && g.settings == upstream {
-                let mut report = g.report.clone();
-                let window = Window::whole(&g.image);
-                return (finish(g.image.clone(), settings, window, &mut report), report);
-            }
-        }
         let mut report = Report::new();
         let (src, lens_info, eff_crop) = self.corrected(settings, long_edge, crop, &mut progress);
         self.report_lens(settings, &lens_info, &mut report);
@@ -320,10 +323,11 @@ impl Development {
             stats_rect,
             render_scale: scale,
             focus_sigma: self.focus_sigma_at((native as f32 * scale).round() as usize),
+            decided,
             progress: graded_progress.as_mut().map(|f| &mut **f as &mut dyn FnMut(f32, &str)),
             ..self.process_args(settings, &masks, Window::whole(&src))
         };
-        let (rgb, _) = grade::process(src, settings, args, &mut report);
+        let (rgb, decided) = grade::process(src, settings, args, &mut report);
 
         report.add("focus", match measured_width {
             None => json!({"measured": false, "verdict": "unknown"}),
@@ -344,7 +348,7 @@ impl Development {
         // Only previews are kept: a full-size frame is too big to hold twice.
         self.graded = long_edge.map(|_| Graded {
             settings: upstream, long_edge, crop, masks: mask_kinds,
-            image: rgb.clone(), report: report.clone(),
+            image: rgb.clone(), report: report.clone(), decided,
         });
         let window = Window::whole(&rgb);
         (finish(rgb, settings, window, &mut report), report)
@@ -352,21 +356,29 @@ impl Development {
 
     pub fn release_region(&mut self) {
         self.full_frame = None;
-        self.decided_full = None;
     }
 
-    fn decide_at_full_size(&mut self, full: &Image, settings: &Settings) -> Decisions {
-        if let Some((s, d)) = &self.decided_full {
-            if s == settings {
-                return d.clone();
-            }
-        }
-        let proxy = kit::thumbnail(full, 1024);
+    /// The preview this development keeps, if it was made at this size from
+    /// these settings.
+    fn kept(&mut self, settings: &Settings, long_edge: Option<usize>, crop: bool)
+            -> Option<&Graded> {
         let masks = self.masks_for(settings);
-        let args = self.process_args(settings, &masks, Window::whole(&proxy));
-        let (_, decided) = grade::process(proxy, settings, args, &mut Report::new());
-        self.decided_full = Some((settings.clone(), decided.clone()));
-        decided
+        let mask_kinds = (masks.get(crate::masks::Kind::Sky).is_some(),
+                          masks.get(crate::masks::Kind::Subject).is_some());
+        let upstream = before_finish(settings);
+        self.graded.as_ref().filter(|g| {
+            long_edge.is_some() && g.long_edge == long_edge && g.crop == crop
+                && g.masks == mask_kinds && g.settings == upstream
+        })
+    }
+
+    /// What the automatic corrections decide for these settings, measured on
+    /// the main preview, so that every size of render agrees with it.
+    fn decide(&mut self, settings: &Settings) -> Decisions {
+        if self.kept(settings, Some(DECIDE_EDGE), true).is_none() {
+            self.render(settings, Some(DECIDE_EDGE), true, None);
+        }
+        self.graded.as_ref().map(|g| g.decided.clone()).unwrap_or_default()
     }
 
     /// What every development hands `grade::process`, for a full-size render
@@ -433,7 +445,7 @@ impl Development {
         let (key, spots, full) = self.full_frame.take().expect("made above");
         // Healed above, on the whole frame.
         let healed = Settings { spots: Vec::new(), ..settings.clone() };
-        let decided = self.decide_at_full_size(&full, &healed);
+        let decided = self.decide(settings);
         let (fw, fh) = (full.w, full.h);
         let (w, h) = (want.0.clamp(1, fw), want.1.clamp(1, fh));
         let place = |c: f32, size: usize, whole: usize| {

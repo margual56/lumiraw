@@ -6,7 +6,7 @@ Symptoms reported: highlights blown, shadows crushed, a slight tint after auto
 white balance. Ranked by how much each contributes. Remove this file before
 merging.
 
-`[x]` fixed, `[~]` partly, `[ ]` open.
+`[x]` fixed, `[~]` partly, `[-]` left on purpose, `[ ]` open.
 
 Progress over the 20 demo raws (mean per frame; tint is the Oklab chroma ×1000
 left on what the camera's own balance made neutral):
@@ -51,8 +51,11 @@ their own commits.
       (`grade.rs::filmic`)
 - [x] **D1** Highlight reconstruction also rewrites the channel the sensor did
       record, bleaching clipped skies. (`decode.rs` reconstruction)
-- [ ] **D2** Decoded frame does not say where the sensor clipped; auto exposure
+- [x] **D2** Decoded frame does not say where the sensor clipped; auto exposure
       counts Y ≥ 0.99 and misses partly clipped pixels. (`decode.rs`, `analyze.rs`)
+      *No longer matters: the miscount's only effect was switching the
+      highlight guard off, which E1/E6 removed; partly clipped pixels are now
+      simply among the brightest the guard keeps below the shoulder.*
 - [x] **L1** lensfun vignetting for the E PZ 16-50 over-corrects corners by
       ~1.5 EV (×32 at the extreme corner). Cross-check with the camera's own
       table, cap the gain, smooth the clamp. (`lensdb.rs`, `develop.rs`)
@@ -98,8 +101,12 @@ their own commits.
       only matters at the level of one code value.*
 - [x] **O2** Auto black and white points move by different fractions (0.6 vs
       0.4). (`analyze.rs`)
-- [ ] **D5** White level jumps between 15360 and ~16300 frame to frame.
+- [-] **D5** White level jumps between 15360 and ~16300 frame to frame.
       (`raw.rs`)
+      *Left as it is: the declared and observed white levels differ by at most
+      0.09 EV, which the automatic exposure renormalises; it only shows with
+      automatic exposure off. A real fix needs per-model white levels, which
+      the files do not give and which would have to be measured per body.*
 - [~] **E6** Clipped fraction measured on a thumbnail averages away small lamps;
       guard switches on/off at a hard 0.5 %. (`analyze.rs`) *Hard switch gone
       (the guard measures unclipped pixels instead); still measured on the

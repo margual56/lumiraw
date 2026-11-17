@@ -254,7 +254,18 @@ impl Development {
         // Framing comes after lens correction (distortion must be undone in the
         // original frame) and before everything tonal, so metering and the auto
         // levels only ever see the picture that will actually be kept.
-        let eff = geometry::effective_crop(src.w, src.h, &s.framing);
+        // The part of what this returns the estimators should measure: all of
+        // it when it is already cropped, otherwise the crop that will be kept,
+        // or, when nothing is kept, the largest rectangle without the empty
+        // corners a rotation leaves. Measured, those corners read as a fifth of
+        // the frame in deep black and send the exposure up by stops.
+        let kept = geometry::effective_crop(src.w, src.h, &s.framing);
+        let eff = match kept {
+            Some(_) if crop => None,
+            Some(r) => Some(r),
+            None if s.framing.transforms() => Some(geometry::cover_crop(src.w, src.h, &s.framing)),
+            None => None,
+        };
         if !s.framing.is_identity() {
             src = Cow::Owned(geometry::apply(&src, &s.framing, crop));
         }
@@ -299,9 +310,9 @@ impl Development {
         let scale = self.working_edge(settings, long_edge, crop)
             .map_or(1.0, |e| (e as f32 / native as f32).min(1.0));
 
-        // When the canvas is shown uncropped, the estimators must still measure
-        // only the rectangle being kept, see geometry::stats_view.
-        let stats_rect = if crop { None } else { eff_crop };
+        // The estimators measure only the picture, see `corrected` and
+        // geometry::stats_view.
+        let stats_rect = eff_crop;
 
         let mut graded_progress = after_lens(progress);
         let measured_width = self.focus_width();
@@ -870,6 +881,22 @@ mod tests {
         warmer.temperature = 0.6;
         let fresh = development().render(&warmer, Some(64), true, None).0;
         assert_eq!(dev.render(&warmer, Some(64), true, None).0.d, fresh.d, "a stale kept preview");
+    }
+
+    /// The empty corners a rotation leaves are not part of the picture, and
+    /// must not be metered as if they were, whether or not they are cropped.
+    #[test]
+    fn empty_corners_are_not_metered() {
+        let gain = |auto_fit: bool| {
+            let mut s = Settings::default();
+            s.framing.angle = 6.0;
+            s.framing.auto_fit = auto_fit;
+            let (_, report) = development().render(&s, Some(96), true, None);
+            report.to_json()["exposure"]["gain_ev"].as_f64().unwrap()
+        };
+        let (cropped, uncropped) = (gain(true), gain(false));
+        assert!((cropped - uncropped).abs() < 0.25,
+                "the empty corners moved the exposure from {cropped} to {uncropped} EV");
     }
 
     /// Matched to its own picture with a tint graded in, a photograph gets

@@ -29,6 +29,9 @@ pub struct Preset {
     pub target_chroma: f32,
     pub max_boost: f32,
     pub sharpen: f32,
+    /// Chroma gain on every colour, a look's own saturation, as a camera's
+    /// picture style has; vibrance (`target_chroma`) then lifts what is muted.
+    pub saturation: f32,
     pub denoise: bool,
     /// How much of what the highlight guard held back the tone map gives back
     /// to the rest of the frame: all of it by day, none of it by night, when
@@ -50,6 +53,7 @@ impl Default for Preset {
             target_chroma: 0.078,
             max_boost: 1.55,
             sharpen: 0.55,
+            saturation: 1.10,
             denoise: true,
             give_back: 1.0,
         }
@@ -69,6 +73,7 @@ pub fn preset_by_name(name: &str) -> Preset {
             target_chroma: 0.095,
             max_boost: 1.8,
             sharpen: 0.75,
+            saturation: 1.2,
             ..base
         },
         "flat" => Preset {
@@ -82,6 +87,7 @@ pub fn preset_by_name(name: &str) -> Preset {
             target_chroma: 0.062,
             max_boost: 1.2,
             sharpen: 0.35,
+            saturation: 1.0,
             ..base
         },
         _ => base,
@@ -661,6 +667,10 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
     factor
 }
 
+/// The brightest a channel may be taken by vibrance and saturation, short of
+/// white, so that a boosted gradient keeps its steps.
+const BOOST_HEADROOM: f32 = 0.97;
+
 /// The most the tone map compresses a scene's range.
 const TONE_FLOOR: f32 = 0.45;
 
@@ -946,18 +956,44 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     boost
     };
     d.vibrance = boost;
-    if (boost - 1.0).abs() > 0.001 {
+    // The look's own saturation, on every colour; switched off with vibrance.
+    let saturation = if s.on("vibrance") { p.saturation } else { 1.0 };
+    if (boost - 1.0).abs() > 0.001 || (saturation - 1.0).abs() > 0.001 {
         for i in 0..n {
             let c = chroma.d[i];
             let hue = kit::fast_atan2(b.d[i], a.d[i]);
-            // Neither what is already vivid, nor what is meant to be neutral
-            // (its colour is a white balance error), nor what is nearly white,
-            // where there is no room left in the gamut.
-            let mut weight = (1.0 - kit::smoothstep(0.10, 0.30, c))
-                * kit::smoothstep(0.5 * analyze::NEUTRAL_CHROMA, 2.0 * analyze::NEUTRAL_CHROMA, c)
-                * (1.0 - kit::smoothstep(0.85, 0.97, light_new.d[i]));
-            weight *= 1.0 - s.skin_protect * s.skin.likeness(hue, c);
-            let gain = 1.0 + (boost - 1.0) * weight;
+            // Vibrance lifts what is muted and leaves what is already vivid.
+            let muted = 1.0 - kit::smoothstep(0.10, 0.30, c);
+            // Neither touches what is meant to be neutral (its colour is a
+            // white balance error), nor what is nearly white, where there is
+            // no room left in the gamut, nor skin, as far as it is protected.
+            let room = kit::smoothstep(0.5 * analyze::NEUTRAL_CHROMA,
+                                       2.0 * analyze::NEUTRAL_CHROMA, c)
+                * (1.0 - kit::smoothstep(0.85, 0.97, light_new.d[i]))
+                * (1.0 - s.skin_protect * s.skin.likeness(hue, c));
+            let mut gain = 1.0 + ((boost - 1.0) * muted + (saturation - 1.0)) * room;
+            // Never to the gamut's edge: the mapping at the end would press the
+            // colour onto it, and a bright saturated gradient would come out
+            // flat there. Only as far as leaves a little room, and not at all
+            // for a colour already that close.
+            if gain > 1.0 {
+                let l = light_new.d[i];
+                let fits = |g: f32| {
+                    let (r, gg, bl) = kit::oklab_to_rgb_px(l, a.d[i] * g, b.d[i] * g);
+                    r.min(gg).min(bl) >= 0.0 && r.max(gg).max(bl) <= BOOST_HEADROOM
+                };
+                if !fits(gain) {
+                    let (mut lo, mut hi) = (1.0f32, gain);
+                    if !fits(lo) {
+                        hi = lo;
+                    }
+                    for _ in 0..8 {
+                        let mid = 0.5 * (lo + hi);
+                        if fits(mid) { lo = mid } else { hi = mid }
+                    }
+                    gain = lo;
+                }
+            }
             a.d[i] *= gain;
             b.d[i] *= gain;
         }

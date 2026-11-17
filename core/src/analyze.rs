@@ -285,7 +285,7 @@ pub fn auto_levels(lightness: &Plane, peak: &Plane, strength: f32, clip_pct: f64
 
 /// How much of a look's curve every frame gets, whatever it measures. Small:
 /// the filmic curve already carries a contrast look of its own.
-const CURVE_FLOOR: f32 = 0.25;
+const CURVE_FLOOR: f32 = 0.60;
 
 /// S-curve strength and its pivot. The curve only adds midtone contrast (see
 /// `grade::s_curve`), so it is asked for by how flat the frame is and nothing

@@ -156,6 +156,11 @@ pub fn auto_white_balance(thumb: &Image, strength: f32, limit_ev: f32) -> ([f32;
 /// frame is held a fraction of a stop dark.
 pub const METERED_EV: f32 = 2.5;
 
+/// How far past white the highlight guard lets the brightest highlights go
+/// (the 99.5th percentile of what it measures): the filmic shoulder rolls the
+/// last fifth off without clipping it.
+pub const HIGHLIGHT_CEILING: f32 = 1.20;
+
 /// How far above the frame's key a pixel is taken for a light source or a
 /// specular glint rather than a highlight to keep: six stops.
 const SOURCE_ABOVE_KEY: f32 = 64.0;
@@ -208,7 +213,7 @@ pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f3
         .filter(|m| *m < 0.99 && (!small || *m <= sources))
         .collect();
     let cap = if kept.len() >= 64 {
-        1.20 / kit::percentile(&kept, 99.5).max(EPS)
+        HIGHLIGHT_CEILING / kit::percentile(&kept, 99.5).max(EPS)
     } else {
         f32::INFINITY
     };
@@ -730,7 +735,8 @@ mod tests {
             *px = [v; 3];
         }
         let (gain, info) = auto_exposure(&img, 0.13, 1.0, 3.2);
-        assert!(0.5 * gain <= 1.21, "the window was taken to {}: {info}", 0.5 * gain);
+        assert!(0.5 * gain <= HIGHLIGHT_CEILING * 1.01,
+                "the window was taken to {}: {info}", 0.5 * gain);
     }
 
     /// A few lamps in a night scene are light sources, not highlights to keep,
@@ -760,7 +766,8 @@ mod tests {
             *px = if i % 3 == 0 { [0.12, 0.2, 0.45] } else { [0.02; 3] };
         }
         let (gain, _) = auto_exposure(&img, 0.13, 1.0, 3.2);
-        assert!(0.45 * gain * 0.6 <= 1.21, "the sky's blue was sent to {}", 0.45 * gain);
+        assert!(0.45 * gain * 0.6 <= HIGHLIGHT_CEILING * 1.01,
+                "the sky's blue was sent to {}", 0.45 * gain);
     }
 
     /// An ordinary frame about two and a half stops under, which is where a

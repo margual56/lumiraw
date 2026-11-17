@@ -5,7 +5,43 @@
 mod common;
 use common::*;
 use kit::{Image, Report};
+use lumiraw_core::analyze::HIGHLIGHT_CEILING;
 use lumiraw_core::grade::{self, Decisions, Preset, Settings};
+
+// The stages, each run as the pipeline runs it, with default settings and the
+// thumbnail it measures on.
+
+fn white_balance(img: &mut Image) {
+    let mut thumb = kit::thumbnail(img, 1024);
+    grade::apply_white_balance(img, &mut thumb, &Settings::default(), &Preset::default(), None,
+                               &mut Decisions::default(), false, &mut Report::new());
+}
+
+fn exposure(img: &mut Image) -> f32 {
+    let thumb = kit::thumbnail(img, 1024);
+    grade::apply_exposure(img, &thumb, &Settings::default(), &Preset::default(), None,
+                          &mut Decisions::default(), false, &mut Report::new())
+}
+
+fn tone_map(img: &mut Image) {
+    let (thumb, long) = (kit::thumbnail(img, 1024), img.w.max(img.h));
+    grade::apply_local_tone_map(img, &thumb, &Settings::default(), &Preset::default(), long,
+                                &mut Decisions::default(), false, &mut Report::new());
+}
+
+fn perceptual(img: &Image) -> Image {
+    let (noise, sharpen_sigma, focus_sigma, render_scale) = (0.1, 1.0, 0.0, 1.0);
+    grade::apply_perceptual(img, &Settings::default(), &Preset::default(), noise, sharpen_sigma,
+                            focus_sigma, render_scale, img.w.max(img.h),
+                            &mut Decisions::default(), false, &mut Report::new(), None)
+}
+
+/// Scene light brought to display levels, where middle grey sits at the
+/// target, as the exposure stage leaves it.
+fn at_display_levels(mut img: Image) -> Image {
+    img.scale(Preset::default().target_key / grey());
+    img
+}
 
 /// Greys from deep shadow to just under the sensor's top, smooth enough that
 /// no local stage has an edge to work on: about 10 stops across.
@@ -13,18 +49,18 @@ fn grey_ramp() -> Image {
     scene(440, 60, |x, _, _| [1e-3 * 2f32.powf(9.8 * x); 3])
 }
 
-/// A chart: colour patches on the top row, greys on the bottom, all at
-/// ordinary scene levels.
+/// A chart: the colour patches on the top half, greys on the bottom.
 fn chart() -> Image {
-    let colours: [[f32; 3]; 5] = [
-        [0.9, 0.35, 0.05], [0.30, 0.50, 0.90], [0.25, 0.45, 0.10],
-        [0.80, 0.55, 0.42], [0.80, 0.08, 0.08],
-    ];
     scene(500, 200, |x, y, i| {
         let k = ((x * 5.0) as usize).min(4);
-        let level = 2.0 * GREY * grain(i, 0.15);
-        if y < 0.5 { colours[k].map(|v| v * level) } else { [level * (0.5 + k as f32 * 0.4); 3] }
+        let level = 2.0 * grey() * grain(i, 0.15);
+        if y < 0.5 { PATCHES[k].map(|v| v * level) } else { [level * (0.5 + k as f32 * 0.4); 3] }
     })
+}
+
+/// The chroma of the chart's greys.
+fn chart_grey_chroma(img: &Image) -> f32 {
+    lch(mean(img, 0.0, 0.55, 1.0, 0.95)).1
 }
 
 /// The largest Oklab chroma anywhere in the image.
@@ -32,19 +68,7 @@ fn worst_chroma(img: &Image) -> f32 {
     img.px().iter().map(|p| lch(*p).1).fold(0.0, f32::max)
 }
 
-/// The middle row's luminance never falls by more than `slack` going right.
-fn keeps_order(img: &Image, slack: f32) -> Result<(), String> {
-    let row: Vec<f32> = (0..img.w).map(|x| kit::luminance_px(&img.px()[(img.h / 2) * img.w + x]))
-        .collect();
-    for x in 1..row.len() {
-        if row[x] < row[x - 1] * (1.0 - slack) {
-            return Err(format!("turned back at {x}: {} after {}", row[x], row[x - 1]));
-        }
-    }
-    Ok(())
-}
-
-/// The colour patches' mean hue, before and after a stage.
+/// How far each colour patch's mean hue turned between two charts.
 fn hue_shifts(before: &Image, after: &Image) -> Vec<f32> {
     (0..5).map(|k| {
         let x = (k as f32 + 0.5) / 5.0;
@@ -54,19 +78,13 @@ fn hue_shifts(before: &Image, after: &Image) -> Vec<f32> {
     }).collect()
 }
 
-fn thumb(img: &Image) -> Image {
-    kit::thumbnail(img, 1024)
-}
-
 // White balance
 
 #[test]
 fn white_balance_leaves_a_neutral_scene_alone() {
     let mut img = grey_ramp();
-    let mut t = thumb(&img);
     let before = img.clone();
-    grade::apply_white_balance(&mut img, &mut t, &Settings::default(), &Preset::default(), None,
-                               &mut Decisions::default(), false, &mut Report::new());
+    white_balance(&mut img);
     for (a, b) in img.d.iter().zip(&before.d) {
         assert!((a - b).abs() <= 1e-4 * b.max(1e-3), "a grey scene was rebalanced");
     }
@@ -75,10 +93,8 @@ fn white_balance_leaves_a_neutral_scene_alone() {
 #[test]
 fn white_balance_keeps_the_greys_beside_colours_grey() {
     let mut img = chart();
-    let mut t = thumb(&img);
-    grade::apply_white_balance(&mut img, &mut t, &Settings::default(), &Preset::default(), None,
-                               &mut Decisions::default(), false, &mut Report::new());
-    let (_, chroma, _) = lch(mean(&img, 0.0, 0.55, 1.0, 0.95));
+    white_balance(&mut img);
+    let chroma = chart_grey_chroma(&img);
     assert!(chroma < 0.003, "the chart's greys were tinted: chroma {chroma}");
 }
 
@@ -87,15 +103,13 @@ fn white_balance_keeps_the_greys_beside_colours_grey() {
 #[test]
 fn exposure_is_one_gain_on_every_channel_and_keeps_the_highlights() {
     let mut img = grey_ramp();
-    let t = thumb(&img);
     let before = img.clone();
-    let gain = grade::apply_exposure(&mut img, &t, &Settings::default(), &Preset::default(),
-                                     None, &mut Decisions::default(), false, &mut Report::new());
+    let gain = exposure(&mut img);
     for (a, b) in img.d.iter().zip(&before.d) {
         assert!((a - b * gain).abs() <= 1e-5 * a.abs().max(1e-3), "not one gain");
     }
     let top = kit::percentile(&img.d, 99.5);
-    assert!(top <= 1.21, "the brightest greys were taken to {top}, past the guard");
+    assert!(top <= HIGHLIGHT_CEILING * 1.01, "the brightest greys were taken to {top}");
 }
 
 // Local tone map
@@ -103,22 +117,16 @@ fn exposure_is_one_gain_on_every_channel_and_keeps_the_highlights() {
 #[test]
 fn the_tone_map_keeps_greys_grey_and_in_order() {
     let mut img = grey_ramp();
-    let t = thumb(&img);
-    let long = img.w.max(img.h);
-    grade::apply_local_tone_map(&mut img, &t, &Settings::default(), &Preset::default(), long,
-                                &mut Decisions::default(), false, &mut Report::new());
+    tone_map(&mut img);
     assert!(worst_chroma(&img) < 1e-3, "the tone map tinted a grey");
-    keeps_order(&img, 0.01).unwrap();
+    keeps_order(middle_row(&img), 0.01).unwrap();
 }
 
 #[test]
 fn the_tone_map_keeps_hue() {
     let mut img = chart();
     let before = img.clone();
-    let t = thumb(&img);
-    let long = img.w.max(img.h);
-    grade::apply_local_tone_map(&mut img, &t, &Settings::default(), &Preset::default(), long,
-                                &mut Decisions::default(), false, &mut Report::new());
+    tone_map(&mut img);
     for (k, shift) in hue_shifts(&before, &img).iter().enumerate() {
         assert!(shift.abs() < 1.0, "patch {k} turned {shift} degrees");
     }
@@ -132,13 +140,14 @@ fn filmic_keeps_greys_grey_in_order_and_in_range() {
     grade::filmic(&mut img);
     assert!(img.d.iter().all(|v| (0.0..=1.0).contains(v)), "out of range");
     assert!(worst_chroma(&img) < 1e-4, "filmic tinted a grey");
-    keeps_order(&img, 0.0).unwrap();
+    keeps_order(middle_row(&img), 0.0).unwrap();
 }
 
 #[test]
 fn filmic_keeps_saturated_colours_in_range_and_on_hue() {
-    for colour in [[1.0f32, 0.40, 0.06], [0.30, 0.50, 1.0], [0.25, 1.0, 0.10], [1.0, 0.08, 0.08]] {
-        let mut img = scene(400, 4, |x, _, _| colour.map(|v| v * 0.02 * 2f32.powf(8.0 * x)));
+    for colour in [ORANGE, SKY, FOLIAGE, RED] {
+        let bright = colour.map(|v| v / colour.iter().cloned().fold(0.0, f32::max));
+        let mut img = scene(400, 4, |x, _, _| bright.map(|v| v * 0.02 * 2f32.powf(8.0 * x)));
         let before = img.clone();
         grade::filmic(&mut img);
         let worst = img.d.iter().cloned().fold(f32::MIN, f32::max);
@@ -154,12 +163,6 @@ fn filmic_keeps_saturated_colours_in_range_and_on_hue() {
 
 // Perceptual: levels, contrast, vibrance, sharpening
 
-fn perceptual(img: &Image) -> Image {
-    let long = img.w.max(img.h);
-    grade::apply_perceptual(img, &Settings::default(), &Preset::default(), 0.1, 1.0, 0.0, 1.0,
-                            long, &mut Decisions::default(), false, &mut Report::new(), None)
-}
-
 #[test]
 fn the_perceptual_stage_keeps_greys_grey_in_order_and_in_gamut() {
     let mut img = grey_ramp();
@@ -167,20 +170,18 @@ fn the_perceptual_stage_keeps_greys_grey_in_order_and_in_gamut() {
     let out = perceptual(&img);
     assert!(out.d.iter().all(|v| (-1e-6..=1.0 + 1e-6).contains(v)), "out of gamut");
     assert!(worst_chroma(&out) < 1e-3, "the perceptual stage tinted a grey");
-    keeps_order(&out, 0.01).unwrap();
+    keeps_order(middle_row(&out), 0.01).unwrap();
 }
 
 #[test]
 fn the_perceptual_stage_keeps_hue_and_greys() {
-    let mut img = chart();
-    // At display levels, as it arrives after the filmic curve.
-    img.scale(4.0);
+    let mut img = at_display_levels(chart());
     grade::filmic(&mut img);
     let out = perceptual(&img);
     for (k, shift) in hue_shifts(&img, &out).iter().enumerate() {
         assert!(shift.abs() < 4.0, "patch {k} turned {shift} degrees");
     }
-    let (_, chroma, _) = lch(mean(&out, 0.0, 0.55, 1.0, 0.95));
+    let chroma = chart_grey_chroma(&out);
     assert!(chroma < 0.002, "the perceptual stage tinted the chart's greys: {chroma}");
 }
 
@@ -188,14 +189,14 @@ fn the_perceptual_stage_keeps_hue_and_greys() {
 /// take from a shadow's lightness they take from its chroma too.
 #[test]
 fn darkened_shadows_get_no_more_saturated() {
-    let mut img = scene(400, 100, |x, _, i| [0.6, 0.45, 0.4].map(|v| v * 0.01 * (1.0 + 4.0 * x)
-        * grain(i, 0.2)));
-    img.scale(4.0);
+    let mut img = at_display_levels(scene(400, 100, |x, _, i| {
+        [0.6, 0.45, 0.4].map(|v| v * 0.01 * (1.0 + 4.0 * x) * grain(i, 0.2))
+    }));
     grade::filmic(&mut img);
     let out = perceptual(&img);
     let ratio = |im: &Image| { let (l, c, _) = lch(mean(im, 0.0, 0.0, 0.2, 1.0)); c / l.max(1e-6) };
-    assert!(ratio(&out) <= ratio(&img) * 1.05, "saturation of the shadows rose from {} to {}",
-            ratio(&img), ratio(&out));
+    let (before, after) = (ratio(&img), ratio(&out));
+    assert!(after <= before * 1.05, "saturation of the shadows rose from {before} to {after}");
 }
 
 // White balance as a change of light

@@ -180,8 +180,13 @@ fn highlight_measure(px: &[f32; 3]) -> f32 {
 /// the tone map, which can lift them without moving the highlights.
 pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f32) -> (f32, Value) {
     let y = kit::luminance(thumb);
-    let floor = kit::percentile(&y.d, 1.0).max(1e-5);
-    let sample: Vec<f32> = y.d.iter().cloned().filter(|v| *v > floor).collect();
+    // The key is the body of the frame: the deepest shadows and the brightest
+    // highlights (a window, the sky, a lamp, which the guard below looks
+    // after) are left out of it, or a small bright window holds a correctly
+    // exposed room a fraction of a stop dark.
+    let ends = kit::percentiles(&y.d, &[1.0, 95.0]);
+    let (floor, top) = (ends[0].max(1e-5), ends[1]);
+    let sample: Vec<f32> = y.d.iter().cloned().filter(|v| *v > floor && *v <= top).collect();
     if sample.len() < 64 {
         return (1.0, json!({"applied": false}));
     }
@@ -767,6 +772,24 @@ mod tests {
         let key = info["key"].as_f64().unwrap() as f32;
         assert!(((key * gain / 0.13).log2()).abs() < 0.15,
                 "landed {} EV from the target: {info}", (key * gain / 0.13).log2());
+    }
+
+    /// A bright window in a correctly exposed room is the guard's business,
+    /// not the key's: the room keeps its exposure.
+    #[test]
+    fn a_window_does_not_darken_the_room() {
+        let room = |window: bool| {
+            let mut img = Image::new(200, 100);
+            for (i, px) in img.px_mut().iter_mut().enumerate() {
+                let v = if window && i % 20 == 0 { 0.13 * 8.0 }
+                        else { 0.13 * (1.0 + 0.2 * ((i % 7) as f32 / 7.0 - 0.5)) };
+                *px = [v / 2f32.powf(METERED_EV); 3];
+            }
+            auto_exposure(&img, 0.13, 1.0, 3.2).1["key"].as_f64().unwrap()
+        };
+        let (plain, windowed) = (room(false), room(true));
+        assert!((windowed / plain).log2().abs() < 0.03,
+                "a 5 % window moved the key by {} EV", (windowed / plain).log2());
     }
 
     /// A properly exposed frame must come out exactly as it did before the

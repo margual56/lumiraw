@@ -104,7 +104,7 @@ their own commits.
       guard switches on/off at a hard 0.5 %. (`analyze.rs`) *Hard switch gone
       (the guard measures unclipped pixels instead); still measured on the
       thumbnail.*
-- [ ] **E7** Key log-mean includes highlights (−0.15 EV on a correct scene).
+- [x] **E7** Key log-mean includes highlights (−0.15 EV on a correct scene).
       (`analyze.rs`)
 - [x] **E8** UI's "applied EV" includes the user's bias on one path and not the
       other. (`grade.rs`)

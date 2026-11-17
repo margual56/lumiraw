@@ -770,10 +770,14 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
         report.skipped("tone zones", "not_needed", json!({}));
     }
 
-    // Scale chroma with the lightness change, or lifted shadows go grey.
+    // Scale chroma with the lightness change, or lifted shadows go grey. Partly
+    // on the way up, so a lift does not oversaturate; fully on the way down,
+    // or a darkened region keeps its chroma and reads more saturated (and any
+    // tint in it stronger) than before.
     for i in 0..n {
         let ratio = (light_new.d[i].max(0.0) + 1e-3) / (lightness.d[i].max(0.0) + 1e-3);
-        let comp = kit::fast_exp2(0.35 * kit::fast_log2(ratio)).clamp(0.6, 1.8);
+        let exponent = if ratio < 1.0 { 1.0 } else { 0.35 };
+        let comp = kit::fast_exp2(exponent * kit::fast_log2(ratio)).clamp(0.25, 1.8);
         a.d[i] *= comp;
         b.d[i] *= comp;
     }

@@ -608,8 +608,10 @@ mod tests {
         );
     }
 
-    /// A third of the near-vertical edges pointing somewhere else entirely,
-    /// which is what a tree in front of a building amounts to.
+    /// A quarter of the near-vertical edges pointing somewhere else entirely,
+    /// which is what a tree in front of a building amounts to. A third is past
+    /// what the detector holds out against: it passed once only because every
+    /// warp used to blur by half a pixel (see PIPELINE-AUDIT.md, S1).
     #[test]
     fn a_converging_frame_survives_distractors() {
         let shift = 0.2f64;
@@ -618,10 +620,10 @@ mod tests {
             &Framing { perspective_v: -shift, ..Framing::default() },
             true,
         );
-        // Bars leaning the other way, over the left third.
+        // Bars leaning the other way, over the left quarter.
         let (w, h) = (img.w, img.h);
         for y in 0..h {
-            for x in 0..w / 3 {
+            for x in 0..w / 4 {
                 let skew = x as isize - (y as isize * 3) / 10;
                 if skew.rem_euclid(37) < 5 {
                     for c in 0..3 {

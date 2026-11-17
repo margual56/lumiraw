@@ -130,10 +130,13 @@ pub fn apply(img: &Image, f: &Framing, crop: bool) -> Image {
 
     let mut out = Image::new(out_w, out_h);
     let dst = out.px_mut();
+    // From each output pixel's centre, which is half a pixel in: `to_source`
+    // answers in pixel indices, so without the half every pixel of a plain
+    // crop would land between four source pixels and come out their average.
     for oy in 0..out_h {
-        let gy = (oy as f64 + y0) - ch as f64 / 2.0;
+        let gy = (oy as f64 + 0.5 + y0) - ch as f64 / 2.0;
         for ox in 0..out_w {
-            let gx = (ox as f64 + x0) - cw as f64 / 2.0;
+            let gx = (ox as f64 + 0.5 + x0) - cw as f64 / 2.0;
             let (sx, sy) = to_source(&inv, gx, gy, w, h);
             if inside(sx, sy, w, h) {
                 dst[oy * out_w + ox] = sample_bilinear_rgb(img, sx as f32, sy as f32);
@@ -263,6 +266,26 @@ pub fn stats_view_plane(p: &Plane, rect: Option<Rect>) -> Cow<'_, Plane> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A crop with no rotation is a crop: every pixel comes through as it was,
+    /// not blurred with its neighbours.
+    #[test]
+    fn a_plain_crop_keeps_every_pixel() {
+        let (w, h) = (40usize, 30usize);
+        let mut img = Image::new(w, h);
+        for (i, px) in img.px_mut().iter_mut().enumerate() {
+            *px = [((i % w + i / w) % 2) as f32; 3];
+        }
+        let f = Framing { crop: Some((0.25, 0.2, 0.5, 0.6)), ..Framing::default() };
+        let out = apply(&img, &f, true);
+        let (x0, y0) = (10usize, 6usize);
+        for y in 0..out.h {
+            for x in 0..out.w {
+                let want = img.px()[(y + y0) * w + x + x0];
+                assert_eq!(out.px()[y * out.w + x], want, "pixel {x},{y} was resampled");
+            }
+        }
+    }
 
     /// The closed form for the largest rectangle with no empty corners,
     /// against known answers.

@@ -539,23 +539,19 @@ fn apply_dehaze(img: &mut Image, thumb: &mut Image, s: &Settings, long_edge: usi
 pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
                             long_edge: usize, d: &mut Decisions, frozen: bool,
                             report: &mut Report) -> f32 {
-    let (factor, info) = if frozen {
+    let (mut factor, info) = if frozen {
         (d.tone.0, json!({}))
     } else {
-        analyze::auto_tone_compression(thumb, p.comfortable_stops, 0.45)
+        analyze::auto_tone_compression(thumb, p.comfortable_stops, TONE_FLOOR)
     };
-    d.tone.0 = factor;
     // Clarity scales the fine-structure layer of this same split.
     let detail_boost = p.detail_boost * (1.0 + 0.6 * s.clarity);
     let info = with(info, json!({"detail_boost": round_to(detail_boost, 3),
                                  "clarity": round_to(s.clarity, 2)}));
     if !s.on("tone_map") {
+        d.tone.0 = factor;
         report.skipped("tone mapping", "switched_off", info);
         return 1.0;
-    }
-    report.add("tone mapping", info);
-    if factor >= 0.995 && (detail_boost - 1.0).abs() < 1e-3 {
-        return factor;
     }
 
     let y = kit::luminance(img);
@@ -567,6 +563,7 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
     let base = kit::guided_filter(&log_y, &log_y, radius, 0.15, 4);
 
     // Anchor on the 55th percentile of the base layer, every 4th pixel.
+    let mut lift = 0.0;
     let anchor = if frozen {
         d.tone.1
     } else {
@@ -576,9 +573,33 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
                 sample.push(base.d[yy * base.w + xx]);
             }
         }
-        kit::percentile(&sample, 55.0)
+        let q = kit::percentiles(&sample, &[(analyze::CRUSH_BUDGET * 100.0) as f64, 55.0, 99.5]);
+        let (low, mut anchor, high) = (q[0], q[1], q[2]);
+        // Shadows the exposure could not lift without blowing the highlights
+        // are lifted here instead: the pivot moves up toward the highlights,
+        // so everything below it rises and the highlights stay put; then, if
+        // that is not enough, the compression deepens.
+        let need = (analyze::DISPLAY_FLOOR.log2() - low).clamp(0.0, analyze::MAX_RESCUE_EV);
+        if need > 0.0 && high > low {
+            if factor < 0.999 {
+                anchor = anchor.max((low + need / (1.0 - factor)).min(high));
+            }
+            let reach = (anchor - low) * (1.0 - factor);
+            if reach < need {
+                anchor = high;
+                factor = factor.min(1.0 - need / (high - low)).max(TONE_FLOOR);
+            }
+            lift = (anchor - low) * (1.0 - factor);
+        }
+        anchor
     };
-    d.tone.1 = anchor;
+    d.tone = (factor, anchor);
+    let info = with(info, json!({"compression": round_to(factor, 3),
+                                 "shadow_lift_ev": round_to(lift, 2)}));
+    report.add("tone mapping", info);
+    if factor >= 0.995 && (detail_boost - 1.0).abs() < 1e-3 {
+        return factor;
+    }
 
     for (i, px) in img.px_mut().iter_mut().enumerate() {
         let detail = log_y.d[i] - base.d[i];
@@ -590,6 +611,9 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
     }
     factor
 }
+
+/// The most the tone map compresses a scene's range.
+const TONE_FLOOR: f32 = 0.45;
 
 /// Scene-linear -> display-linear with a filmic shoulder.
 pub fn filmic(img: &mut Image) {

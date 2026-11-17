@@ -331,6 +331,7 @@ export default {
   'download.full': 'Resolución completa',
   'download.px': '{size} px',
   'download.button': 'Revelar y descargar',
+  'download.advanced': 'Avanzado',
   'download.working': 'Revelando…',
   'download.saved': 'Guardado {name}, {size} MB en {seconds} s.',
 

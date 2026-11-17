@@ -332,6 +332,7 @@ export default {
   'download.full': 'Full resolution',
   'download.px': '{size} px',
   'download.button': 'Develop & download',
+  'download.advanced': 'Advanced',
   'download.working': 'Developing…',
   'download.saved': 'Saved {name}, {size} MB in {seconds}s.',
 

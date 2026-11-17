@@ -3,6 +3,7 @@
   import Viewer from '$lib/components/Viewer.svelte';
   import Slider from '$lib/components/Slider.svelte';
   import ColourOut from '$lib/components/ColourOut.svelte';
+  import Section from '$lib/components/Section.svelte';
   import { app, exportSpace } from '$lib/state.svelte.js';
   import { NAME } from '$lib/brand.js';
   import { t, n, localized } from '$lib/i18n.svelte.js';
@@ -158,15 +159,21 @@
       </select>
     </div>
 
-    <ColourOut />
+    <!-- Print colour and slicing, which most downloads never need. The dot
+         says when something in here is changing the download or the view. -->
+    <div class="advanced">
+      <Section title={t('download.advanced')} group="download"
+               edited={exportSpace() !== 'srgb' || app.colour.proof}>
+        <ColourOut />
+        <button class="ghost roll" onclick={slice} disabled={working}>{t('slice.fromDevelop')}</button>
+        <p class="hint small">{t('slice.fromDevelopHint')}</p>
+      </Section>
+    </div>
 
     {#if graded}<p class="lede">{graded}</p>{/if}
     <button class="go" onclick={download} disabled={working}>
       {working ? t('download.working') : t('download.button')}
     </button>
-
-    <button class="ghost roll" onclick={slice} disabled={working}>{t('slice.fromDevelop')}</button>
-    <p class="hint small">{t('slice.fromDevelopHint')}</p>
 
     {#if app.roll.length > 1}
       <button class="ghost roll" onclick={downloadRoll} disabled={working || !kept}>
@@ -203,6 +210,7 @@
   /* The one thing this step is for, as wide as the thumb that presses it. */
   .go { @include phone { width: 100%; min-height: 48px; } }
   .roll { margin-top: 8px; width: 100%; }
+  .advanced { margin: 4px 0 14px; }
   .small { display: block; margin-top: 4px; @include small(11.5px); }
   .hint { white-space: pre-line; }
   .track {

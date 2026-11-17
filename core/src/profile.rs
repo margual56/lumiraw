@@ -90,8 +90,11 @@ pub fn derive(meta: &Meta, w: usize, h: usize, crop_factor: Option<f32>) -> Capt
         scene_ev: None,
         notes: Vec::new(),
     };
-    if meta.shutter_s > 0.0 && meta.aperture > 0.0 && meta.iso > 0.0 {
-        p.scene_ev = Some((meta.aperture * meta.aperture / meta.shutter_s).log2()
+    // A lens with no electronic contacts (manual, adapted) leaves no f-number;
+    // the shutter and the ISO alone still tell a thirty-second dusk from
+    // daylight, at the aperture assumed above.
+    if meta.shutter_s > 0.0 && meta.iso > 0.0 {
+        p.scene_ev = Some((p.aperture * p.aperture / meta.shutter_s).log2()
                           - (meta.iso / 100.0).log2());
     }
 
@@ -226,6 +229,15 @@ mod tests {
         let long = derive(&shot(3.0, 50.0), 6000, 4000, Some(1.5)).shake_risk;
         assert!(quick > middling && middling > long, "{quick} {middling} {long}");
         assert_eq!(long, 0.0);
+    }
+
+    /// A lens with no contacts records no f-number; the scene's brightness is
+    /// still worked out from the shutter and the ISO.
+    #[test]
+    fn a_manual_lens_still_tells_night_from_day() {
+        let thirty_seconds = Meta { shutter_s: 30.0, iso: 100.0, ..Default::default() };
+        let ev = derive(&thirty_seconds, 6000, 4000, Some(1.5)).scene_ev.expect("a scene EV");
+        assert!(ev < 2.0, "thirty seconds at ISO 100 read as EV {ev}");
     }
 
     /// A camera that balanced the shot itself is trusted with it; a fixed

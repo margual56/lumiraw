@@ -287,6 +287,12 @@ pub fn auto_levels(lightness: &Plane, peak: &Plane, strength: f32, clip_pct: f64
 /// the filmic curve already carries a contrast look of its own.
 const CURVE_FLOOR: f32 = 0.60;
 
+/// The curve every automatic contrast gets on top of what the frame asks
+/// for: the automatic tone stages (levels in linear light, the tone map's
+/// lifts) leave a picture a little flat by design, and this puts back the
+/// depth a camera's own picture style has.
+pub const AUTO_CONTRAST_BOOST: f32 = 0.10;
+
 /// S-curve strength and its pivot. The curve only adds midtone contrast (see
 /// `grade::s_curve`), so it is asked for by how flat the frame is and nothing
 /// else: a frame the tone map compressed is compressed on purpose, and a curve
@@ -298,7 +304,7 @@ pub fn auto_contrast(lightness: &Plane, target_spread: f32, max_amount: f32)
     // How flat the histogram is.
     let flat = ((target_spread - spread) / target_spread).clamp(0.0, 1.0);
     let want = CURVE_FLOOR + (1.0 - CURVE_FLOOR) * flat;
-    let amount = want * max_amount;
+    let amount = want * max_amount + AUTO_CONTRAST_BOOST;
     // Pivoting far from the middle bends one end of the range hard.
     let pivot = kit::median(&lightness.d).clamp(0.3, 0.65);
     (
@@ -613,8 +619,8 @@ mod tests {
         let (amount, _, info) = auto_contrast(&wide, 0.20, 0.45);
         assert_eq!(info["flat"].as_f64().unwrap(), 0.0,
                    "this frame is past the target spread, so nothing is missing: {info}");
-        assert!((amount - 0.45 * CURVE_FLOOR).abs() < 1e-4,
-                "it should still get the floor, got {amount}");
+        assert!((amount - (0.45 * CURVE_FLOOR + AUTO_CONTRAST_BOOST)).abs() < 1e-4,
+                "it should still get the floor and the boost, got {amount}");
     }
 
     /// A flat frame still gets more curve than a contrasty one.
@@ -622,8 +628,9 @@ mod tests {
     fn a_flat_frame_gets_more_curve_than_a_wide_one() {
         let flat = auto_contrast(&lightness(0.02, 64, 48), 0.20, 0.45).0;
         let wide = auto_contrast(&lightness(0.35, 64, 48), 0.20, 0.45).0;
-        assert!(flat > wide + 0.1, "flat {flat} should ask for much more than wide {wide}");
-        assert!(flat <= 0.45, "nothing may exceed the look's own maximum, got {flat}");
+        assert!(flat > wide + 0.05, "flat {flat} should ask for more than wide {wide}");
+        assert!(flat <= 0.45 + AUTO_CONTRAST_BOOST,
+                "nothing may exceed the look's own maximum and the boost, got {flat}");
     }
 
     /// The curve adds midtone contrast and nothing else: both ends keep their

@@ -163,8 +163,12 @@ fn develop_raw(raw: &raw::Raw, meta: Meta, denoiser: Option<Denoiser>) -> Decode
             }
             for (y, row) in cfa_plane.d.chunks_exact_mut(raw.width).enumerate() {
                 let gains: Vec<f32> = (0..cfa.width).map(|x| wb[cfa.color_at(y, x).min(2)]).collect();
+                // Only the top is clamped. Noise around black is as much
+                // below zero as above; cutting it off before the gains (two to
+                // three times larger on red and blue than on green) lifts the
+                // shadows' red and blue and turns them magenta.
                 for (v, g) in row.iter_mut().zip(gains.iter().cycle()) {
-                    *v = v.clamp(0.0, 1.0) * g;
+                    *v = v.min(1.0) * g;
                 }
             }
             // The pattern is looked up at absolute sensor positions, so the
@@ -178,7 +182,7 @@ fn develop_raw(raw: &raw::Raw, meta: Meta, denoiser: Option<Denoiser>) -> Decode
                 for x in 0..w {
                     for c in 0..3 {
                         img.d[(y * w + x) * 3 + c] =
-                            raw.normalised(x0 + x, y0 + y, c).clamp(0.0, 1.0) * wb[c];
+                            raw.normalised(x0 + x, y0 + y, c).min(1.0) * wb[c];
                     }
                 }
             }
@@ -658,7 +662,7 @@ pub fn demosaic_pattern(cfa: &Plane, pattern: &CFA, x0: usize, y0: usize, w: usi
                 }
                 px[c] = if n > 0.0 { g + sum / n } else { g };
             }
-            out.px_mut()[i] = px.map(|v| v.max(0.0));
+            out.px_mut()[i] = px;
         }
     }
     out
@@ -697,9 +701,7 @@ pub fn demosaic(cfa: &Plane, pattern: &CFA, x0: usize, y0: usize, w: usize,
                 malvar(|dx, dy| clamped(x + dx, y + dy), c, red_beside)
             };
             let i = (y * w + x) * 3;
-            out.d[i] = px[0].max(0.0);
-            out.d[i + 1] = px[1].max(0.0);
-            out.d[i + 2] = px[2].max(0.0);
+            out.d[i..i + 3].copy_from_slice(&px);
         }
     }
     out

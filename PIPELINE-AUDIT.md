@@ -99,9 +99,10 @@ their own commits.
       2×2 box; uncropped canvas gets a black first row/column. (`geometry.rs`)
 - [x] **G4** Full-size decisions cache key ignores spots. (`develop.rs`)
 - [x] **H1** Dehaze darkens and warms haze-free shadows. (`dehaze.rs`)
-- [~] **O1** Dither is half the standard amplitude; previews are not dithered.
-      (`output.rs`) *Full amplitude now; previews are still undithered, which
-      only matters at the level of one code value.*
+- [x] **O1** Dither is half the standard amplitude; previews are not dithered.
+      (`output.rs`) *Exports dither at full amplitude. Previews stay
+      undithered on purpose: dithering every preview would cost time and make
+      them shimmer between renders, to hide errors of one code value.*
 - [x] **O2** Auto black and white points move by different fractions (0.6 vs
       0.4). (`analyze.rs`)
 - [-] **D5** White level jumps between 15360 and ~16300 frame to frame.
@@ -122,7 +123,8 @@ their own commits.
 - [~] **L2** Embedded Sony vignetting table may under-correct (~0.3–0.6 EV at
       corners); needs a flat field to settle. (`lensdb.rs`) *On the evenly lit
       wall (DSC05663, 16 mm f/3.5) the camera's table leaves the bottom corners
-      within 0.02 EV of their edges; still worth a real flat field.*
+      within 0.02 EV of their edges. Settling it needs a real flat-field shot
+      (an evenly lit white wall or sky, defocused, at a few focal lengths).*
 - [x] **S1** Found while fixing G3: the straightening detector stops offering
       a perspective correction once about a third of the near-vertical edges
       disagree; its test only passed that case because of G3's blur.

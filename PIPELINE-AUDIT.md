@@ -101,6 +101,27 @@ their own commits.
 - [x] **N2** The filmic curve's hue restoration could turn a bright saturated
       colour out of the gamut (an orange to 1.29 in red). (`grade.rs`)
 
+## Found by comparing with the camera's own JPEG
+
+Each raw carries the JPEG the camera made of it. Against that, over the 20
+demo raws (b and a are Oklab ×1000 on what the camera rendered neutral;
+colour and contrast are relative to the camera's, 1 being the same):
+
+|                         | blue-yellow error | green-magenta | colour (median) | contrast |
+|-------------------------|-------------------|---------------|-----------------|----------|
+| `main`                  | 12.6              | −3.2          | 0.80            | 1.14     |
+| before N3–N5            | 8.1               | −6.3          | 0.92            | 0.92     |
+| after N3–N5             | 5.8               | −3.6          | 0.97            | 0.96     |
+
+- [x] **N3** The automatic white balance refined a camera's own auto
+      balance and made it worse (the cat pushed blue by eleven). When the
+      camera chose the balance (EXIF auto), it is kept. (`profile.rs`)
+- [x] **N4** Contrast had dropped below the camera's (0.92): the curve's floor
+      and amount come back up, now that the curve only adds midtone contrast.
+      (`analyze.rs`, `grade.rs`)
+- [x] **N5** Vibrance gave colourful frames nothing; the look now has its own
+      saturation, kept short of the gamut's edge. (`grade.rs`)
+
 ## Other
 
 - [x] **G2** Rotating with auto-fit off measures the black wedges (+5.5 EV, 51 %

@@ -689,13 +689,30 @@ pub fn filmic(img: &mut Image) {
             if c0 > 1e-4 {
                 let (l, a, b) = kit::rgb_to_oklab_px(out[0], out[1], out[2]);
                 let chroma = a.hypot(b);
-                let (r, g, bl) = kit::oklab_to_rgb_px(l, a0 / c0 * chroma, b0 / c0 * chroma);
-                out = [r, g, bl];
+                let at = |k: f32| {
+                    let (r, g, bl) = kit::oklab_to_rgb_px(l, a0 / c0 * chroma * k,
+                                                          b0 / c0 * chroma * k);
+                    [r, g, bl]
+                };
+                let fits = |c: [f32; 3]| c.iter().all(|v| (-1e-4..=1.0 + 1e-4).contains(v));
+                out = at(1.0);
+                // Turned back to the hue it should have, a colour near white
+                // can land outside the gamut: take its chroma down until it
+                // fits, keeping its lightness and its hue.
+                if !fits(out) {
+                    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+                    for _ in 0..10 {
+                        let mid = 0.5 * (lo + hi);
+                        if fits(at(mid)) { lo = mid } else { hi = mid }
+                    }
+                    out = at(lo);
+                }
             }
         }
         for c in 0..3 {
-            // A loose bound, only so a stray value cannot run away downstream.
-            px[c] = out[c].clamp(-1.0, 2.0);
+            // Nothing the curve makes is past white; below black stays loose,
+            // for the gamut mapping at the end to deal with.
+            px[c] = out[c].clamp(-1.0, 1.0);
         }
     }
 }

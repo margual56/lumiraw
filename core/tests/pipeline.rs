@@ -219,3 +219,15 @@ fn a_night_stays_a_night() {
     let black = crushed(&at_night);
     assert!(black < 0.15, "{:.0} % of the night crushed", black * 100.0);
 }
+
+/// A camera that balanced the shot itself is trusted with it: the picture
+/// comes out as with the automatic balance switched off.
+#[test]
+fn the_cameras_own_balance_is_kept() {
+    let warm = || scene(200, 150, |_, _, i| [1.1, 1.0, 0.85].map(|c| c * grey() * grain(i, 0.4)));
+    let camera = develop_meta(warm(), Meta { camera_auto_wb: Some(true), ..Meta::default() });
+    let mut off = Settings::default();
+    off.enabled.insert("white_balance".into(), false);
+    let as_shot = development(warm(), Meta::default()).render(&off, Some(600), true, None).0;
+    assert_eq!(camera.d, as_shot.d, "the camera's own balance was changed");
+}

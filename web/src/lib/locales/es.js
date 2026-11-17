@@ -402,6 +402,7 @@ export default {
   'reason.clean_enough': 'la imagen está limpia',
   'reason.too_noisy': 'demasiado ruido',
   'reason.not_needed': 'no hace falta',
+  'reason.camera_balanced': 'la cámara ya la equilibró',
   'reason.not_applied': 'no aplicada',
   'reason.sharp_enough': 'ya está nítida',
   'reason.not_asked': 'desactivada hasta que la pidas',

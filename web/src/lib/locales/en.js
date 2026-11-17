@@ -403,6 +403,7 @@ export default {
   'reason.clean_enough': 'clean enough',
   'reason.too_noisy': 'too noisy',
   'reason.not_needed': 'not needed',
+  'reason.camera_balanced': 'the camera balanced it itself',
   'reason.not_applied': 'not applied',
   'reason.sharp_enough': 'already sharp',
   'reason.not_asked': 'off until you ask for it',

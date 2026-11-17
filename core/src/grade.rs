@@ -437,7 +437,13 @@ pub fn apply_white_balance(img: &mut Image, thumb: &mut Image, s: &Settings, p: 
         return;
     }
     // The tuned preset, not the named one: the capture decides how far the
-    // automatic balance may be trusted (see `profile::tune`).
+    // automatic balance may be trusted (see `profile::tune`), and not at all
+    // when the camera balanced the shot itself.
+    if p.wb_strength <= 0.0 {
+        report.skipped("white balance", "camera_balanced", json!({"source": "automatic"}));
+        apply_temp_tint(img, thumb, s, report);
+        return;
+    }
     let (gains, info) = analyze::auto_white_balance(thumb, p.wb_strength, WB_LIMIT_EV);
     let info = with(info, json!({"source": "automatic", "strength": round_to(p.wb_strength, 2)}));
     let applied = info.get("applied").and_then(|v| v.as_bool()).unwrap_or(false);

@@ -19,6 +19,8 @@ pub struct CaptureProfile {
     pub shutter_s: f32,
     pub exposure_comp: f32,
     pub flash: bool,
+    /// The camera chose the white balance itself; see `decode::Meta`.
+    pub camera_auto_wb: Option<bool>,
     pub crop_factor: f32,
     pub pixel_pitch_um: f32,
     pub megapixels: f32,
@@ -74,6 +76,7 @@ pub fn derive(meta: &Meta, w: usize, h: usize, crop_factor: Option<f32>) -> Capt
         shutter_s: if meta.shutter_s > 0.0 { meta.shutter_s } else { 1.0 / 125.0 },
         exposure_comp: meta.exposure_comp,
         flash: meta.flash,
+        camera_auto_wb: meta.camera_auto_wb,
         crop_factor: 1.5,
         pixel_pitch_um: 4.0,
         megapixels: (w * h) as f32 / 1e6,
@@ -185,6 +188,12 @@ pub fn tune(preset: &Preset, p: &CaptureProfile) -> Preset {
         // the street lights stays held back, and the night stays a night.
         out.give_back = preset.give_back * kit::smoothstep(2.0, 7.0, ev);
     }
+    // A camera that balanced the shot itself looked at the scene with far more
+    // than a thumbnail: refining its choice only adds our estimate's error to
+    // it. A fixed balance (daylight under a lamp, say) is what refining is for.
+    if p.camera_auto_wb == Some(true) {
+        out.wb_strength = 0.0;
+    }
     out
 }
 
@@ -217,6 +226,20 @@ mod tests {
         let long = derive(&shot(3.0, 50.0), 6000, 4000, Some(1.5)).shake_risk;
         assert!(quick > middling && middling > long, "{quick} {middling} {long}");
         assert_eq!(long, 0.0);
+    }
+
+    /// A camera that balanced the shot itself is trusted with it; a fixed
+    /// balance, or a file that does not say, is refined.
+    #[test]
+    fn the_cameras_own_balance_is_kept() {
+        let preset = Preset::default();
+        let strength = |auto: Option<bool>| {
+            let meta = Meta { camera_auto_wb: auto, ..Default::default() };
+            tune(&preset, &derive(&meta, 6000, 4000, Some(1.5))).wb_strength
+        };
+        assert_eq!(strength(Some(true)), 0.0);
+        assert_eq!(strength(Some(false)), preset.wb_strength);
+        assert_eq!(strength(None), preset.wb_strength);
     }
 
     /// Daylight keeps the whole automatic balance.

@@ -17,6 +17,9 @@ pub struct Meta {
     pub shutter_s: f32,
     pub exposure_comp: f32,
     pub flash: bool,
+    /// Whether the camera chose the white balance itself (EXIF says auto) or
+    /// was set to a fixed one; `None` when the file does not say.
+    pub camera_auto_wb: Option<bool>,
     pub orientation: u16,
     /// When the shutter opened, in seconds, or zero when the file does not say.
     pub captured_s: i64,
@@ -829,6 +832,9 @@ fn read_exif(bytes: &[u8]) -> Meta {
     }
     if let Some(v) = num(Tag::Flash) {
         m.flash = (v as i32) % 2 == 1;
+    }
+    if let Some(v) = num(Tag::WhiteBalance) {
+        m.camera_auto_wb = Some(v == 0.0);
     }
     if let Some(v) = num(Tag::Orientation) {
         m.orientation = v as u16;

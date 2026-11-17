@@ -16,7 +16,9 @@ pub fn encode8(img: &Image, dither: bool) -> Vec<u8> {
     for i in 0..out.len() {
         let mut v = kit::srgb_encode_scalar(img.d[i]) * 255.0;
         if dither {
-            v += (rand() - rand()) * 0.5;
+            // Triangular, one code value either way: the amplitude that takes
+            // quantisation's error off the signal entirely.
+            v += rand() - rand();
         }
         out[i] = v.round().clamp(0.0, 255.0) as u8;
     }

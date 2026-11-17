@@ -146,6 +146,14 @@ brightness is the mean lightness difference ×100.
       scenes sits well below what a camera's meter reads; frames came out 0.42
       stops brighter than the camera's on the median. It meters average
       lightness now: 0.26 stops. (`analyze.rs`)
+- [x] **N14** Automatic exposure corrected all of a frame's departure from
+      the camera's metering, so dark- and pale-toned subjects were pulled to
+      one middle. Half is corrected now, from a measured two-stop headroom:
+      per-frame error against the camera 0.68 → 0.54 stops. (`analyze.rs`)
+- [-] **N15** A backlit silhouette (DSC05486) comes out lit, about seven
+      stops over the camera's rendering: the buried-shadow rescue lifts it.
+      Rescue against a photographer's silhouette is taste, and the guard
+      rails forbid crushing most of a frame; left as it is.
 - [-] **N10** High-ISO noise is about three times the camera JPEG's at ISO
       6400. Not a bug: noise reduction runs at its automatic maximum there
       (colour 0.85, luminance 0.55, sharpening off); the camera smooths far

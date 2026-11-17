@@ -623,10 +623,13 @@ pub fn filmic(img: &mut Image) {
         ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0.0, 1.0)
     }
     for px in img.d.chunks_exact_mut(3) {
-        let y = kit::luminance_px(px).max(EPS);
-        let ty = curve(y);
+        // Scaled by the brightest channel, not by luminance: a saturated colour
+        // has little luminance for its brightest channel, so a ratio taken from
+        // luminance sends that channel past white, where it clips flat.
+        let norm = px[0].max(px[1]).max(px[2]).max(EPS);
+        let ty = curve(norm);
         let w = kit::smoothstep(0.55, 1.0, ty);
-        let hue_preserving = [px[0] * (ty / y), px[1] * (ty / y), px[2] * (ty / y)];
+        let hue_preserving = [px[0] * (ty / norm), px[1] * (ty / norm), px[2] * (ty / norm)];
         let mut out = hue_preserving;
         if w > 0.0 {
             for c in 0..3 {

@@ -35,6 +35,12 @@ scenes whose right answer is known:
   and checks what a correct development must do to each.
 - `stages.rs` runs each stage on its own against what it must never do: tint
   a grey, reverse two greys, turn a colour off its hue, leave the gamut.
+- `known.rs` develops a synthetic 24-patch colour chart, whose right
+  appearance is published, and compares it patch by patch: hue, chroma and
+  lightness under neutral light, the cast taken out under a warm or cool one,
+  and how much of a stop's under- or over-exposure is corrected. Run it with
+  `-- --nocapture` for the patch-by-patch table, and with
+  `LUMIRAW_DUMP=<folder>` to get the expected and developed charts as PNGs.
 
 `real_raws.rs` holds real photographs to bounds on crushed, near-white and
 clipped pixels and on the tint left on greys, per frame and on average. The

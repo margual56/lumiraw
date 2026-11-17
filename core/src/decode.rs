@@ -550,7 +550,10 @@ fn reconstruct_highlights(img: &mut Image, wb: &[f32; 3]) {
                 // still has.
                 let from_neighbours = (scale * hue[c]).clamp(v[c], hi);
                 let want = from_neighbours * trust + hi * (1.0 - trust);
-                v[c] += core * (want - v[c]);
+                // Only as far as the channel itself is gone: one the sensor
+                // recorded is the best evidence there is, and pulling it
+                // toward the blown ones bleaches the colour out.
+                v[c] += core * blown[c] * (want - v[c]);
             }
             img.d[i..i + 3].copy_from_slice(&v);
         }
@@ -951,6 +954,9 @@ mod tests {
         // And the sky itself is none of this function's business.
         let corner = [img.d[0], img.d[1], img.d[2]];
         assert_eq!(corner, sky, "an unblown pixel was touched: {corner:?}");
+        // Red was measured, not guessed: it is the best evidence of the colour
+        // there is, and pulling it toward the blown channels bleaches it.
+        assert!((middle[0] - 0.80).abs() < 1e-6, "the measured red moved to {}", middle[0]);
     }
 
     /// With nothing unblown anywhere there is no colour to carry and no

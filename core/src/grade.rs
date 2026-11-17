@@ -763,8 +763,15 @@ pub fn s_curve(x: f32, amount: f32, pivot: f32) -> f32 {
     let g = (0.5f32).ln() / pivot.clamp(0.1, 0.9).ln();
     let t = x.clamp(0.0, 1.0).powf(g);
     let bend = (kit::smoothstep(0.0, 1.0, t) - t) * 4.0 * t * (1.0 - t);
-    (t + amount * bend).clamp(0.0, 1.0).powf(1.0 / g)
+    let y = (t + amount * bend).clamp(0.0, 1.0).powf(1.0 / g);
+    // The bend fades toward black in `t`, but a low pivot stretches the
+    // shadows out in `t`, and a deep shadow could lose a stop and a half. On
+    // the dark side, the darkening also fades out in lightness itself.
+    if y < x { x + (y - x) * kit::smoothstep(0.0, SHADOW_FADE, x) } else { y }
 }
+
+/// The lightness below which the contrast curve's darkening fades out.
+const SHADOW_FADE: f32 = 0.25;
 
 /// The most any one tone zone may move a lightness.
 pub const ZONE_RANGE: f32 = 0.14;
@@ -1233,11 +1240,21 @@ mod tests {
         assert_eq!(whole, vec![img.px()[0], img.px()[1], img.px()[8], img.px()[9]]);
     }
 
+    /// A low pivot stretches the shadows out under the curve; a deep shadow
+    /// must still keep most of its light, not lose a stop and a half to it.
+    #[test]
+    fn the_curve_does_not_bury_a_deep_shadow() {
+        let out = s_curve(0.08, 0.65, 0.3);
+        assert!((out / 0.08).powi(3).log2() > -0.4,
+                "a shadow at lightness 0.08 went to {out}, {} stops down",
+                (out / 0.08).powi(3).log2());
+    }
+
     /// The S-curve is pivoted on the image's own midtone, so it must hold the
     /// pivot in place while it steepens either side of it.
     #[test]
     fn s_curve_matches_reference() {
-        for (x, want) in [(0.1f32, 0.0865191f32), (0.25, 0.223126), (0.45, 0.45),
+        for (x, want) in [(0.1f32, 0.095255f32), (0.25, 0.223126), (0.45, 0.45),
                           (0.75, 0.779422), (0.9, 0.90955)] {
             let got = s_curve(x, 0.4, 0.45);
             assert!((got - want).abs() < 1e-4, "x={} got {} want {}", x, got, want);

@@ -19,6 +19,7 @@ left on what the camera's own balance made neutral):
 | + white balance            | 0.87  | 0.00    | 0.13                  | 95     | 5.2  |
 | + decode (D1, D3)          | 0.82  | 0.00    | 0.08                  | 95     | 5.2  |
 | + geometry, lens, dehaze   | 0.82  | 0.00    | 0.08                  | 95     | 5.2  |
+| + key, blown white (E7, D4)| 0.79  | 0.01    | 0.08                  | 97     | 5.3  |
 
 The last row is unchanged because the bench renders without the lens database
 and at default settings (no rotation, no dehaze); those fixes are measured in

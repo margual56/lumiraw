@@ -106,58 +106,86 @@ pub fn auto_white_balance(thumb: &Image, strength: f32, limit_ev: f32) -> ([f32;
 }
 
 // Exposure
-/// Match the log-average luminance to middle grey, partially, with a highlight
-/// guard that gives way when the raw was already clipped.
+/// Where a normally metered raw lands against the target key: the file is
+/// scaled to the sensor's white level, which sits two and a half stops or so
+/// above what the camera metered for, to keep highlight headroom. The soft
+/// limit restrains departures from this, not from zero, or every ordinary
+/// frame is held a fraction of a stop dark.
+pub const METERED_EV: f32 = 2.5;
+
+/// How far above the frame's key a pixel is taken for a light source or a
+/// specular glint rather than a highlight to keep: six stops.
+const SOURCE_ABOVE_KEY: f32 = 64.0;
+
+/// Light sources covering more of the frame than this are not small: a sky
+/// six stops over a backlit subject is a highlight to keep.
+const SMALL_SOURCES: f32 = 0.03;
+
+/// What the highlight guard keeps below the shoulder: luminance, or the
+/// brightest channel at a discount, whichever is higher, so a saturated sky
+/// whose blue would clip counts even though its luminance would not.
+#[inline]
+fn highlight_measure(px: &[f32; 3]) -> f32 {
+    kit::luminance_px(px).max(0.6 * px[0].max(px[1]).max(px[2]))
+}
+
+/// Match the log-average luminance to middle grey, partially, under a
+/// highlight guard; lift a buried frame only as far as the guard allows.
+///
+/// The guard is never waived. When the shadows and the highlights want
+/// different exposures, the highlights win here and the shadows are left to
+/// the tone map, which can lift them without moving the highlights.
 pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f32) -> (f32, Value) {
     let y = kit::luminance(thumb);
-    // One sort for both ends: the floor here and the highlight guard below.
-    let ends = kit::percentiles(&y.d, &[1.0, 99.5]);
-    let floor = ends[0].max(1e-5);
+    let floor = kit::percentile(&y.d, 1.0).max(1e-5);
     let sample: Vec<f32> = y.d.iter().cloned().filter(|v| *v > floor).collect();
     if sample.len() < 64 {
         return (1.0, json!({"applied": false}));
     }
     let log_mean: f64 = sample.iter().map(|v| v.log2() as f64).sum::<f64>() / sample.len() as f64;
     let key = (log_mean as f32).exp2();
-    let delta = soft_limit((target_key / key.max(EPS)).log2() * strength, limit_ev);
-    let mut gain = delta.exp2();
+    let wanted = (target_key / key.max(EPS)).log2() * strength;
+    let delta = METERED_EV + soft_limit(wanted - METERED_EV, limit_ev);
+    let key_gain = delta.exp2();
 
-    // Rescue, rather than restraint.
-    // The soft limit above keeps a deliberately dark frame dark, which is right
-    // for a night portrait and wrong for a frame that is simply underexposed.
+    // The highlight guard, on what the shoulder has to hold. Pixels the raw
+    // already clipped say nothing about how far to go, and neither do small
+    // light sources far above everything else.
+    let measure: Vec<f32> = thumb.px().iter().map(highlight_measure).collect();
+    let n = measure.len() as f32;
+    let clipped = y.d.iter().filter(|v| **v >= 0.99).count() as f32 / n;
+    let sources = key * SOURCE_ABOVE_KEY;
+    let small = (measure.iter().filter(|m| **m > sources).count() as f32 / n) < SMALL_SOURCES;
+    let kept: Vec<f32> = measure.iter().cloned()
+        .filter(|m| *m < 0.99 && (!small || *m <= sources))
+        .collect();
+    let cap = if kept.len() >= 64 {
+        1.20 / kit::percentile(&kept, 99.5).max(EPS)
+    } else {
+        f32::INFINITY
+    };
+    let mut gain = key_gain.min(cap);
+
+    // Rescue, rather than restraint: the soft limit keeps a deliberately dark
+    // frame dark, which is right for a night portrait and wrong for a frame
+    // that is simply underexposed. Never past the guard.
     let buried = |g: f32| {
-        y.d.iter().filter(|v| **v * g < DISPLAY_FLOOR).count() as f32 / y.d.len() as f32
+        y.d.iter().filter(|v| **v * g < DISPLAY_FLOOR).count() as f32 / n
     };
     let mut rescue_ev = 0.0f32;
-    while rescue_ev < MAX_RESCUE_EV && buried(gain) > CRUSH_BUDGET {
+    while rescue_ev < MAX_RESCUE_EV && buried(gain) > CRUSH_BUDGET && gain * THIRD_STOP <= cap {
         gain *= THIRD_STOP;
         rescue_ev += 1.0 / 3.0;
     }
-
-    let clipped = y.d.iter().filter(|v| **v >= 0.99).count() as f32 / y.d.len() as f32;
-    let mut guard: Option<f32> = None;
-    let mut waived = false;
-    if clipped < 0.005 {
-        let hi = ends[1];
-        let cap = 1.20 / hi.max(EPS);
-        if cap < gain {
-            guard = Some(gain);
-            // The rescue wins over the guard, or the guard would undo it.
-            let floor = if rescue_ev > 0.0 { gain } else { 0.0 };
-            gain = cap.max(floor);
-            waived = gain > cap;
-        }
-    }
-    // The ceiling has to leave room for the rescue; the highlight guard above
-    // is what stops it running away, not this clamp.
-    gain = gain.clamp(0.125, 2f32.powf(limit_ev + MAX_RESCUE_EV));
+    gain = gain.clamp(0.125, 2f32.powf(METERED_EV + limit_ev + MAX_RESCUE_EV));
     (
         gain,
         json!({"applied": true, "key": round_to(key, 5), "gain_ev": round_to(gain.log2(), 3),
-               "highlight_guard_ev": guard.map(|g| round_to((g / gain).log2(), 3)),
-               "highlight_guard_waived": waived,
+               "highlight_guard_ev": (key_gain > cap)
+                   .then(|| round_to((key_gain / cap).log2(), 3)),
                "rescue_ev": round_to(rescue_ev, 2),
                "buried_after": round_to(buried(gain), 4),
+               "small_sources_ignored": small && measure.iter().any(|m| *m > sources),
                "clipped_fraction": round_to(clipped, 5)}),
     )
 }
@@ -576,10 +604,65 @@ mod tests {
     fn a_buried_frame_is_rescued() {
         let dark = frame(0.0004, 0.6, 120, 90);
         let (gain, info) = auto_exposure(&dark, 0.13, 0.85, 3.2);
-        assert!(info["rescue_ev"].as_f64().unwrap() > 1.0,
+        assert!(info["rescue_ev"].as_f64().unwrap() > 0.0,
                 "an underexposed frame should be rescued: {info}");
-        assert!(gain.log2() > 3.2,
+        assert!(gain.log2() > METERED_EV + 3.2,
                 "the rescue should reach past the soft limit, got {} EV", gain.log2());
+    }
+
+    /// A rescue may lift the shadows only as far as the highlights allow: a
+    /// frame that is mostly deep shadow with a bright window keeps the window.
+    #[test]
+    fn a_rescue_never_blows_the_highlights() {
+        let mut img = Image::new(120, 90);
+        for (i, px) in img.px_mut().iter_mut().enumerate() {
+            // Half the frame in deep shadow, a grey, and 2 % window.
+            let v = if i % 50 == 0 { 0.5 } else if i % 2 == 0 { 0.0008 } else { 0.03 };
+            *px = [v; 3];
+        }
+        let (gain, info) = auto_exposure(&img, 0.13, 1.0, 3.2);
+        assert!(0.5 * gain <= 1.21, "the window was taken to {}: {info}", 0.5 * gain);
+    }
+
+    /// A few lamps in a night scene are light sources, not highlights to keep,
+    /// and must not bury the rest of the frame.
+    #[test]
+    fn small_lamps_do_not_set_the_exposure() {
+        let with_lamps = |share: usize| {
+            let mut img = Image::new(200, 100);
+            for (i, px) in img.px_mut().iter_mut().enumerate() {
+                let v = if i % share == 0 { 0.6 } else { 0.004 * (1.0 + (i % 7) as f32 * 0.1) };
+                *px = [v; 3];
+            }
+            auto_exposure(&img, 0.13, 1.0, 3.2).0.log2()
+        };
+        let (one_percent, half_percent) = (with_lamps(100), with_lamps(250));
+        assert!((one_percent - half_percent).abs() < 0.5,
+                "1 % of lamps gave {one_percent} EV, 0.4 % gave {half_percent} EV");
+        assert!(one_percent > 3.0, "the night was buried at {one_percent} EV");
+    }
+
+    /// A blue sky whose luminance fits but whose blue channel would not is
+    /// still a highlight to keep.
+    #[test]
+    fn a_saturated_sky_counts_as_a_highlight() {
+        let mut img = Image::new(120, 90);
+        for (i, px) in img.px_mut().iter_mut().enumerate() {
+            *px = if i % 3 == 0 { [0.12, 0.2, 0.45] } else { [0.02; 3] };
+        }
+        let (gain, _) = auto_exposure(&img, 0.13, 1.0, 3.2);
+        assert!(0.45 * gain * 0.6 <= 1.21, "the sky's blue was sent to {}", 0.45 * gain);
+    }
+
+    /// An ordinary frame about two and a half stops under, which is where a
+    /// raw scaled to its white level lands, is brought up to the target.
+    #[test]
+    fn a_normally_metered_raw_reaches_the_target() {
+        let normal = frame(0.13 / 2f32.powf(METERED_EV), 0.9, 120, 90);
+        let (gain, info) = auto_exposure(&normal, 0.13, 1.0, 3.2);
+        let key = info["key"].as_f64().unwrap() as f32;
+        assert!(((key * gain / 0.13).log2()).abs() < 0.15,
+                "landed {} EV from the target: {info}", (key * gain / 0.13).log2());
     }
 
     /// A properly exposed frame must come out exactly as it did before the

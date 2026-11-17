@@ -138,6 +138,14 @@ brightness is the mean lightness difference ×100.
 - [x] **N9** Automatic contrast gets a constant boost; the curve no longer
       brightens a colour already near the gamut's top. (`analyze.rs`,
       `grade.rs`)
+- [x] **N12** The contrast curve buried deep shadows on dark frames: a low
+      pivot stretched them out where its bend fades, and a shadow at lightness
+      0.08 lost a stop and a half. Its darkening now also fades in lightness.
+      (`grade.rs`)
+- [x] **N13** The exposure metered a frame's log-average, which on contrasty
+      scenes sits well below what a camera's meter reads; frames came out 0.42
+      stops brighter than the camera's on the median. It meters average
+      lightness now: 0.26 stops. (`analyze.rs`)
 - [-] **N10** High-ISO noise is about three times the camera JPEG's at ISO
       6400. Not a bug: noise reduction runs at its automatic maximum there
       (colour 0.85, luminance 0.55, sharpening off); the camera smooths far

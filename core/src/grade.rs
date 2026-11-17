@@ -34,8 +34,9 @@ pub struct Preset {
     pub saturation: f32,
     pub denoise: bool,
     /// How much of what the highlight guard held back the tone map gives back
-    /// to the rest of the frame: all of it by day, none of it by night, when
-    /// dark is what the picture is (see `profile::tune`).
+    /// to the rest of the frame: half of it by day (all of it brightened every
+    /// frame a stop past the camera's own rendering), none of it by night,
+    /// when dark is what the picture is (see `profile::tune`).
     pub give_back: f32,
 }
 
@@ -55,7 +56,7 @@ impl Default for Preset {
             sharpen: 0.55,
             saturation: 1.10,
             denoise: true,
-            give_back: 1.0,
+            give_back: 0.5,
         }
     }
 }
@@ -132,12 +133,16 @@ pub struct Decisions {
     /// How many stops the highlight guard held the exposure back: the tone map
     /// gives them back to everything below the highlights.
     pub held_back: f32,
+    /// What the tone map gave back of it: a lift of this many stops (log2) at
+    /// and below the first base level, fading to none at the second.
+    pub lift: (f32, f32, f32),
 }
 
 impl Default for Decisions {
     fn default() -> Self {
         Decisions { wb: None, exposure: 1.0, tone: (1.0, 0.0), levels: None,
-                    contrast: (0.0, 0.5), vibrance: 1.0, air: None, held_back: 0.0 }
+                    contrast: (0.0, 0.5), vibrance: 1.0, air: None, held_back: 0.0,
+                    lift: (0.0, 0.0, 0.0) }
     }
 }
 
@@ -609,6 +614,7 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
     let anchor = if frozen {
         d.tone.1
     } else {
+        d.lift = (0.0, 0.0, 0.0);
         let mut sample: Vec<f32> = Vec::with_capacity(base.d.len() / 16 + 1);
         for yy in (0..base.h).step_by(4) {
             for xx in (0..base.w).step_by(4) {
@@ -619,16 +625,15 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
         let (low, middle, high) = (q[0], q[1], q[2]);
         let mut anchor = middle;
         // The stops the highlight guard held the exposure back are given back
-        // to the middle of the frame here: pivoting on the highlights, so they
-        // stay where the guard put them, and compressing just enough to lift
-        // the middle by as much, so a room is not left dark for its window;
-        // but taking no more than a third of the contrast for it, or a scene
-        // whose highlights sit close above its middle is flattened, and a
-        // night is turned into dusk.
+        // to the middle of the frame here, so a room is not left dark for its
+        // window: a lift of that much at and below the middle, fading to none
+        // at the highlights, which stay where the guard put them. The shadows
+        // rise with the middle and no further, so what was black stays black
+        // against it; and no more is given than keeps a third of the contrast
+        // between the middle and the highlights.
         let held = (d.held_back * p.give_back).clamp(0.0, analyze::MAX_RESCUE_EV);
         if held > 0.0 && high > middle {
-            anchor = high;
-            factor = factor.min((1.0 - held / (high - middle)).max(HELD_FLOOR));
+            d.lift = (held.min((1.0 - HELD_FLOOR) * (high - middle)), middle, high);
         }
         // Shadows still below the display's floor are lifted the same way:
         // the pivot moves up toward the highlights, so everything below it
@@ -648,17 +653,25 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
         anchor
     };
     d.tone = (factor, anchor);
+    let (given, from, to) = d.lift;
     let info = with(info, json!({"compression": round_to(factor, 3),
                                  "shadow_lift_ev": round_to(lift, 2),
-                                 "held_back_ev": round_to(d.held_back, 2)}));
+                                 "held_back_ev": round_to(d.held_back, 2),
+                                 "given_back_ev": round_to(given, 2)}));
     report.add("tone mapping", info);
-    if factor >= 0.995 && (detail_boost - 1.0).abs() < 1e-3 {
+    if factor >= 0.995 && (detail_boost - 1.0).abs() < 1e-3 && given <= 0.0 {
         return factor;
     }
 
     for (i, px) in img.px_mut().iter_mut().enumerate() {
         let detail = log_y.d[i] - base.d[i];
-        let new_log = anchor + (base.d[i] - anchor) * factor + detail * detail_boost;
+        let given_here = if given > 0.0 {
+            given * (1.0 - kit::smoothstep(from, to, base.d[i]))
+        } else {
+            0.0
+        };
+        let new_log = anchor + (base.d[i] - anchor) * factor + detail * detail_boost
+            + given_here;
         let scale = kit::fast_exp2(new_log - log_y.d[i]);
         for v in px.iter_mut() {
             *v *= scale;
@@ -674,7 +687,8 @@ const BOOST_HEADROOM: f32 = 0.97;
 /// The most the tone map compresses a scene's range.
 const TONE_FLOOR: f32 = 0.45;
 
-/// The most it compresses to give back what the highlight guard held back.
+/// What the tone map keeps of the contrast between the middle and the
+/// highlights when it gives back what the highlight guard held back.
 const HELD_FLOOR: f32 = 0.65;
 
 /// Scene-linear -> display-linear with a filmic shoulder.

@@ -467,12 +467,25 @@ pub fn temp_tint_gains(temperature: f32, tint: f32) -> [f32; 3] {
 
 /// The white balance correction that per-channel `gains` describe, applied as a
 /// change of light rather than as three volume knobs.
+///
+/// A pixel blown in every channel holds no colour to correct: the decoder
+/// made it white, and white it stays, at the brightness the correction gives
+/// it. Corrected as a colour, a blown sky or sun would take the opposite of
+/// the correction's tint.
 pub fn adapt(img: &mut Image, gains: [f32; 3]) {
     if gains.iter().all(|g| (g - 1.0).abs() < 1e-6) {
         return;
     }
     let white = [1.0 / gains[0].max(1e-6), 1.0 / gains[1].max(1e-6), 1.0 / gains[2].max(1e-6)];
-    kit::bradford_adaptation(white).apply_to(&mut img.d);
+    let m = kit::bradford_adaptation(white);
+    for px in img.d.chunks_exact_mut(3) {
+        let blown = kit::smoothstep(0.95, 0.99, px[0].min(px[1]).min(px[2]));
+        let out = m.apply([px[0], px[1], px[2]]);
+        let y = kit::luminance_px(&out);
+        for c in 0..3 {
+            px[c] = out[c] + (y - out[c]) * blown;
+        }
+    }
 }
 
 pub fn apply_exposure(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
@@ -1136,6 +1149,12 @@ mod tests {
         }
         let apart = (0..3).map(|c| (img.d[3 + c] - by_gains.d[3 + c]).abs()).fold(0.0f32, f32::max);
         assert!(apart > 0.005, "a saturated colour was treated like three volume knobs");
+        // A pixel blown in every channel stays white.
+        let mut blown = Image::filled(1, 1, [1.0; 3]);
+        adapt(&mut blown, gains);
+        let spread = blown.d.iter().cloned().fold(f32::MIN, f32::max)
+            - blown.d.iter().cloned().fold(f32::MAX, f32::min);
+        assert!(spread < 1e-5, "a blown pixel was tinted: {:?}", blown.d);
         let mut same = by_gains.clone();
         adapt(&mut same, [1.0, 1.0, 1.0]);
         assert_eq!(same.d, by_gains.d, "no correction must mean no change");

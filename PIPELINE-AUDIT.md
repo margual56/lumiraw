@@ -81,7 +81,7 @@ their own commits.
 - [x] **G1** Preview and export decide from different thumbnails: WB 2–3 % and
       exposure ~0.1 EV apart. Decide from a canonical proxy.
       (`develop.rs`, `grade.rs`)
-- [ ] **D4** Blown highlights neutralised for the camera's WB, then tinted by
+- [x] **D4** Blown highlights neutralised for the camera's WB, then tinted by
       auto WB. (`decode.rs`, `grade.rs`)
 
 ## Other

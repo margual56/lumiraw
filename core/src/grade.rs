@@ -46,7 +46,7 @@ impl Default for Preset {
             name: "natural".into(),
             wb_strength: 1.0,
             exposure_strength: 1.0,
-            target_key: 0.13,
+            target_key: 0.10,
             comfortable_stops: 6.5,
             detail_boost: 1.15,
             levels_strength: 0.60,

@@ -498,12 +498,13 @@ fn decide_exposure(img: &Image, thumb: &Image, s: &Settings, p: &Preset, frame: 
             .map(|px| kit::luminance_px(px).max(EPS).log2() as f64)
             .sum();
         let level = ((log_sum / patch.len() as f64) as f32).exp2();
-        let mut gain = (p.target_key / level).clamp(2f32.powi(-6), 2f32.powi(8));
-        gain *= s.exposure_bias.exp2();
+        let gain = (p.target_key / level).clamp(2f32.powi(-6), 2f32.powi(8));
+        // What the selection decided, without the photographer's own bias,
+        // the same as the automatic path reports it.
         report.add("exposure", json!({"applied": true, "source": "selection",
             "patch_level": round_to(level, 5), "gain_ev": round_to(gain.log2(), 3),
             "bias_ev": round_to(s.exposure_bias, 2)}));
-        return gain;
+        return gain * s.exposure_bias.exp2();
     }
     let (mut gain, info) =
         analyze::auto_exposure(thumb, p.target_key, p.exposure_strength, 3.2);

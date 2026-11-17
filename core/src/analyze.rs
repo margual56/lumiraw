@@ -177,7 +177,7 @@ fn highlight_measure(px: &[f32; 3]) -> f32 {
     kit::luminance_px(px).max(0.6 * px[0].max(px[1]).max(px[2]))
 }
 
-/// Match the log-average luminance to middle grey, partially, under a
+/// Match the average lightness to middle grey, partially, under a
 /// highlight guard; lift a buried frame only as far as the guard allows.
 ///
 /// The guard is never waived. When the shadows and the highlights want
@@ -195,8 +195,15 @@ pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f3
     if sample.len() < 64 {
         return (1.0, json!({"applied": false}));
     }
-    let log_mean: f64 = sample.iter().map(|v| v.log2() as f64).sum::<f64>() / sample.len() as f64;
-    let key = (log_mean as f32).exp2();
+    // The average lightness (cube root of luminance, then back), not the
+    // log-average: on a contrasty scene the log-average sits well below what
+    // the eye and a camera's meter make of it, and matching it to the target
+    // exposed every such frame brighter than the camera would. The plain
+    // average of light swings too far the other way, and a bright sky darkens
+    // the foreground under it more than a camera does. On an even scene all
+    // three agree.
+    let key = (sample.iter().map(|v| (*v as f64).cbrt()).sum::<f64>() / sample.len() as f64)
+        .powi(3) as f32;
     let wanted = (target_key / key.max(EPS)).log2() * strength;
     let delta = METERED_EV + soft_limit(wanted - METERED_EV, limit_ev);
     let key_gain = delta.exp2();
@@ -786,6 +793,24 @@ mod tests {
         let key = info["key"].as_f64().unwrap() as f32;
         assert!(((key * gain / 0.13).log2()).abs() < 0.15,
                 "landed {} EV from the target: {info}", (key * gain / 0.13).log2());
+    }
+
+    /// A contrasty scene is metered by its average lightness, not by its
+    /// log-average, which sits far below what the eye makes of it.
+    #[test]
+    fn the_meter_reads_the_average_lightness() {
+        let mut img = Image::new(200, 100);
+        for (i, px) in img.px_mut().iter_mut().enumerate() {
+            // A quarter of the frame in light, the rest in shade four and a
+            // half stops down, with a little texture.
+            let base = if i % 4 == 0 { 0.1 } else { 0.0045 };
+            *px = [base * (1.0 + 0.02 * ((i % 7) as f32 - 3.0)); 3];
+        }
+        let (_, info) = auto_exposure(&img, 0.13, 1.0, 3.2);
+        let key = info["key"].as_f64().unwrap() as f32;
+        let average = (0.25 * 0.1f32.cbrt() + 0.75 * 0.0045f32.cbrt()).powi(3);
+        assert!((key / average - 1.0).abs() < 0.1,
+                "metered at {key}, the average lightness is {average}");
     }
 
     /// A bright window in a correctly exposed room is the guard's business,

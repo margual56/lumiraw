@@ -202,29 +202,29 @@ pub fn auto_levels(lightness: &Plane, peak: &Plane, strength: f32, clip_pct: f64
     )
 }
 
-/// How much of a look's curve every frame gets, whatever it measures.
-const CURVE_FLOOR: f32 = 0.40;
+/// How much of a look's curve every frame gets, whatever it measures. Small:
+/// the filmic curve already carries a contrast look of its own.
+const CURVE_FLOOR: f32 = 0.25;
 
-/// How much curve the tone map's own compression is allowed to ask for.
-const SQUEEZE_TO_CURVE: f32 = 1.72;
-
-/// S-curve strength and its pivot.
-pub fn auto_contrast(lightness: &Plane, target_spread: f32, max_amount: f32, compression: f32)
+/// S-curve strength and its pivot. The curve only adds midtone contrast (see
+/// `grade::s_curve`), so it is asked for by how flat the frame is and nothing
+/// else: a frame the tone map compressed is compressed on purpose, and a curve
+/// that steepened it again would put back the crushed shadows and blown
+/// highlights the tone map took out.
+pub fn auto_contrast(lightness: &Plane, target_spread: f32, max_amount: f32)
     -> (f32, f32, Value) {
     let spread = kit::std_dev(&lightness.d);
     // How flat the histogram is.
     let flat = ((target_spread - spread) / target_spread).clamp(0.0, 1.0);
-    // How much slope the tone map took out on the way here.
-    let squeezed = ((1.0 - compression) * SQUEEZE_TO_CURVE).clamp(0.0, 1.0);
-    let want = CURVE_FLOOR + (1.0 - CURVE_FLOOR) * flat.max(squeezed);
+    let want = CURVE_FLOOR + (1.0 - CURVE_FLOOR) * flat;
     let amount = want * max_amount;
-    let pivot = kit::median(&lightness.d).clamp(0.2, 0.8);
+    // Pivoting far from the middle bends one end of the range hard.
+    let pivot = kit::median(&lightness.d).clamp(0.3, 0.65);
     (
         amount,
         pivot,
         json!({"spread": round_to(spread, 4), "s_curve": round_to(amount, 3),
-               "pivot": round_to(pivot, 3), "flat": round_to(flat, 3),
-               "squeezed": round_to(squeezed, 3)}),
+               "pivot": round_to(pivot, 3), "flat": round_to(flat, 3)}),
     )
 }
 
@@ -462,7 +462,7 @@ mod tests {
     #[test]
     fn a_contrasty_frame_still_gets_a_curve() {
         let wide = lightness(0.35, 64, 48);
-        let (amount, _, info) = auto_contrast(&wide, 0.20, 0.45, 1.0);
+        let (amount, _, info) = auto_contrast(&wide, 0.20, 0.45);
         assert_eq!(info["flat"].as_f64().unwrap(), 0.0,
                    "this frame is past the target spread, so nothing is missing: {info}");
         assert!((amount - 0.45 * CURVE_FLOOR).abs() < 1e-4,
@@ -472,23 +472,33 @@ mod tests {
     /// A flat frame still gets more curve than a contrasty one.
     #[test]
     fn a_flat_frame_gets_more_curve_than_a_wide_one() {
-        let flat = auto_contrast(&lightness(0.02, 64, 48), 0.20, 0.45, 1.0).0;
-        let wide = auto_contrast(&lightness(0.35, 64, 48), 0.20, 0.45, 1.0).0;
+        let flat = auto_contrast(&lightness(0.02, 64, 48), 0.20, 0.45).0;
+        let wide = auto_contrast(&lightness(0.35, 64, 48), 0.20, 0.45).0;
         assert!(flat > wide + 0.1, "flat {flat} should ask for much more than wide {wide}");
         assert!(flat <= 0.45, "nothing may exceed the look's own maximum, got {flat}");
     }
 
-    /// The tone map squeezing a scene toward the middle is invisible to the
-    /// spread, because it preserves the extremes that set it.
+    /// The curve adds midtone contrast and nothing else: both ends keep their
+    /// slope, so it cannot press shadows into black or highlights into white.
     #[test]
-    fn a_squeezed_frame_gets_a_curve_its_histogram_cannot_ask_for() {
-        let wide = lightness(0.35, 64, 48);
-        let untouched = auto_contrast(&wide, 0.20, 0.45, 1.0).0;
-        let squeezed = auto_contrast(&wide, 0.20, 0.45, 0.64).0;
-        assert!(squeezed > untouched * 1.5,
-                "ten stops pulled into a display should ask for far more curve: \
-                 {squeezed} against {untouched}");
-        assert!(squeezed <= 0.45, "still bounded by the look, got {squeezed}");
+    fn the_curve_leaves_black_and_white_alone() {
+        use crate::grade::s_curve;
+        for amount in [0.2f32, 0.45, 0.6] {
+            for pivot in [0.3f32, 0.5, 0.65] {
+                let slope = |x: f32| (s_curve(x + 1e-3, amount, pivot) - s_curve(x, amount, pivot))
+                    / 1e-3;
+                assert!(slope(0.002) > 0.8 && slope(0.997) > 0.8,
+                        "amount {amount} pivot {pivot}: ends at {} and {}",
+                        slope(0.002), slope(0.997));
+                assert!(slope(pivot) > 1.05, "no midtone contrast left at {pivot}");
+                let mut last = 0.0;
+                for i in 0..=1000 {
+                    let y = s_curve(i as f32 / 1000.0, amount, pivot);
+                    assert!(y >= last, "folds at {}", i as f32 / 1000.0);
+                    last = y;
+                }
+            }
+        }
     }
 
     /// A scene with edges in it, at a size worth measuring.

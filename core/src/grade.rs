@@ -632,14 +632,18 @@ pub fn filmic(img: &mut Image) {
 const CURVE_STEPS: usize = 4096;
 
 /// Smooth contrast curve anchored at the image's own midtone.
+///
+/// Midtone contrast only: the bend fades out toward black and white, so the
+/// curve leaves both ends at their own slope instead of pressing shadows into
+/// black and highlights into white.
 pub fn s_curve(x: f32, amount: f32, pivot: f32) -> f32 {
     if amount <= 1e-3 {
         return x;
     }
     let g = (0.5f32).ln() / pivot.clamp(0.1, 0.9).ln();
     let t = x.clamp(0.0, 1.0).powf(g);
-    let shaped = kit::smoothstep(0.0, 1.0, t);
-    ((1.0 - amount) * t + amount * shaped).powf(1.0 / g)
+    let bend = (kit::smoothstep(0.0, 1.0, t) - t) * 4.0 * t * (1.0 - t);
+    (t + amount * bend).clamp(0.0, 1.0).powf(1.0 / g)
 }
 
 /// The most any one tone zone may move a lightness.
@@ -679,7 +683,7 @@ fn denoise_skipped(on: bool, measured: f32) -> &'static str {
 
 /// Levels, contrast, vibrance, denoising and sharpening in Oklab.
 pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharpen_sigma: f32,
-                        compression: f32, focus_sigma: f32, render_scale: f32,
+                        focus_sigma: f32, render_scale: f32,
                         long_edge: usize, d: &mut Decisions, frozen: bool,
                         report: &mut Report, stats_rect: Option<Rect>) -> Image {
     let n = img.w * img.h;
@@ -730,7 +734,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
         d.contrast
     } else {
         let (amount, pivot, info) = analyze::auto_contrast(&measured(&light_new, stats_rect), 0.20,
-                                                           p.contrast_amount, compression);
+                                                           p.contrast_amount);
         if s.on("contrast") {
             report.add("contrast", info);
         } else {
@@ -1004,8 +1008,7 @@ pub fn process(mut img: Image, settings: &Settings, args: ProcessArgs, report: &
     apply_dehaze(&mut img, &mut thumb, settings, long_edge, &mut d, frozen, report);
 
     step(&mut progress, &mut mark);
-    let compression = apply_local_tone_map(&mut img, &thumb, settings, &p, long_edge, &mut d,
-                                           frozen, report);
+    apply_local_tone_map(&mut img, &thumb, settings, &p, long_edge, &mut d, frozen, report);
     // Local filters on the light as it will be shown, before the shoulder
     // rolls it off; see `local` for why not earlier.
     crate::local::apply_filters(&mut img, &settings.filters, frame, args.masks);
@@ -1013,8 +1016,7 @@ pub fn process(mut img: Image, settings: &Settings, args: ProcessArgs, report: &
     step(&mut progress, &mut mark);
     filmic(&mut img);
     step(&mut progress, &mut mark);
-    let out = apply_perceptual(&img, settings, &p, noise, args.sharpen_sigma, compression,
-                               args.focus_sigma, args.render_scale, long_edge, &mut d, frozen,
+    let out = apply_perceptual(&img, settings, &p, noise, args.sharpen_sigma, args.focus_sigma, args.render_scale, long_edge, &mut d, frozen,
                                report, args.stats_rect);
     step(&mut progress, &mut mark);
     (out, d)
@@ -1074,8 +1076,8 @@ mod tests {
     /// pivot in place while it steepens either side of it.
     #[test]
     fn s_curve_matches_reference() {
-        for (x, want) in [(0.1f32, 0.071561f32), (0.25, 0.218064), (0.5, 0.509989),
-                          (0.75, 0.792776), (0.9, 0.929976)] {
+        for (x, want) in [(0.1f32, 0.0865191f32), (0.25, 0.223126), (0.45, 0.45),
+                          (0.75, 0.779422), (0.9, 0.90955)] {
             let got = s_curve(x, 0.4, 0.45);
             assert!((got - want).abs() < 1e-4, "x={} got {} want {}", x, got, want);
         }
@@ -1246,7 +1248,7 @@ mod tests {
             let mut s = Settings::default();
             s.denoise = denoise;
             let mut report = Report::new();
-            apply_perceptual(&src, &s, &Preset::default(), noise, 1.0, 1.0, 0.0, 1.0,
+            apply_perceptual(&src, &s, &Preset::default(), noise, 1.0, 0.0, 1.0,
                              src.w.max(src.h), &mut Decisions::default(), false, &mut report, None);
             report.to_json()
         };

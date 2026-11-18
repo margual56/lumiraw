@@ -307,7 +307,7 @@ export default {
   'match.failed': 'No se pudo leer {file}.',
   'skin.protect': 'Proteger los tonos de piel',
   'skin.measuring': 'Buscando caras para medir la piel…',
-  'skin.typical': 'No hay caras, así que se protege un tono de piel típico.',
+  'skin.typical': 'No hay caras, así que ningún color se protege como piel.',
   'skin.measured': 'Piel medida en las caras de esta foto ({count}).',
 
   'roll.title': 'El carrete',

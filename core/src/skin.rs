@@ -1,7 +1,7 @@
 //! What skin looks like in a photograph, read off its faces, so vibrance and
 //! the wheels can hold back on exactly that colour rather than on a guess.
 
-use crate::grade::Skin;
+use crate::grade::{Skin, SkinSource};
 use critic::graph::Graph;
 use kit::Image;
 
@@ -41,6 +41,6 @@ pub fn measure(img: &Image, detector: &Graph) -> Option<(Skin, usize)> {
         return None;
     }
     let (ma, mb) = (kit::median(&a), kit::median(&b));
-    Some((Skin { hue: mb.atan2(ma), chroma: ma.hypot(mb), measured: true }, faces.len()))
+    Some((Skin { hue: mb.atan2(ma), chroma: ma.hypot(mb), source: SkinSource::Measured }, faces.len()))
 }
 

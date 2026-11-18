@@ -340,20 +340,31 @@ fn rect_of(v: &Value) -> Option<Rect> {
 
 /// What skin looks like in this photograph, so the stages that move colour
 /// can leave faces alone: an Oklab hue and chroma, measured from the faces in
-/// the frame (see `skin`), or a typical skin when nobody has been found.
+/// the frame (see `skin`), a typical skin until the frame has been looked at,
+/// and none once it has and nobody is in it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Skin {
     pub hue: f32,
     pub chroma: f32,
-    /// Whether this was measured on this photograph's faces.
-    pub measured: bool,
+    pub source: SkinSource,
+}
+
+/// Where the skin being protected comes from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SkinSource {
+    /// Nobody has looked for faces yet: a typical skin, broadly.
+    Typical,
+    /// Read off this photograph's faces.
+    Measured,
+    /// Looked for and none found: a landscape's oranges are not skin.
+    NoFaces,
 }
 
 impl Default for Skin {
     fn default() -> Self {
         let lin = [0.76f32, 0.57, 0.46].map(kit::srgb_decode_scalar);
         let (_, a, b) = kit::rgb_to_oklab_px(lin[0], lin[1], lin[2]);
-        Skin { hue: b.atan2(a), chroma: a.hypot(b), measured: false }
+        Skin { hue: b.atan2(a), chroma: a.hypot(b), source: SkinSource::Typical }
     }
 }
 
@@ -362,7 +373,8 @@ impl Skin {
         let read = |k: &str| v.and_then(|v| v.get(k)).and_then(|x| x.as_f64()).map(|x| x as f32);
         match (read("hue"), read("chroma")) {
             (Some(hue), Some(chroma)) if chroma > 0.005 =>
-                Skin { hue, chroma: chroma.min(0.3), measured: true },
+                Skin { hue, chroma: chroma.min(0.3), source: SkinSource::Measured },
+            _ if read("faces") == Some(0.0) => Skin { source: SkinSource::NoFaces, ..Skin::default() },
             _ => Skin::default(),
         }
     }
@@ -374,8 +386,11 @@ impl Skin {
         while d > std::f32::consts::PI {
             d = (std::f32::consts::TAU - d).abs();
         }
-        if !self.measured {
-            return (1.0 - kit::smoothstep(0.25, 0.60, d)) * (1.0 - kit::smoothstep(0.10, 0.20, chroma));
+        match self.source {
+            SkinSource::NoFaces => return 0.0,
+            SkinSource::Typical => return (1.0 - kit::smoothstep(0.25, 0.60, d))
+                * (1.0 - kit::smoothstep(0.10, 0.20, chroma)),
+            SkinSource::Measured => {}
         }
         let c = self.chroma;
         (1.0 - kit::smoothstep(0.15, 0.40, d))
@@ -1245,7 +1260,8 @@ pub fn process(mut img: Image, settings: &Settings, args: ProcessArgs, report: &
 mod tests {
     use super::*;
 
-    /// Unmeasured skin keeps the broad default target; measured skin is narrower.
+    /// Unmeasured skin keeps the broad default target, measured skin is narrower,
+    /// and a frame with nobody in it has none.
     #[test]
     fn skin_is_protected_as_measured() {
         let typical = Skin::default();
@@ -1260,13 +1276,17 @@ mod tests {
             assert_eq!(typical.likeness(hue, chroma), old(hue, chroma));
         }
         let measured = Skin::from_json(Some(&json!({"hue": 0.8, "chroma": 0.07})));
-        assert!(measured.measured);
+        assert_eq!(measured.source, SkinSource::Measured);
         assert!(measured.likeness(0.8, 0.07) > 0.99);
         assert!(measured.likeness(1.3, 0.07) < 0.05, "a yellow taken for skin");
         assert!(measured.likeness(0.8, 0.005) < 0.05, "a grey taken for skin");
-        // No faces found reads as the typical skin.
-        assert_eq!(Skin::from_json(Some(&json!({"faces": 0}))), typical);
+        // Not looked for yet reads as the typical skin; looked for and not
+        // found protects nothing, however skin-like the colour.
+        assert_eq!(Skin::from_json(None), typical);
         assert_eq!(Skin::from_json(Some(&json!(false))), typical);
+        let nobody = Skin::from_json(Some(&json!({"faces": 0})));
+        assert_eq!(nobody.source, SkinSource::NoFaces);
+        assert_eq!(nobody.likeness(typical.hue, 0.05), 0.0);
     }
 
     /// The interface draws the white balance and exposure boxes on the framed

@@ -116,7 +116,7 @@ brightness is the mean lightness difference ×100.
 | `main`             | 14.0 | 0.78   | 1.12     | −0.8       | 0.094 / 0.442          |
 | before N6–N9       | 4.6  | 0.96   | 0.90     | +9.2       | 0.208 / 0.595          |
 | after N6–N9        | 5.3  | 0.87   | 0.98     | +4.1       | 0.163 / 0.529          |
-| after N13–N20      | 4.1  | 0.97   | 0.95     | +2.2       | 0.155 / 0.480          |
+| after N13–N21      | 4.2  | 1.00   | 0.95     | +2.2       | 0.155 / 0.480          |
 | darktable defaults | 5.5  | 0.75   | 0.85     | −4.8       | 0.132 / 0.376          |
 
 - [x] **N3** The automatic white balance refined a camera's own auto
@@ -182,14 +182,23 @@ brightness is the mean lightness difference ×100.
       now takes chroma by that much, keeping lightness and hue: chroma ×0.87 →
       ×0.97 of the camera's, tint against it 5.3 → 4.1, nothing else moved.
       (`grade.rs`)
+- [x] **N21** A frame looked over for faces and found to have none still had
+      vibrance held back on every skin-like hue, which in a landscape is every
+      orange rock, roof and patch of earth. None found now protects nothing;
+      a frame not yet looked at keeps the typical skin. Reds and oranges
+      ×0.79–0.80 → ×0.88–0.89 of the camera's chroma, nothing else moved.
+      (`grade.rs`, `skin.rs`)
 - [-] **N10** High-ISO noise is about three times the camera JPEG's at ISO
       6400. Not a bug: noise reduction runs at its automatic maximum there
       (colour 0.85, luminance 0.55, sharpening off); the camera smooths far
       harder at the cost of texture. How much is taste.
 - [~] **N11** Colourful pixels are 6–19 % less saturated than Sony's look, and
       blues lean toward purple as in every matrix decoder. Most of the
-      saturation was the curve, not a look (N20); the blues want a hue-twist
-      table, not done.
+      saturation was the curve, not a look (N20), and most of the rest skin
+      protection on frames without faces (N21). The blues' lean is not one:
+      darktable has it too (+3.7°), and frame by frame it runs from −17° to
+      +19°, the white balance on low-chroma skies, so a fixed hue twist would
+      fit noise.
 
 ## Other
 

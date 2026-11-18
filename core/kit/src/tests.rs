@@ -232,4 +232,43 @@ mod gamut_tests {
             previous = f;
         }
     }
+
+    /// The Lanczos weights from symmetry are the kernel's own.
+    #[test]
+    fn lanczos_weights_are_the_kernel() {
+        use std::f32::consts::PI;
+        let k = |d: f32| if d.abs() < 1e-6 { 1.0 } else { 3.0 * (PI * d).sin() * (PI * d / 3.0).sin() / (PI * PI * d * d) };
+        assert_eq!(crate::filter::lanczos3_weights_for_test(1.0), [0.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+        for t in [0.1f32, 0.25, 0.5, 0.8, 0.999] {
+            let direct: Vec<f32> = (-2..=3).map(|i| k(t - i as f32)).collect();
+            let sum: f32 = direct.iter().sum();
+            let got = crate::filter::lanczos3_weights_for_test(t);
+            for i in 0..6 {
+                assert!((got[i] - direct[i] / sum).abs() < 1e-5, "t {t}: {got:?} against {direct:?}");
+            }
+        }
+    }
+
+    /// Half a pixel over, a fine pattern comes out as it is, where bilinear
+    /// sampling averages its neighbours together, and never past its pixels.
+    #[test]
+    fn lanczos_keeps_detail_between_pixels() {
+        let wave = |x: f32| 0.5 + 0.3 * (x * std::f32::consts::TAU / 5.0).sin();
+        let mut img = Image::new(40, 8);
+        for (i, px) in img.px_mut().iter_mut().enumerate() {
+            *px = [wave((i % 40) as f32); 3];
+        }
+        let error = |f: &dyn Fn(f32) -> f32| -> f32 {
+            (10..30).map(|x| (f(x as f32 + 0.5) - wave(x as f32 + 0.5)).abs()).sum::<f32>() / 20.0
+        };
+        let sharp = error(&|x| sample_lanczos(&img, [0], x, 4.0)[0]);
+        let soft = error(&|x| sample_bilinear_rgb(&img, x, 4.0)[0]);
+        assert!(sharp < soft * 0.5, "Lanczos off by {sharp}, bilinear by {soft}");
+        let near = |x: f32| [wave(x.floor()), wave(x.floor() + 1.0)];
+        for x in 10..30 {
+            let (v, [a, b]) = (sample_lanczos(&img, [0], x as f32 + 0.5, 4.0)[0], near(x as f32 + 0.5));
+            assert!(v >= a.min(b) - 1e-6 && v <= a.max(b) + 1e-6, "{v} past {a} and {b}");
+        }
+        assert_eq!(sample_lanczos(&img, [0, 1, 2], 3.0, 5.0), img.px()[5 * 40 + 3]);
+    }
 }

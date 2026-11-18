@@ -199,6 +199,29 @@ fn darkened_shadows_get_no_more_saturated() {
     assert!(after <= before * 1.05, "saturation of the shadows rose from {before} to {after}");
 }
 
+// Resampling
+
+/// Straightening a picture by a degree keeps its fine detail: the sampler
+/// does not average neighbouring pixels together wherever it lands between
+/// them, which a lens correction or a rotation does all over the frame.
+#[test]
+fn straightening_keeps_the_fine_detail() {
+    use lumiraw_core::geometry::{self, Framing};
+    // Fine stripes, five pixels a cycle, across the frame.
+    let img = scene(300, 200, |x, _, _| {
+        [0.2 + 0.15 * (x * 300.0 * std::f32::consts::TAU / 5.0).sin(); 3]
+    });
+    let swing = |im: &Image| {
+        let row = middle_row(im);
+        let (from, to) = (row.len() / 4, row.len() * 3 / 4);
+        row[from..to].iter().map(|p| p[1]).fold(0.0, f32::max)
+            - row[from..to].iter().map(|p| p[1]).fold(1.0, f32::min)
+    };
+    let turned = geometry::apply(&img, &Framing { angle: 1.0, ..Framing::default() }, true);
+    let (before, after) = (swing(&img), swing(&turned));
+    assert!(after > 0.85 * before, "the stripes went from {before} to {after} peak to peak");
+}
+
 // White balance as a change of light
 
 #[test]

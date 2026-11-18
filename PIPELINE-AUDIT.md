@@ -163,6 +163,15 @@ brightness is the mean lightness difference ×100.
       it was rejected. The published values are a linear rendering, which no
       camera uses; for tone, the cameras' JPEGs are the reference, and against
       them the shadows match.
+- [x] **N17** The preview showed a third less detail than the export: lens
+      correction and framing resampled the picture bilinearly, a blur a whole
+      preview pixel wide. Lanczos-3 now; detail on the demo raws 33 → 43
+      (darktable 43). (`kit/filter.rs`, `lensdb.rs`, `geometry.rs`)
+- [x] **N18** The tone map's shadow lift jumped its pivot to the highlights
+      when rounding put the exact lift a hair short, lifting by far more than
+      needed (1.34 stops for 0.87 on one frame). (`grade.rs`)
+- [x] **N19** The real-raw guard rails counted crushed blacks pixel by pixel,
+      which penalised any sharpening; they count 3×3 areas now.
 - [-] **N10** High-ISO noise is about three times the camera JPEG's at ISO
       6400. Not a bug: noise reduction runs at its automatic maximum there
       (colour 0.85, luminance 0.55, sharpening off); the camera smooths far

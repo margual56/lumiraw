@@ -10,11 +10,11 @@ use lumiraw_core::develop::Development;
 use lumiraw_core::grade::{Preset, Settings};
 
 /// How far under the display's middle grey a normally metered raw records
-/// it: the headroom the camera keeps for highlights, about two and a half
-/// stops. A fact about cameras, written out here rather than taken from the
+/// it: the headroom the camera keeps for highlights, about two stops
+/// (measured against cameras' own JPEGs of the same frames). A fact about cameras, written out here rather than taken from the
 /// pipeline's own guess at it, so that the grey card can catch that guess
 /// being wrong.
-pub const HEADROOM_STOPS: f32 = 2.5;
+pub const HEADROOM_STOPS: f32 = 2.0;
 
 /// Middle grey as a normally metered raw records it.
 pub fn grey() -> f32 {

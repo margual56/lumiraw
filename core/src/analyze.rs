@@ -156,6 +156,13 @@ pub fn auto_white_balance(thumb: &Image, strength: f32, limit_ev: f32) -> ([f32;
 /// restrained, from this, not from zero.
 pub const METERED_EV: f32 = 2.0;
 
+/// How much of a frame's departure from the camera's metering the exposure
+/// corrects, at full strength. A camera keeps a dark stone wall dark and a
+/// white one bright; correcting all of the difference pulled every frame to
+/// the same middle, further from the camera's rendering than its metering
+/// already was.
+pub const DEPARTURE_CORRECTED: f32 = 0.5;
+
 /// How far past white the highlight guard lets the brightest highlights go
 /// (the 99.5th percentile of what it measures): the filmic shoulder rolls the
 /// last fifth off without clipping it.
@@ -205,12 +212,9 @@ pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f3
     let key = (sample.iter().map(|v| (*v as f64).cbrt()).sum::<f64>() / sample.len() as f64)
         .powi(3) as f32;
     // The camera's own metering is where a raw lands; only part of a frame's
-    // departure from it (`strength`) is corrected. A camera keeps a dark stone
-    // wall dark and a white one bright, and correcting all of the difference
-    // pulled every frame to the same middle, further from the camera's
-    // rendering than its metering already was.
+    // departure from it is corrected (see `DEPARTURE_CORRECTED`).
     let departure = (target_key / key.max(EPS)).log2() - METERED_EV;
-    let delta = METERED_EV + soft_limit(departure * strength, limit_ev);
+    let delta = METERED_EV + soft_limit(departure * DEPARTURE_CORRECTED * strength, limit_ev);
     let key_gain = delta.exp2();
 
     // The highlight guard, on what the shoulder has to hold. Pixels the raw
@@ -841,7 +845,7 @@ mod tests {
     #[test]
     fn a_dark_subject_keeps_part_of_its_tone() {
         let dark = frame(0.13 / 2f32.powf(METERED_EV + 2.0), 0.3, 120, 90);
-        let (gain, info) = auto_exposure(&dark, 0.13, 0.5, 3.2);
+        let (gain, info) = auto_exposure(&dark, 0.13, 1.0, 3.2);
         let lifted = gain.log2() - METERED_EV;
         assert!((lifted - 1.0).abs() < 0.2, "two stops dark was lifted {lifted}: {info}");
     }

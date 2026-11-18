@@ -45,7 +45,7 @@ impl Default for Preset {
         Preset {
             name: "natural".into(),
             wb_strength: 1.0,
-            exposure_strength: 0.5,
+            exposure_strength: 1.0,
             target_key: 0.10,
             comfortable_stops: 6.5,
             detail_boost: 1.15,
@@ -80,7 +80,7 @@ pub fn preset_by_name(name: &str) -> Preset {
         "flat" => Preset {
             name: "flat".into(),
             wb_strength: 0.8,
-            exposure_strength: 0.425,
+            exposure_strength: 0.85,
             comfortable_stops: 8.0,
             detail_boost: 1.0,
             levels_strength: 0.35,
@@ -1245,9 +1245,8 @@ mod tests {
     #[test]
     fn the_curve_does_not_bury_a_deep_shadow() {
         let out = s_curve(0.08, 0.65, 0.3);
-        assert!((out / 0.08).powi(3).log2() > -0.4,
-                "a shadow at lightness 0.08 went to {out}, {} stops down",
-                (out / 0.08).powi(3).log2());
+        let stops = (out / 0.08).powi(3).log2();
+        assert!(stops > -0.4, "a shadow at lightness 0.08 went to {out}, {stops} stops down");
     }
 
     /// The S-curve is pivoted on the image's own midtone, so it must hold the

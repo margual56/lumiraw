@@ -640,14 +640,7 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
         // rises; then, if that is not enough, the compression deepens.
         let need = (analyze::DISPLAY_FLOOR.log2() - low).clamp(0.0, analyze::MAX_RESCUE_EV);
         if need > 0.0 && high > low {
-            if factor < 0.999 {
-                anchor = anchor.max((low + need / (1.0 - factor)).min(high));
-            }
-            let reach = (anchor - low) * (1.0 - factor);
-            if reach < need {
-                anchor = high;
-                factor = factor.min(1.0 - need / (high - low)).max(TONE_FLOOR);
-            }
+            (anchor, factor) = lift_shadows(low, anchor, high, factor, need);
             lift = (anchor - low) * (1.0 - factor);
         }
         anchor
@@ -678,6 +671,25 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
         }
     }
     factor
+}
+
+/// Where the tone map pivots, and how hard it compresses, to lift shadows at
+/// `low` by `need` stops (all in log2 of the base layer): the pivot moves up
+/// from `anchor` toward the highlights at `high`, so everything below it
+/// rises; if even the highlights are not high enough, the compression
+/// deepens.
+fn lift_shadows(low: f32, anchor: f32, high: f32, factor: f32, need: f32) -> (f32, f32) {
+    let reach = |anchor: f32| (anchor - low) * (1.0 - factor);
+    if reach(anchor) >= need {
+        return (anchor, factor);
+    }
+    // The pivot that lifts them exactly that far. Decided on where it falls,
+    // not on its lift recomputed, which rounding can put a hair short.
+    let wanted = if factor < 0.999 { low + need / (1.0 - factor) } else { f32::INFINITY };
+    if wanted <= high {
+        return (wanted, factor);
+    }
+    (high, factor.min(1.0 - need / (high - low)).max(TONE_FLOOR))
 }
 
 /// The brightest a channel may be taken by vibrance and saturation, short of
@@ -1238,6 +1250,26 @@ mod tests {
         // With no frame the box is in canvas fractions.
         let whole = sample_rect(&img, (0.0, 0.0, 0.25, 0.25), None).unwrap();
         assert_eq!(whole, vec![img.px()[0], img.px()[1], img.px()[8], img.px()[9]]);
+    }
+
+    /// The shadows are lifted by what they need: never by more because the
+    /// sum came out a hair short, which jumped the pivot to the highlights.
+    #[test]
+    fn the_shadows_are_lifted_by_what_they_need() {
+        for i in 0..40 {
+            for j in 0..40 {
+                let (low, high) = (-9.0 + i as f32 * 0.07, -0.5 + j as f32 * 0.011);
+                for factor in [0.55f32, 0.62, 0.7, 0.803, 0.9] {
+                    let need = (analyze::DISPLAY_FLOOR.log2() - low).clamp(0.0, analyze::MAX_RESCUE_EV);
+                    let (anchor, f) = lift_shadows(low, low + 0.3, high, factor, need);
+                    let lift = (anchor - low) * (1.0 - f);
+                    assert!(lift <= need + 1e-3 || f <= TONE_FLOOR + 1e-6,
+                            "low {low} high {high} factor {factor}: lifted {lift} for {need}");
+                    assert!(lift >= need - 1e-3 || f <= TONE_FLOOR + 1e-6,
+                            "low {low} high {high} factor {factor}: lifted {lift} short of {need}");
+                }
+            }
+        }
     }
 
     /// A low pivot stretches the shadows out under the curve; a deep shadow

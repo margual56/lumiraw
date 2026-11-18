@@ -6,7 +6,8 @@
 //! LUMIRAW_RAWS=~/Pictures/some-raws cargo test --release --test real_raws -- --ignored --nocapture
 //! ```
 //!
-//! Per frame, and on average over the folder: how much is crushed to black,
+//! Per frame, and on average over the folder: how much is crushed to black
+//! (by area, so that a sharper picture's darkest texture pixels do not count),
 //! how much is near white, how much has a channel clipped, and how far the
 //! automatic white balance tints what the camera's own balance left neutral.
 //! The per-frame bounds hold for any photograph; the averages assume a varied
@@ -30,6 +31,25 @@ const METRICS: [(&str, Option<f32>, f32); 4] = [
     ("clipped", Some(0.02), 0.003),
     ("tinted", Some(0.025), 0.008),
 ];
+
+/// The share of 3×3 areas whose mean luminance codes below 8: regions gone to
+/// black. Counted pixel by pixel, a sharper development counts against itself:
+/// the dark pixels in a textured shadow that a softer one averaged away.
+fn crushed_areas(img: &Image) -> f32 {
+    let y = kit::luminance(img);
+    let (w, h) = (y.w, y.h);
+    let mut lost = 0usize;
+    for cy in 1..h - 1 {
+        for cx in 1..w - 1 {
+            let sum: f32 = (0..3).flat_map(|j| (0..3).map(move |i| (i, j)))
+                .map(|(i, j)| y.d[(cy + j - 1) * w + cx + i - 1]).sum();
+            if code(sum / 9.0) < 8.0 {
+                lost += 1;
+            }
+        }
+    }
+    lost as f32 / ((w - 2) * (h - 2)) as f32
+}
 
 /// Oklab chroma of the mean of what the camera's own balance left neutral,
 /// once the automatic balance has been at it.
@@ -69,7 +89,7 @@ fn real_raws_stay_within_bounds() {
             continue;
         };
         let (out, _) = dev.render(&Settings::default(), Some(EDGE), true, None);
-        let row = [crushed(&out), near_white(&out), clipped(&out), tint(&mut dev, &out)];
+        let row = [crushed_areas(&out), near_white(&out), clipped(&out), tint(&mut dev, &out)];
         println!("{name:<20} {}  median {:3.0}", line(row), median_code(&out));
         for ((what, limit, _), value) in METRICS.iter().zip(row) {
             if limit.is_some_and(|l| value > l) {

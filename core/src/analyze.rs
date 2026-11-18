@@ -198,8 +198,9 @@ pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f3
     // exposed room a fraction of a stop dark.
     let ends = kit::percentiles(&y.d, &[1.0, 95.0]);
     let (floor, top) = (ends[0].max(1e-5), ends[1]);
-    let sample: Vec<f32> = y.d.iter().cloned().filter(|v| *v > floor && *v <= top).collect();
-    if sample.len() < 64 {
+    let (count, cube_roots) = y.d.iter().filter(|v| **v > floor && **v <= top)
+        .fold((0usize, 0f64), |(n, sum), v| (n + 1, sum + (*v as f64).cbrt()));
+    if count < 64 {
         return (1.0, json!({"applied": false}));
     }
     // The average lightness (cube root of luminance, then back), not the
@@ -209,8 +210,7 @@ pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f3
     // average of light swings too far the other way, and a bright sky darkens
     // the foreground under it more than a camera does. On an even scene all
     // three agree.
-    let key = (sample.iter().map(|v| (*v as f64).cbrt()).sum::<f64>() / sample.len() as f64)
-        .powi(3) as f32;
+    let key = (cube_roots / count as f64).powi(3) as f32;
     // The camera's own metering is where a raw lands; only part of a frame's
     // departure from it is corrected (see `DEPARTURE_CORRECTED`).
     let departure = (target_key / key.max(EPS)).log2() - METERED_EV;

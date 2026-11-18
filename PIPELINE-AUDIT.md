@@ -116,6 +116,7 @@ brightness is the mean lightness difference ×100.
 | `main`             | 14.0 | 0.78   | 1.12     | −0.8       | 0.094 / 0.442          |
 | before N6–N9       | 4.6  | 0.96   | 0.90     | +9.2       | 0.208 / 0.595          |
 | after N6–N9        | 5.3  | 0.87   | 0.98     | +4.1       | 0.163 / 0.529          |
+| after N13–N20      | 4.1  | 0.97   | 0.95     | +2.2       | 0.155 / 0.480          |
 | darktable defaults | 5.5  | 0.75   | 0.85     | −4.8       | 0.132 / 0.376          |
 
 - [x] **N3** The automatic white balance refined a camera's own auto
@@ -172,13 +173,23 @@ brightness is the mean lightness difference ×100.
       needed (1.34 stops for 0.87 on one frame). (`grade.rs`)
 - [x] **N19** The real-raw guard rails counted crushed blacks pixel by pixel,
       which penalised any sharpening; they count 3×3 areas now.
+- [x] **N20** Colour came out a third greyer than the camera's through the
+      shadows and the middle (chroma ×0.67 under Oklab L 0.5), and greener
+      than it on what it left neutral. The filmic curve is laid on the
+      brightest channel, which keeps every ratio between channels; a camera
+      lays its curve on each channel, which raises them to the curve's
+      log-slope (1.4–1.6 there) and deepens the colour. The perceptual stage
+      now takes chroma by that much, keeping lightness and hue: chroma ×0.87 →
+      ×0.97 of the camera's, tint against it 5.3 → 4.1, nothing else moved.
+      (`grade.rs`)
 - [-] **N10** High-ISO noise is about three times the camera JPEG's at ISO
       6400. Not a bug: noise reduction runs at its automatic maximum there
       (colour 0.85, luminance 0.55, sharpening off); the camera smooths far
       harder at the cost of texture. How much is taste.
-- [-] **N11** Colourful pixels are 6–19 % less saturated than Sony's look, and
-      blues lean toward purple as in every matrix decoder. A look choice, and
-      a hue-twist table for the blues; not done.
+- [~] **N11** Colourful pixels are 6–19 % less saturated than Sony's look, and
+      blues lean toward purple as in every matrix decoder. Most of the
+      saturation was the curve, not a look (N20); the blues want a hue-twist
+      table, not done.
 
 ## Other
 

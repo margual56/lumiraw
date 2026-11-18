@@ -703,13 +703,49 @@ const TONE_FLOOR: f32 = 0.45;
 /// highlights when it gives back what the highlight guard held back.
 const HELD_FLOOR: f32 = 0.65;
 
+/// The filmic curve, y = x (A x + B) / (C x² + D x + E).
+const FILMIC: [f32; 5] = [2.51, 0.03, 2.43, 0.59, 0.14];
+
+#[inline]
+fn curve(x: f32) -> f32 {
+    let [a, b, c, d, e] = FILMIC;
+    let x = x.max(0.0);
+    ((x * (a * x + b)) / (x * (c * x + d) + e)).clamp(0.0, 1.0)
+}
+
+/// How much a curve laid on each channel, as a camera lays its own, would
+/// deepen a colour `filmic` has laid it on by its brightest channel: the
+/// factor its chroma for its lightness takes. The curve raises each ratio
+/// to the brightest channel to its log-slope γ (d ln y / d ln x) there,
+/// which widens the spread between the channels for their luminance; that
+/// is where a camera's colour gets its depth through the shadows and the
+/// middle, and without it they come out a third greyer than the camera's.
+/// One where the curve flattens, toward the shoulder (the bleaching there
+/// is `filmic`'s), for a grey, and for a colour with a channel below zero,
+/// outside sRGB, which has no ratio to raise.
+fn filmic_depth(px: [f32; 3]) -> f32 {
+    let [a, b, c, d, e] = FILMIC;
+    let (top, weakest) = (px[0].max(px[1]).max(px[2]), px[0].min(px[1]).min(px[2]));
+    if weakest <= 0.0 || top >= 1.0 || weakest >= top {
+        return 1.0;
+    }
+    // The scene level the curve took to `top`: the positive root of
+    // (top C - A) x² + (top D - B) x + top E = 0.
+    let (qa, qb, qc) = (top * c - a, top * d - b, top * e);
+    let x = (-qb - (qb * qb - 4.0 * qa * qc).max(0.0).sqrt()) / (2.0 * qa);
+    let gamma = 1.0 + a * x / (a * x + b) - x * (2.0 * c * x + d) / (x * (c * x + d) + e);
+    if gamma <= 1.0 {
+        return 1.0;
+    }
+    // r^γ = r r^(γ-1), to first order in γ - 1 (at most 0.6 here).
+    let steep = px.map(|v| v * (1.0 - (gamma - 1.0) * (1.0 - v / top)));
+    let weakest_steep = steep[0].min(steep[1]).min(steep[2]);
+    let (y, y_steep) = (kit::luminance_px(&px), kit::luminance_px(&steep));
+    ((top - weakest_steep) * y) / ((top - weakest) * y_steep).max(EPS)
+}
+
 /// Scene-linear -> display-linear with a filmic shoulder.
 pub fn filmic(img: &mut Image) {
-    #[inline]
-    fn curve(x: f32) -> f32 {
-        let x = x.max(0.0);
-        ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0.0, 1.0)
-    }
     for px in img.d.chunks_exact_mut(3) {
         // Scaled by the brightest channel, not by luminance: a saturated colour
         // has little luminance for its brightest channel, so a ratio taken from
@@ -997,7 +1033,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     d.vibrance = boost;
     // The look's own saturation, on every colour; switched off with vibrance.
     let saturation = if s.on("vibrance") { p.saturation } else { 1.0 };
-    if (boost - 1.0).abs() > 0.001 || (saturation - 1.0).abs() > 0.001 {
+    {
         for i in 0..n {
             let c = chroma.d[i];
             let hue = kit::fast_atan2(b.d[i], a.d[i]);
@@ -1010,7 +1046,10 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
                                        2.0 * analyze::NEUTRAL_CHROMA, c)
                 * (1.0 - kit::smoothstep(0.85, 0.97, light_new.d[i]))
                 * (1.0 - s.skin_protect * s.skin.likeness(hue, c));
-            let mut gain = 1.0 + ((boost - 1.0) * muted + (saturation - 1.0)) * room;
+            // The curve's own depth, before levels and contrast moved the
+            // colour, on every colour.
+            let depth = filmic_depth(img.px()[i]);
+            let mut gain = (1.0 + ((boost - 1.0) * muted + (saturation - 1.0)) * room) * depth;
             // Never to the gamut's edge: the mapping at the end would press the
             // colour onto it, and a bright saturated gradient would come out
             // flat there. Only as far as leaves a little room, and not at all

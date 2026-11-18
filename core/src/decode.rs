@@ -28,6 +28,12 @@ pub struct Meta {
     /// How far away the lens was focused, in metres; zero when the file does
     /// not say, infinite at infinity.
     pub focus_m: f32,
+    /// How many stops of exposure a merged frame was put together from; zero
+    /// for a frame straight from the camera.
+    pub bracket_stops: f32,
+    /// How many stops of highlights a merged frame holds above what its
+    /// reference frame could: that frame's ceiling is at 2 to the minus this.
+    pub kept_above_stops: f32,
 }
 
 pub struct Decoded {
@@ -35,6 +41,11 @@ pub struct Decoded {
     pub meta: Meta,
     /// What deep noise reduction measured, when it ran.
     pub denoised: Option<crate::denoise::Noise>,
+    /// How near each pixel came to clipping on the sensor, in 255ths of the
+    /// ceiling of its fullest channel, in the same orientation as `img`. Empty
+    /// unless asked for: only a merge needs it, because after the colour
+    /// matrix and highlight reconstruction the values no longer say.
+    pub saturation: Vec<u8>,
 }
 
 /// The network and a progress callback for `decode_with`'s deep noise reduction.
@@ -50,6 +61,16 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, DecodeError> {
 /// `decode`, with the mosaic cleaned by `denoiser` first when there is one
 /// (Bayer sensors only; see `denoise`).
 pub fn decode_with(bytes: &[u8], denoiser: Option<Denoiser>) -> Result<Decoded, DecodeError> {
+    decode_inner(bytes, denoiser, false)
+}
+
+/// `decode`, keeping how near every pixel came to clipping (`Decoded::saturation`).
+pub fn decode_with_saturation(bytes: &[u8]) -> Result<Decoded, DecodeError> {
+    decode_inner(bytes, None, true)
+}
+
+fn decode_inner(bytes: &[u8], denoiser: Option<Denoiser>, keep_saturation: bool)
+                -> Result<Decoded, DecodeError> {
     let raw = raw::load(bytes)?;
 
     let mut meta = read_exif(bytes);
@@ -65,7 +86,7 @@ pub fn decode_with(bytes: &[u8], denoiser: Option<Denoiser>) -> Result<Decoded, 
     meta.lens_identified = identified_lens(bytes)
         .filter(|(_, lens)| !crate::lensdb::specs_differ(lens, &meta.lens_model));
     meta.focus_m = sony_focus_distance(bytes, &meta);
-    Ok(develop_raw(&raw, meta, denoiser))
+    Ok(develop_raw(&raw, meta, denoiser, keep_saturation))
 }
 
 /// The lens rawler finds from the maker's lens number.
@@ -141,7 +162,8 @@ fn embedded_lens(bytes: &[u8], make: &str) -> Option<crate::lensdb::Embedded> {
 
 /// Sensor values to linear sRGB: levels, (noise reduction,) white balance,
 /// demosaic, highlight reconstruction, colour matrix, orientation.
-fn develop_raw(raw: &raw::Raw, meta: Meta, denoiser: Option<Denoiser>) -> Decoded {
+fn develop_raw(raw: &raw::Raw, meta: Meta, denoiser: Option<Denoiser>,
+               keep_saturation: bool) -> Decoded {
     // Black/white levels + camera white balance.
     // dcraw normalises the multipliers by the largest one, so no channel can
     // clip further than the raw already did.
@@ -185,6 +207,16 @@ fn develop_raw(raw: &raw::Raw, meta: Meta, denoiser: Option<Denoiser>) -> Decode
             img
         }
     };
+    // Each channel's ceiling is where the white balance put it, and is only
+    // known here, before reconstruction fills it in and the matrix mixes it.
+    let saturation = if keep_saturation {
+        cam.px().iter().map(|p| {
+            let full = (0..3).map(|c| p[c] / wb[c].max(1e-6)).fold(0.0f32, f32::max);
+            (full.clamp(0.0, 1.0) * 255.0).round() as u8
+        }).collect()
+    } else {
+        Vec::new()
+    };
     reconstruct_highlights(&mut cam, &wb);
 
     // Camera RGB to linear sRGB, unclamped except that a pixel with no light
@@ -204,7 +236,8 @@ fn develop_raw(raw: &raw::Raw, meta: Meta, denoiser: Option<Denoiser>) -> Decode
         Orientation::Normal | Orientation::Unknown => Orientation::from_u16(meta.orientation),
         o => o,
     };
-    Decoded { img: orient(cam, orientation), meta, denoised }
+    let saturation = orient_plane(saturation, cam.w, cam.h, orientation);
+    Decoded { img: orient(cam, orientation), meta, denoised, saturation }
 }
 
 /// A small picture of the file for a filmstrip, from the JPEG the camera
@@ -735,27 +768,28 @@ fn malvar(at: impl Fn(i64, i64) -> f32, c: usize, red_beside: bool) -> [f32; 3] 
 }
 
 // Orientation
-fn orient(img: Image, o: Orientation) -> Image {
+/// Maps a destination pixel to a source pixel, given the *source* size.
+type Source = fn(usize, usize, usize, usize) -> (usize, usize);
+
+/// Whether an orientation swaps width and height, and where each pixel of the
+/// turned picture comes from; `None` when nothing moves.
+fn turning(o: Orientation) -> Option<(bool, Source)> {
     use Orientation::*;
-    match o {
-        Normal | Unknown => img,
-        HorizontalFlip => map(&img, img.w, img.h, |x, y, w, _| (w - 1 - x, y)),
-        Rotate180 => map(&img, img.w, img.h, |x, y, w, h| (w - 1 - x, h - 1 - y)),
-        VerticalFlip => map(&img, img.w, img.h, |x, y, _, h| (x, h - 1 - y)),
-        Transpose => map(&img, img.h, img.w, |x, y, _, _| (y, x)),
-        Rotate90 => map(&img, img.h, img.w, |x, y, _, h| (y, h - 1 - x)),
-        Transverse => map(&img, img.h, img.w, |x, y, w, h| (w - 1 - y, h - 1 - x)),
-        Rotate270 => map(&img, img.h, img.w, |x, y, w, _| (w - 1 - y, x)),
-    }
+    Some(match o {
+        Normal | Unknown => return None,
+        HorizontalFlip => (false, |x, y, w, _| (w - 1 - x, y)),
+        Rotate180 => (false, |x, y, w, h| (w - 1 - x, h - 1 - y)),
+        VerticalFlip => (false, |x, y, _, h| (x, h - 1 - y)),
+        Transpose => (true, |x, y, _, _| (y, x)),
+        Rotate90 => (true, |x, y, _, h| (y, h - 1 - x)),
+        Transverse => (true, |x, y, w, h| (w - 1 - y, h - 1 - x)),
+        Rotate270 => (true, |x, y, w, _| (w - 1 - y, x)),
+    })
 }
 
-/// `f` maps a destination pixel to a source pixel, given the *source* size.
-fn map<F: Fn(usize, usize, usize, usize) -> (usize, usize)>(
-    img: &Image,
-    ow: usize,
-    oh: usize,
-    f: F,
-) -> Image {
+fn orient(img: Image, o: Orientation) -> Image {
+    let Some((swap, f)) = turning(o) else { return img };
+    let (ow, oh) = if swap { (img.h, img.w) } else { (img.w, img.h) };
     let mut out = Image::new(ow, oh);
     for y in 0..oh {
         for x in 0..ow {
@@ -766,6 +800,17 @@ fn map<F: Fn(usize, usize, usize, usize) -> (usize, usize)>(
         }
     }
     out
+}
+
+/// `orient` for one byte a pixel, `w` by `h` before turning. An empty plane
+/// stays empty.
+fn orient_plane(plane: Vec<u8>, w: usize, h: usize, o: Orientation) -> Vec<u8> {
+    let Some((swap, f)) = turning(o).filter(|_| !plane.is_empty()) else { return plane };
+    let ow = if swap { h } else { w };
+    (0..plane.len()).map(|i| {
+        let (sx, sy) = f(i % ow, i / ow, w, h);
+        plane[sy.min(h - 1) * w + sx.min(w - 1)]
+    }).collect()
 }
 
 // EXIF
@@ -1168,7 +1213,7 @@ mod tests {
         }
         let raw = raw::Raw::synthetic(w, h, data, raw::Layout::Linear, wb, vec![(6504.0, d65)],
                                       64.0, 4095.0);
-        let out = develop_raw(&raw, Meta::default(), None).img;
+        let out = develop_raw(&raw, Meta::default(), None, false).img;
         let g = &out.d[0..3];
         let cast = g.iter().cloned().fold(0.0f32, f32::max) / g.iter().cloned().fold(f32::MAX, f32::min).max(1e-6);
         assert!(cast < 1.02, "a grey card came out tinted: {g:?}");

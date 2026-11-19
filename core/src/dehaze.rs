@@ -102,8 +102,10 @@ pub fn apply(img: &mut Image, air: [f32; 3], amount: f32, long_edge: usize) {
     // A small epsilon: the transmission has to step where an edge does, or a
     // building against the sky wears a halo of haze.
     let t = kit::guided_filter(&guide, &t, radius, 1e-4, (radius / 4).max(1));
+    let air_y = kit::luminance_px(&air);
     for (px, t) in img.px_mut().iter_mut().zip(&t.d) {
         let t = t.clamp(FLOOR, 1.0);
+        let before = *px;
         for c in 0..3 {
             let v = px[c];
             px[c] = if amount > 0.0 {
@@ -117,12 +119,51 @@ pub fn apply(img: &mut Image, air: [f32; 3], amount: f32, long_edge: usize) {
             }
             .max(0.0);
         }
+        if amount > 0.0 {
+            // The dark channel prior takes all of a pixel's darkest channel
+            // for haze, which is right under haze and wrong for a dark object
+            // that has none: taking the "veil" off it drives it toward black,
+            // unevenly across the channels. Haze adds about the air's own
+            // brightness over what it hides, so a pixel far darker than the air
+            // has little of it; there it only darkens, keeping its own colour,
+            // and by a stop at most.
+            let (y0, y1) = (kit::luminance_px(&before), kit::luminance_px(px));
+            let clear = 1.0 - kit::smoothstep(0.05, 0.12, y0 / air_y.max(1e-6));
+            if clear > 0.0 && y0 > 0.0 {
+                let ratio = (y1 / y0).clamp(0.5, 1.0);
+                for c in 0..3 {
+                    px[c] += (before[c] * ratio - px[c]) * clear;
+                }
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A dark object with no haze in it, beside a hazy sky, loses at most a
+    /// stop and keeps its colour when the haze is taken out.
+    #[test]
+    fn clear_shadows_are_left_alone() {
+        let (w, h) = (240usize, 160usize);
+        let air = [0.8f32, 0.82, 0.85];
+        let mut img = Image::new(w, h);
+        for (i, px) in img.px_mut().iter_mut().enumerate() {
+            let (x, y) = (i % w, i / w);
+            // Hazy sky above, a dark grey block below with a little texture.
+            *px = if y < h / 2 { [0.7, 0.72, 0.76] }
+                  else { [0.02 * (1.0 + 0.1 * ((x + y) % 3) as f32); 3] };
+        }
+        let before = img.px()[(h * 3 / 4) * w + w / 2];
+        apply(&mut img, air, 1.0, w);
+        let after = img.px()[(h * 3 / 4) * w + w / 2];
+        let ev = (kit::luminance_px(&after) / kit::luminance_px(&before)).log2();
+        assert!(ev > -1.05, "the clear shadow lost {ev} EV");
+        let tint = after[0] / after[2].max(1e-6);
+        assert!((tint - 1.0).abs() < 0.05, "the clear shadow was tinted: {after:?}");
+    }
 
     /// A textured scene, and the same scene seen through haze that thickens
     /// toward the top.

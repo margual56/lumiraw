@@ -17,6 +17,9 @@ pub struct Meta {
     pub shutter_s: f32,
     pub exposure_comp: f32,
     pub flash: bool,
+    /// Whether the camera chose the white balance itself (EXIF says auto) or
+    /// was set to a fixed one; `None` when the file does not say.
+    pub camera_auto_wb: Option<bool>,
     pub orientation: u16,
     /// When the shutter opened, in seconds, or zero when the file does not say.
     pub captured_s: i64,
@@ -185,8 +188,12 @@ fn develop_raw(raw: &raw::Raw, meta: Meta, denoiser: Option<Denoiser>,
             }
             for (y, row) in cfa_plane.d.chunks_exact_mut(raw.width).enumerate() {
                 let gains: Vec<f32> = (0..cfa.width).map(|x| wb[cfa.color_at(y, x).min(2)]).collect();
+                // Only the top is clamped. Noise around black is as much
+                // below zero as above; cutting it off before the gains (two to
+                // three times larger on red and blue than on green) lifts the
+                // shadows' red and blue and turns them magenta.
                 for (v, g) in row.iter_mut().zip(gains.iter().cycle()) {
-                    *v = v.clamp(0.0, 1.0) * g;
+                    *v = v.min(1.0) * g;
                 }
             }
             // The pattern is looked up at absolute sensor positions, so the
@@ -200,7 +207,7 @@ fn develop_raw(raw: &raw::Raw, meta: Meta, denoiser: Option<Denoiser>,
                 for x in 0..w {
                     for c in 0..3 {
                         img.d[(y * w + x) * 3 + c] =
-                            raw.normalised(x0 + x, y0 + y, c).clamp(0.0, 1.0) * wb[c];
+                            raw.normalised(x0 + x, y0 + y, c).min(1.0) * wb[c];
                     }
                 }
             }
@@ -579,7 +586,10 @@ fn reconstruct_highlights(img: &mut Image, wb: &[f32; 3]) {
                 // still has.
                 let from_neighbours = (scale * hue[c]).clamp(v[c], hi);
                 let want = from_neighbours * trust + hi * (1.0 - trust);
-                v[c] += core * (want - v[c]);
+                // Only as far as the channel itself is gone: one the sensor
+                // recorded is the best evidence there is, and pulling it
+                // toward the blown ones bleaches the colour out.
+                v[c] += core * blown[c] * (want - v[c]);
             }
             img.d[i..i + 3].copy_from_slice(&v);
         }
@@ -691,7 +701,7 @@ pub fn demosaic_pattern(cfa: &Plane, pattern: &CFA, x0: usize, y0: usize, w: usi
                 }
                 px[c] = if n > 0.0 { g + sum / n } else { g };
             }
-            out.px_mut()[i] = px.map(|v| v.max(0.0));
+            out.px_mut()[i] = px;
         }
     }
     out
@@ -730,9 +740,7 @@ pub fn demosaic(cfa: &Plane, pattern: &CFA, x0: usize, y0: usize, w: usize,
                 malvar(|dx, dy| clamped(x + dx, y + dy), c, red_beside)
             };
             let i = (y * w + x) * 3;
-            out.d[i] = px[0].max(0.0);
-            out.d[i + 1] = px[1].max(0.0);
-            out.d[i + 2] = px[2].max(0.0);
+            out.d[i..i + 3].copy_from_slice(&px);
         }
     }
     out
@@ -870,6 +878,9 @@ fn read_exif(bytes: &[u8]) -> Meta {
     if let Some(v) = num(Tag::Flash) {
         m.flash = (v as i32) % 2 == 1;
     }
+    if let Some(v) = num(Tag::WhiteBalance) {
+        m.camera_auto_wb = Some(v == 0.0);
+    }
     if let Some(v) = num(Tag::Orientation) {
         m.orientation = v as u16;
     }
@@ -994,6 +1005,9 @@ mod tests {
         // And the sky itself is none of this function's business.
         let corner = [img.d[0], img.d[1], img.d[2]];
         assert_eq!(corner, sky, "an unblown pixel was touched: {corner:?}");
+        // Red was measured, not guessed: it is the best evidence of the colour
+        // there is, and pulling it toward the blown channels bleaches it.
+        assert!((middle[0] - 0.80).abs() < 1e-6, "the measured red moved to {}", middle[0]);
     }
 
     /// With nothing unblown anywhere there is no colour to carry and no

@@ -21,7 +21,7 @@ jobs:
           workspaces: core
           cache-on-failure: true
       - name: Tests
-        run: cargo test --profile ci --manifest-path core/Cargo.toml --workspace --lib --bins
+        run: cargo test --profile ci --manifest-path core/Cargo.toml --workspace --lib --bins --tests
 
   wasm:
     name: Wasm target

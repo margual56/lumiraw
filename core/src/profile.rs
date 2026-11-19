@@ -19,6 +19,8 @@ pub struct CaptureProfile {
     pub shutter_s: f32,
     pub exposure_comp: f32,
     pub flash: bool,
+    /// The camera chose the white balance itself; see `decode::Meta`.
+    pub camera_auto_wb: Option<bool>,
     /// The stops a merged frame was put together from; zero straight from
     /// the camera.
     pub bracket_stops: f32,
@@ -79,6 +81,7 @@ pub fn derive(meta: &Meta, w: usize, h: usize, crop_factor: Option<f32>) -> Capt
         shutter_s: if meta.shutter_s > 0.0 { meta.shutter_s } else { 1.0 / 125.0 },
         exposure_comp: meta.exposure_comp,
         flash: meta.flash,
+        camera_auto_wb: meta.camera_auto_wb,
         bracket_stops: meta.bracket_stops.max(0.0),
         kept_above_stops: meta.kept_above_stops.max(0.0),
         crop_factor: 1.5,
@@ -94,8 +97,11 @@ pub fn derive(meta: &Meta, w: usize, h: usize, crop_factor: Option<f32>) -> Capt
         scene_ev: None,
         notes: Vec::new(),
     };
-    if meta.shutter_s > 0.0 && meta.aperture > 0.0 && meta.iso > 0.0 {
-        p.scene_ev = Some((meta.aperture * meta.aperture / meta.shutter_s).log2()
+    // A lens with no electronic contacts (manual, adapted) leaves no f-number;
+    // the shutter and the ISO alone still tell a thirty-second dusk from
+    // daylight, at the aperture assumed above.
+    if meta.shutter_s > 0.0 && meta.iso > 0.0 {
+        p.scene_ev = Some((p.aperture * p.aperture / meta.shutter_s).log2()
                           - (meta.iso / 100.0).log2());
     }
 
@@ -170,6 +176,12 @@ pub fn tune(preset: &Preset, p: &CaptureProfile) -> Preset {
     // A high-ISO frame is usually a dark scene: pushing it to a daylight
     // midtone both lies about the light and drags up the noise floor.
     target_key *= (1.0 - 0.30 * p.noise_prior).clamp(0.6, 1.0);
+    // A dark scene is dark: a dusk or a lit room is not brought up to a sunny
+    // day's middle grey, though it is not left buried either (the rescue and
+    // the tone map see to that).
+    if let (Some(ev), false) = (p.scene_ev, p.flash) {
+        target_key *= 0.6 + 0.4 * kit::smoothstep(2.0, 10.0, ev);
+    }
     out.target_key = target_key.clamp(0.04, 0.30);
 
     // Never ask for more shadow lift than the sensor can deliver cleanly.
@@ -190,6 +202,15 @@ pub fn tune(preset: &Preset, p: &CaptureProfile) -> Preset {
     // daylight mostly does and a city at night does not.
     if let (Some(ev), false) = (p.scene_ev, p.flash) {
         out.wb_strength = preset.wb_strength * (0.3 + 0.7 * kit::smoothstep(2.0, 7.0, ev));
+        // A night is dark on purpose: what the highlight guard held back for
+        // the street lights stays held back, and the night stays a night.
+        out.give_back = preset.give_back * kit::smoothstep(2.0, 7.0, ev);
+    }
+    // A camera that balanced the shot itself looked at the scene with far more
+    // than a thumbnail: refining its choice only adds our estimate's error to
+    // it. A fixed balance (daylight under a lamp, say) is what refining is for.
+    if p.camera_auto_wb == Some(true) {
+        out.wb_strength = 0.0;
     }
 
     // The frames of a bracket were shot to keep the shadows and the
@@ -233,6 +254,41 @@ mod tests {
         let long = derive(&shot(3.0, 50.0), 6000, 4000, Some(1.5)).shake_risk;
         assert!(quick > middling && middling > long, "{quick} {middling} {long}");
         assert_eq!(long, 0.0);
+    }
+
+    /// A lens with no contacts records no f-number; the scene's brightness is
+    /// still worked out from the shutter and the ISO.
+    #[test]
+    fn a_manual_lens_still_tells_night_from_day() {
+        let thirty_seconds = Meta { shutter_s: 30.0, iso: 100.0, ..Default::default() };
+        let ev = derive(&thirty_seconds, 6000, 4000, Some(1.5)).scene_ev.expect("a scene EV");
+        assert!(ev < 2.0, "thirty seconds at ISO 100 read as EV {ev}");
+    }
+
+    /// A dark scene is not exposed for a sunny day's middle grey.
+    #[test]
+    fn a_dark_scene_keeps_a_darker_target() {
+        let preset = Preset::default();
+        let at = |shutter_s: f32| {
+            let meta = Meta { shutter_s, iso: 100.0, aperture: 4.0, ..Default::default() };
+            tune(&preset, &derive(&meta, 6000, 4000, Some(1.5))).target_key
+        };
+        assert!(at(1.0 / 2.0) < 0.8 * at(1.0 / 1000.0), "dusk {} against day {}",
+                at(1.0 / 2.0), at(1.0 / 1000.0));
+    }
+
+    /// A camera that balanced the shot itself is trusted with it; a fixed
+    /// balance, or a file that does not say, is refined.
+    #[test]
+    fn the_cameras_own_balance_is_kept() {
+        let preset = Preset::default();
+        let strength = |auto: Option<bool>| {
+            let meta = Meta { camera_auto_wb: auto, ..Default::default() };
+            tune(&preset, &derive(&meta, 6000, 4000, Some(1.5))).wb_strength
+        };
+        assert_eq!(strength(Some(true)), 0.0);
+        assert_eq!(strength(Some(false)), preset.wb_strength);
+        assert_eq!(strength(None), preset.wb_strength);
     }
 
     /// Daylight keeps the whole automatic balance.

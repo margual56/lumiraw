@@ -20,6 +20,23 @@ pub const MAX_RESCUE_EV: f32 = 3.5;
 /// Below this a pixel is black however much detail it holds.
 pub const BLACK_LIGHTNESS: f32 = 0.0534;
 
+/// The darkest a frame without a true white may have its white point put: a
+/// white point is a stretch of the whole picture, and a dim scene is allowed
+/// to stay dim. About a quarter of a stop.
+const LOWEST_WHITE: f32 = 0.95;
+
+/// Map an Oklab lightness through a black and white point, in linear light.
+///
+/// Lightness is close to the cube root of luminance, so the same offset taken
+/// off L is several stops in the shadows; taken off luminance it removes a
+/// pedestal and leaves the shadows' gradation alone.
+#[inline]
+pub fn levels(l: f32, black: f32, white: f32) -> f32 {
+    let (yb, yw) = (black.powi(3), white.powi(3));
+    let y = l.max(0.0).powi(3);
+    ((y - yb) / (yw - yb).max(1e-6)).clamp(0.0, 1.0).cbrt()
+}
+
 const THIRD_STOP: f32 = 1.259_921_f32;
 
 /// Smoothly saturate at ±limit instead of clipping hard.
@@ -30,119 +47,200 @@ pub fn soft_limit(x: f32, limit: f32) -> f32 {
 
 // White balance
 /// How much of the automatic white balance's green-magenta correction is
-/// kept; see `auto_white_balance`.
-pub const TINT_TRUST: f32 = 0.2;
+/// kept; see `auto_white_balance`. Green-magenta is rarely the light's own
+/// doing, but with an estimate taken from neutral surfaces it can be trusted
+/// for more than half.
+pub const TINT_TRUST: f32 = 0.6;
 
-/// Refine the camera's white balance with a shades-of-grey estimate.
-/// Pixels at or above `ceiling` are left out, clipped or not.
+/// How far from the camera's own neutral (log2 of R/G and B/G) a pixel may
+/// sit and still be taken for a grey surface: wide on the first pass, narrow
+/// once the estimate has settled.
+const GREY_REACH: [f32; 4] = [0.5, 0.35, 0.25, 0.25];
+
+/// The share of the measured pixels that must look grey before the estimate
+/// is trusted at all, and the share at which it is trusted fully.
+const GREYS_NEEDED: (f32, f32) = (0.02, 0.15);
+
+/// Corrections up to this size (or 60 % of the limit, if less) are delivered
+/// in full; beyond it the soft limit takes over.
+const WB_KNEE_EV: f32 = 0.5;
+
+/// Refine the camera's white balance from the surfaces that look grey.
+///
+/// Only pixels near the camera's neutral take part, weighted by how near, and
+/// the estimate is refined over a few passes. A blue sky, a red rock or a
+/// field of flowers is not a grey surface under a coloured light, and letting
+/// it vote (as a shades-of-grey estimate does) tints the whole picture the
+/// opposite way. Too few greys, and the camera's balance stands. Pixels at
+/// or above `ceiling` are left out, clipped or not.
 pub fn auto_white_balance(thumb: &Image, strength: f32, limit_ev: f32, ceiling: f32)
                           -> ([f32; 3], Value) {
     let y = kit::luminance(thumb);
     let pct = kit::percentiles(&y.d, &[3.0, 97.0]);
-    let (lo, hi) = (pct[0], pct[1]);
-
-    let mut sums = [0f64; 3];
-    let mut count = 0usize;
-    let p = 6.0f32;
-    for (i, px) in thumb.px().iter().enumerate() {
-        let maxc = px[0].max(px[1]).max(px[2]);
-        if y.d[i] > lo.max(EPS) && y.d[i] < hi && maxc < 0.98 * ceiling {
-            for c in 0..3 {
-                sums[c] += px[c].max(EPS).powf(p) as f64;
-            }
-            count += 1;
-        }
-    }
-    if count < 64 {
+    let (lo, hi) = (pct[0].max(EPS), pct[1]);
+    let candidates: Vec<usize> = (0..y.d.len())
+        .filter(|&i| {
+            let px = &thumb.px()[i];
+            y.d[i] > lo && y.d[i] < hi && px[0].max(px[1]).max(px[2]) < 0.98 * ceiling
+                && px.iter().all(|v| *v > EPS)
+        })
+        .collect();
+    if candidates.len() < 64 {
         return ([1.0, 1.0, 1.0], json!({"applied": false}));
     }
-    let mut est = [0f32; 3];
-    for c in 0..3 {
-        est[c] = ((sums[c] / count as f64).powf(1.0 / p as f64) as f32).max(EPS);
+
+    let mut light = [1.0f32; 3];
+    let mut greys = 0.0f32;
+    for reach in GREY_REACH {
+        let (mut sum, mut total, mut count) = ([0f64; 3], 0f64, 0usize);
+        for &i in &candidates {
+            let px = &thumb.px()[i];
+            let rg = (px[0] / light[0] / (px[1] / light[1])).log2();
+            let bg = (px[2] / light[2] / (px[1] / light[1])).log2();
+            let off = rg.hypot(bg);
+            if off >= reach {
+                continue;
+            }
+            let w = (1.0 - off / reach) as f64;
+            for c in 0..3 {
+                sum[c] += w * (px[c] / y.d[i]) as f64;
+            }
+            total += w;
+            count += 1;
+        }
+        greys = count as f32 / candidates.len() as f32;
+        if total <= 0.0 {
+            break;
+        }
+        light = sum.map(|v| (v / total) as f32);
+        let l = kit::luminance_px(&light).max(EPS);
+        light = light.map(|v| v / l);
     }
-    let mean = (est[0] + est[1] + est[2]) / 3.0;
-    let mut log_gain = [0f32; 3];
-    for c in 0..3 {
-        log_gain[c] = (mean / est[c]).log2();
+    let trust = kit::smoothstep(GREYS_NEEDED.0, GREYS_NEEDED.1, greys);
+    if trust <= 0.0 {
+        return ([1.0, 1.0, 1.0], json!({"applied": false, "greys": round_to(greys, 3)}));
     }
+
+    // Into warm-cool and green-magenta, which are not equally to be trusted
+    // and are limited together, as one correction: limited channel by channel,
+    // the unequal compression of red and blue would turn part of a warm-cool
+    // correction into green or magenta.
+    let log_gain = light.map(|v| -v.max(EPS).log2());
+    let temp = (log_gain[0] - log_gain[2]) / 2.0;                         // along (1, 0, -1)
+    let tint = (2.0 * log_gain[1] - log_gain[0] - log_gain[2]) / 3.0;     // along (-1/2, 1, -1/2)
+    let (temp, tint) = (temp * strength * trust, tint * TINT_TRUST * strength * trust);
+    let size = temp.hypot(tint);
+    let knee = WB_KNEE_EV.min(0.6 * limit_ev);
+    let limited = if size <= knee { size } else { knee + soft_limit(size - knee, limit_ev - knee) };
+    let k = if size > 0.0 { limited / size } else { 0.0 };
+    let (temp, tint) = (temp * k, tint * k);
+    let mut log_gain = [temp - 0.5 * tint, tint, -temp - 0.5 * tint];
     let lw = [0.2126f32, 0.7152, 0.0722];
     let weighted: f32 = (0..3).map(|c| log_gain[c] * lw[c]).sum::<f32>() / lw.iter().sum::<f32>();
     for g in log_gain.iter_mut() {
         *g -= weighted;
     }
-    // Warm-cool and green-magenta are not equally to be trusted.
-    let temp = (log_gain[0] - log_gain[2]) / 2.0;                           // along (1, 0, -1)
-    let tint = (2.0 * log_gain[1] - log_gain[0] - log_gain[2]) / 3.0;       // along (-1/2, 1, -1/2)
-    let tint = tint * TINT_TRUST;
-    log_gain = [temp - 0.5 * tint, tint, -temp - 0.5 * tint];
-    let weighted: f32 = (0..3).map(|c| log_gain[c] * lw[c]).sum::<f32>() / lw.iter().sum::<f32>();
-    let mut gains = [0f32; 3];
-    for c in 0..3 {
-        // Restraint belongs in the soft limit, not in a flat multiplier.
-        log_gain[c] = soft_limit((log_gain[c] - weighted) * strength, limit_ev);
-        gains[c] = log_gain[c].exp2();
-    }
+    let gains = log_gain.map(|g| g.exp2());
     (
         gains,
         json!({"applied": true,
                "gains": gains.map(|g| round_to(g, 4)),
-               "shift_ev": log_gain.map(|g| round_to(g, 3))}),
+               "shift_ev": log_gain.map(|g| round_to(g, 3)),
+               "greys": round_to(greys, 3)}),
     )
 }
 
 // Exposure
-/// Match the log-average luminance to middle grey, partially, with a highlight
-/// guard that gives way when the raw was already clipped.
+/// Where a normally metered raw lands against the target key: the file is
+/// scaled to the sensor's white level, which sits two and a half stops or so
+/// above what the camera metered for, to keep highlight headroom. The soft
+/// limit restrains departures from this, not from zero, or every ordinary
+/// frame is held a fraction of a stop dark.
+pub const METERED_EV: f32 = 2.5;
+
+/// How far past white the highlight guard lets the brightest highlights go
+/// (the 99.5th percentile of what it measures): the filmic shoulder rolls the
+/// last fifth off without clipping it.
+pub const HIGHLIGHT_CEILING: f32 = 1.20;
+
+/// How far above the frame's key a pixel is taken for a light source or a
+/// specular glint rather than a highlight to keep: six stops.
+const SOURCE_ABOVE_KEY: f32 = 64.0;
+
+/// Light sources covering more of the frame than this are not small: a sky
+/// six stops over a backlit subject is a highlight to keep.
+const SMALL_SOURCES: f32 = 0.03;
+
+/// What the highlight guard keeps below the shoulder: luminance, or the
+/// brightest channel at a discount, whichever is higher, so a saturated sky
+/// whose blue would clip counts even though its luminance would not.
+#[inline]
+fn highlight_measure(px: &[f32; 3]) -> f32 {
+    kit::luminance_px(px).max(0.6 * px[0].max(px[1]).max(px[2]))
+}
+
+/// Match the log-average luminance to middle grey, partially, under a
+/// highlight guard; lift a buried frame only as far as the guard allows.
+///
+/// The guard is never waived. When the shadows and the highlights want
+/// different exposures, the highlights win here and the shadows are left to
+/// the tone map, which can lift them without moving the highlights.
 pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f32) -> (f32, Value) {
     let y = kit::luminance(thumb);
-    // One sort for both ends: the floor here and the highlight guard below.
-    let ends = kit::percentiles(&y.d, &[1.0, 99.5]);
-    let floor = ends[0].max(1e-5);
-    let sample: Vec<f32> = y.d.iter().cloned().filter(|v| *v > floor).collect();
+    // The key is the body of the frame: the deepest shadows and the brightest
+    // highlights (a window, the sky, a lamp, which the guard below looks
+    // after) are left out of it, or a small bright window holds a correctly
+    // exposed room a fraction of a stop dark.
+    let ends = kit::percentiles(&y.d, &[1.0, 95.0]);
+    let (floor, top) = (ends[0].max(1e-5), ends[1]);
+    let sample: Vec<f32> = y.d.iter().cloned().filter(|v| *v > floor && *v <= top).collect();
     if sample.len() < 64 {
         return (1.0, json!({"applied": false}));
     }
     let log_mean: f64 = sample.iter().map(|v| v.log2() as f64).sum::<f64>() / sample.len() as f64;
     let key = (log_mean as f32).exp2();
-    let delta = soft_limit((target_key / key.max(EPS)).log2() * strength, limit_ev);
-    let mut gain = delta.exp2();
+    let wanted = (target_key / key.max(EPS)).log2() * strength;
+    let delta = METERED_EV + soft_limit(wanted - METERED_EV, limit_ev);
+    let key_gain = delta.exp2();
 
-    // Rescue, rather than restraint.
-    // The soft limit above keeps a deliberately dark frame dark, which is right
-    // for a night portrait and wrong for a frame that is simply underexposed.
+    // The highlight guard, on what the shoulder has to hold. Pixels the raw
+    // already clipped say nothing about how far to go, and neither do small
+    // light sources far above everything else.
+    let measure: Vec<f32> = thumb.px().iter().map(highlight_measure).collect();
+    let n = measure.len() as f32;
+    let clipped = y.d.iter().filter(|v| **v >= 0.99).count() as f32 / n;
+    let sources = key * SOURCE_ABOVE_KEY;
+    let small = (measure.iter().filter(|m| **m > sources).count() as f32 / n) < SMALL_SOURCES;
+    let kept: Vec<f32> = measure.iter().cloned()
+        .filter(|m| *m < 0.99 && (!small || *m <= sources))
+        .collect();
+    let cap = if kept.len() >= 64 {
+        HIGHLIGHT_CEILING / kit::percentile(&kept, 99.5).max(EPS)
+    } else {
+        f32::INFINITY
+    };
+    let mut gain = key_gain.min(cap);
+
+    // Rescue, rather than restraint: the soft limit keeps a deliberately dark
+    // frame dark, which is right for a night portrait and wrong for a frame
+    // that is simply underexposed. Never past the guard.
     let buried = |g: f32| {
-        y.d.iter().filter(|v| **v * g < DISPLAY_FLOOR).count() as f32 / y.d.len() as f32
+        y.d.iter().filter(|v| **v * g < DISPLAY_FLOOR).count() as f32 / n
     };
     let mut rescue_ev = 0.0f32;
-    while rescue_ev < MAX_RESCUE_EV && buried(gain) > CRUSH_BUDGET {
+    while rescue_ev < MAX_RESCUE_EV && buried(gain) > CRUSH_BUDGET && gain * THIRD_STOP <= cap {
         gain *= THIRD_STOP;
         rescue_ev += 1.0 / 3.0;
     }
-
-    let clipped = y.d.iter().filter(|v| **v >= 0.99).count() as f32 / y.d.len() as f32;
-    let mut guard: Option<f32> = None;
-    let mut waived = false;
-    if clipped < 0.005 {
-        let hi = ends[1];
-        let cap = 1.20 / hi.max(EPS);
-        if cap < gain {
-            guard = Some(gain);
-            // The rescue wins over the guard, or the guard would undo it.
-            let floor = if rescue_ev > 0.0 { gain } else { 0.0 };
-            gain = cap.max(floor);
-            waived = gain > cap;
-        }
-    }
-    // The ceiling has to leave room for the rescue; the highlight guard above
-    // is what stops it running away, not this clamp.
-    gain = gain.clamp(0.125, 2f32.powf(limit_ev + MAX_RESCUE_EV));
+    gain = gain.clamp(0.125, 2f32.powf(METERED_EV + limit_ev + MAX_RESCUE_EV));
     (
         gain,
         json!({"applied": true, "key": round_to(key, 5), "gain_ev": round_to(gain.log2(), 3),
-               "highlight_guard_ev": guard.map(|g| round_to((g / gain).log2(), 3)),
-               "highlight_guard_waived": waived,
+               "highlight_guard_ev": (key_gain > cap)
+                   .then(|| round_to((key_gain / cap).log2(), 3)),
                "rescue_ev": round_to(rescue_ev, 2),
                "buried_after": round_to(buried(gain), 4),
+               "small_sources_ignored": small && measure.iter().any(|m| *m > sources),
                "clipped_fraction": round_to(clipped, 5)}),
     )
 }
@@ -162,63 +260,76 @@ pub fn auto_tone_compression(thumb: &Image, comfortable_stops: f32, floor: f32) 
 }
 
 // Display-referred tone
-/// Robust black/white point from percentiles, moved only part of the way.
-pub fn auto_levels(lightness: &Plane, strength: f32, clip_pct: f64) -> (f32, f32, Value) {
-    let p = kit::percentiles(&lightness.d,
-                             &[clip_pct, 100.0 - clip_pct, (CRUSH_BUDGET * 100.0) as f64]);
-    let wanted = p[0] * strength;
-    let white = p[1] + (1.0 - p[1]) * strength;
-
-    // A black point read off a percentile assumes the shadows are spread out.
-    let budget_level = p[2];
-    let ceiling = (budget_level - BLACK_LIGHTNESS * white) / (1.0 - BLACK_LIGHTNESS);
-    let black = wanted.min(ceiling).max(0.0);
+/// Robust black/white point from percentiles, each moved the same fraction of
+/// the way, for `levels` to apply in linear light. A raw has had its black
+/// level taken off already, so the black point only ever removes a pedestal.
+///
+/// The white point is read from `peak`, the lightness of each pixel's
+/// brightest channel: a saturated sky can sit well below white in lightness
+/// with its blue already at the top, and stretching it would clip the blue.
+pub fn auto_levels(lightness: &Plane, peak: &Plane, strength: f32, clip_pct: f64)
+    -> (f32, f32, Value) {
+    let black = (kit::percentile(&lightness.d, clip_pct) * strength).max(0.0);
+    let top = kit::percentile(&peak.d, 100.0 - clip_pct);
+    let white = (1.0 - (1.0 - top) * strength).max(LOWEST_WHITE);
 
     if white - black < 0.25 {
         return (0.0, 1.0, json!({"applied": false}));
     }
+    let stretch = 1.0 / (white.powi(3) - black.powi(3));
     (
         black,
         white,
         json!({"applied": true, "black": round_to(black, 4), "white": round_to(white, 4),
-               "wanted_black": round_to(wanted, 4),
-               "stretch": round_to(1.0 / (white - black), 3)}),
+               "stretch": round_to(stretch, 3)}),
     )
 }
 
-/// How much of a look's curve every frame gets, whatever it measures.
-const CURVE_FLOOR: f32 = 0.40;
+/// How much of a look's curve every frame gets, whatever it measures. Small:
+/// the filmic curve already carries a contrast look of its own.
+const CURVE_FLOOR: f32 = 0.60;
 
-/// How much curve the tone map's own compression is allowed to ask for.
-const SQUEEZE_TO_CURVE: f32 = 1.72;
+/// The curve every automatic contrast gets on top of what the frame asks
+/// for: the automatic tone stages (levels in linear light, the tone map's
+/// lifts) leave a picture a little flat by design, and this puts back the
+/// depth a camera's own picture style has.
+pub const AUTO_CONTRAST_BOOST: f32 = 0.10;
 
-/// S-curve strength and its pivot.
-pub fn auto_contrast(lightness: &Plane, target_spread: f32, max_amount: f32, compression: f32)
+/// S-curve strength and its pivot. The curve only adds midtone contrast (see
+/// `grade::s_curve`), so it is asked for by how flat the frame is and nothing
+/// else: a frame the tone map compressed is compressed on purpose, and a curve
+/// that steepened it again would put back the crushed shadows and blown
+/// highlights the tone map took out.
+pub fn auto_contrast(lightness: &Plane, target_spread: f32, max_amount: f32)
     -> (f32, f32, Value) {
     let spread = kit::std_dev(&lightness.d);
     // How flat the histogram is.
     let flat = ((target_spread - spread) / target_spread).clamp(0.0, 1.0);
-    // How much slope the tone map took out on the way here.
-    let squeezed = ((1.0 - compression) * SQUEEZE_TO_CURVE).clamp(0.0, 1.0);
-    let want = CURVE_FLOOR + (1.0 - CURVE_FLOOR) * flat.max(squeezed);
-    let amount = want * max_amount;
-    let pivot = kit::median(&lightness.d).clamp(0.2, 0.8);
+    let want = CURVE_FLOOR + (1.0 - CURVE_FLOOR) * flat;
+    let amount = want * max_amount + AUTO_CONTRAST_BOOST;
+    // Pivoting far from the middle bends one end of the range hard.
+    let pivot = kit::median(&lightness.d).clamp(0.3, 0.65);
     (
         amount,
         pivot,
         json!({"spread": round_to(spread, 4), "s_curve": round_to(amount, 3),
-               "pivot": round_to(pivot, 3), "flat": round_to(flat, 3),
-               "squeezed": round_to(squeezed, 3)}),
+               "pivot": round_to(pivot, 3), "flat": round_to(flat, 3)}),
     )
 }
 
 // Colour
+/// Chroma below which a pixel is taken as neutral: what is left there is a
+/// white balance error or noise, and neither should be boosted.
+pub const NEUTRAL_CHROMA: f32 = 0.02;
+
 /// Saturation boost from how colourful the frame already is, measured on the
-/// 80th percentile of chroma over well-lit pixels.
+/// 80th percentile of chroma over well-lit coloured pixels. A frame of mostly
+/// greys is not asking for colour; counting them would make it ask hardest.
 pub fn auto_vibrance(chroma: &Plane, lightness: &Plane, target_chroma: f32, max_boost: f32)
     -> (f32, Value) {
     let sel: Vec<f32> = (0..chroma.d.len())
-        .filter(|i| lightness.d[*i] > 0.15 && lightness.d[*i] < 0.95)
+        .filter(|i| lightness.d[*i] > 0.15 && lightness.d[*i] < 0.95
+                    && chroma.d[*i] > NEUTRAL_CHROMA)
         .map(|i| chroma.d[i])
         .collect();
     if sel.len() < 64 {
@@ -402,7 +513,13 @@ pub fn focus_sigma(width: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    /// A frame whose bright parts lean both cool and magenta.
+    /// Temperature and tint of a set of gains, log2.
+    fn temp_tint(gains: [f32; 3]) -> (f32, f32) {
+        let log = gains.map(|g| g.log2());
+        ((log[0] - log[2]) / 2.0, (2.0 * log[1] - log[0] - log[2]) / 3.0)
+    }
+
+    /// Greys under a light that leans cool and magenta.
     #[test]
     fn automatic_balance_trusts_temperature_more_than_tint() {
         let (w, h) = (64usize, 64usize);
@@ -410,14 +527,69 @@ mod tests {
         for (i, px) in thumb.d.chunks_exact_mut(3).enumerate() {
             let v = 0.05 + 0.6 * (i % 97) as f32 / 97.0;
             // Cool (more blue than red) and magenta (less green than both).
-            px.copy_from_slice(&[v, v * 0.85, v * 1.3]);
+            px.copy_from_slice(&[v, v * 0.9, v * 1.2]);
         }
         let (gains, _) = auto_white_balance(&thumb, 1.0, 2.0, 1.0);
-        let log: Vec<f32> = gains.iter().map(|g| g.log2()).collect();
-        let temp = (log[0] - log[2]) / 2.0;
-        let tint = (2.0 * log[1] - log[0] - log[2]) / 3.0;
-        assert!(temp > 0.15, "the blue was not taken out: {log:?}");
-        assert!(tint > 0.0 && tint < 0.35 * temp, "tint corrected too hard: {log:?}");
+        let (temp, tint) = temp_tint(gains);
+        // The cast is 0.13 warm-cool and 0.19 green-magenta, log2.
+        assert!((temp - 0.13).abs() < 0.02, "the blue was not taken out: {gains:?}");
+        assert!((tint - TINT_TRUST * 0.19).abs() < 0.02,
+                "tint should be corrected by {TINT_TRUST} of the cast: {gains:?}");
+    }
+
+    /// Colourful surfaces under a neutral light: the greys are already grey,
+    /// and the sky and the rock must not talk the balance into a tint.
+    #[test]
+    fn colourful_surfaces_do_not_tint_the_greys() {
+        let (w, h) = (80usize, 60usize);
+        let mut thumb = Image::new(w, h);
+        for (i, px) in thumb.d.chunks_exact_mut(3).enumerate() {
+            let v = 0.05 + 0.5 * (i % 89) as f32 / 89.0;
+            let colour: [f32; 3] = match i % 5 {
+                0 => [0.35, 0.55, 1.0],   // sky
+                1 => [1.0, 0.55, 0.3],    // warm rock
+                2 => [0.4, 0.8, 0.25],    // foliage
+                _ => [1.0, 1.0, 1.0],     // grey
+            };
+            for c in 0..3 {
+                px[c] = v * colour[c];
+            }
+        }
+        let (gains, info) = auto_white_balance(&thumb, 1.0, 0.8, 1.0);
+        let (temp, tint) = temp_tint(gains);
+        assert!(temp.abs() < 0.02 && tint.abs() < 0.02,
+                "a neutral scene was pushed to {temp} / {tint}: {info}");
+    }
+
+    /// A correction purely along warm-cool stays purely along it, however
+    /// hard the limit bites.
+    #[test]
+    fn limiting_a_warm_correction_adds_no_tint() {
+        let (w, h) = (64usize, 64usize);
+        let mut thumb = Image::new(w, h);
+        for (i, px) in thumb.d.chunks_exact_mut(3).enumerate() {
+            let v = 0.05 + 0.6 * (i % 97) as f32 / 97.0;
+            // Warm: red up and blue down by the same amount, green as is.
+            px.copy_from_slice(&[v * 2f32.powf(0.3), v, v * 2f32.powf(-0.3)]);
+        }
+        // A tight limit, so that it bites.
+        let (gains, _) = auto_white_balance(&thumb, 1.0, 0.2, 1.0);
+        let (temp, tint) = temp_tint(gains);
+        assert!(temp < -0.12 && temp > -0.2, "the limit did not hold the warmth: {gains:?}");
+        assert!(tint.abs() < 0.01, "a warm-cool correction came out with tint {tint}");
+    }
+
+    /// Nothing grey to go by, and the camera's balance stands.
+    #[test]
+    fn no_greys_means_no_correction() {
+        let (w, h) = (64usize, 64usize);
+        let mut thumb = Image::new(w, h);
+        for (i, px) in thumb.d.chunks_exact_mut(3).enumerate() {
+            let v = 0.05 + 0.6 * (i % 97) as f32 / 97.0;
+            px.copy_from_slice(&[v * 0.4, v * 0.9, v * 0.3]);   // a field of leaves
+        }
+        let (gains, _) = auto_white_balance(&thumb, 1.0, 0.8, 1.0);
+        assert_eq!(gains, [1.0, 1.0, 1.0]);
     }
 
     use super::*;
@@ -446,33 +618,44 @@ mod tests {
     #[test]
     fn a_contrasty_frame_still_gets_a_curve() {
         let wide = lightness(0.35, 64, 48);
-        let (amount, _, info) = auto_contrast(&wide, 0.20, 0.45, 1.0);
+        let (amount, _, info) = auto_contrast(&wide, 0.20, 0.45);
         assert_eq!(info["flat"].as_f64().unwrap(), 0.0,
                    "this frame is past the target spread, so nothing is missing: {info}");
-        assert!((amount - 0.45 * CURVE_FLOOR).abs() < 1e-4,
-                "it should still get the floor, got {amount}");
+        assert!((amount - (0.45 * CURVE_FLOOR + AUTO_CONTRAST_BOOST)).abs() < 1e-4,
+                "it should still get the floor and the boost, got {amount}");
     }
 
     /// A flat frame still gets more curve than a contrasty one.
     #[test]
     fn a_flat_frame_gets_more_curve_than_a_wide_one() {
-        let flat = auto_contrast(&lightness(0.02, 64, 48), 0.20, 0.45, 1.0).0;
-        let wide = auto_contrast(&lightness(0.35, 64, 48), 0.20, 0.45, 1.0).0;
-        assert!(flat > wide + 0.1, "flat {flat} should ask for much more than wide {wide}");
-        assert!(flat <= 0.45, "nothing may exceed the look's own maximum, got {flat}");
+        let flat = auto_contrast(&lightness(0.02, 64, 48), 0.20, 0.45).0;
+        let wide = auto_contrast(&lightness(0.35, 64, 48), 0.20, 0.45).0;
+        assert!(flat > wide + 0.05, "flat {flat} should ask for more than wide {wide}");
+        assert!(flat <= 0.45 + AUTO_CONTRAST_BOOST,
+                "nothing may exceed the look's own maximum and the boost, got {flat}");
     }
 
-    /// The tone map squeezing a scene toward the middle is invisible to the
-    /// spread, because it preserves the extremes that set it.
+    /// The curve adds midtone contrast and nothing else: both ends keep their
+    /// slope, so it cannot press shadows into black or highlights into white.
     #[test]
-    fn a_squeezed_frame_gets_a_curve_its_histogram_cannot_ask_for() {
-        let wide = lightness(0.35, 64, 48);
-        let untouched = auto_contrast(&wide, 0.20, 0.45, 1.0).0;
-        let squeezed = auto_contrast(&wide, 0.20, 0.45, 0.64).0;
-        assert!(squeezed > untouched * 1.5,
-                "ten stops pulled into a display should ask for far more curve: \
-                 {squeezed} against {untouched}");
-        assert!(squeezed <= 0.45, "still bounded by the look, got {squeezed}");
+    fn the_curve_leaves_black_and_white_alone() {
+        use crate::grade::s_curve;
+        for amount in [0.2f32, 0.45, 0.6] {
+            for pivot in [0.3f32, 0.5, 0.65] {
+                let slope = |x: f32| (s_curve(x + 1e-3, amount, pivot) - s_curve(x, amount, pivot))
+                    / 1e-3;
+                assert!(slope(0.002) > 0.8 && slope(0.997) > 0.8,
+                        "amount {amount} pivot {pivot}: ends at {} and {}",
+                        slope(0.002), slope(0.997));
+                assert!(slope(pivot) > 1.05, "no midtone contrast left at {pivot}");
+                let mut last = 0.0;
+                for i in 0..=1000 {
+                    let y = s_curve(i as f32 / 1000.0, amount, pivot);
+                    assert!(y >= last, "folds at {}", i as f32 / 1000.0);
+                    last = y;
+                }
+            }
+        }
     }
 
     /// A scene with edges in it, at a size worth measuring.
@@ -544,13 +727,88 @@ mod tests {
     fn a_buried_frame_is_rescued() {
         let dark = frame(0.0004, 0.6, 120, 90);
         let (gain, info) = auto_exposure(&dark, 0.13, 0.85, 3.2);
-        assert!(info["rescue_ev"].as_f64().unwrap() > 1.0,
+        assert!(info["rescue_ev"].as_f64().unwrap() > 0.0,
                 "an underexposed frame should be rescued: {info}");
-        assert!(gain.log2() > 3.2,
+        assert!(gain.log2() > METERED_EV + 3.2,
                 "the rescue should reach past the soft limit, got {} EV", gain.log2());
     }
 
-    /// Above the ceiling a merged frame's reference had, a bright blue sky is
+    /// A rescue may lift the shadows only as far as the highlights allow: a
+    /// frame that is mostly deep shadow with a bright window keeps the window.
+    #[test]
+    fn a_rescue_never_blows_the_highlights() {
+        let mut img = Image::new(120, 90);
+        for (i, px) in img.px_mut().iter_mut().enumerate() {
+            // Half the frame in deep shadow, a grey, and 2 % window.
+            let v = if i % 50 == 0 { 0.5 } else if i % 2 == 0 { 0.0008 } else { 0.03 };
+            *px = [v; 3];
+        }
+        let (gain, info) = auto_exposure(&img, 0.13, 1.0, 3.2);
+        assert!(0.5 * gain <= HIGHLIGHT_CEILING * 1.01,
+                "the window was taken to {}: {info}", 0.5 * gain);
+    }
+
+    /// A few lamps in a night scene are light sources, not highlights to keep,
+    /// and must not bury the rest of the frame.
+    #[test]
+    fn small_lamps_do_not_set_the_exposure() {
+        let with_lamps = |share: usize| {
+            let mut img = Image::new(200, 100);
+            for (i, px) in img.px_mut().iter_mut().enumerate() {
+                let v = if i % share == 0 { 0.6 } else { 0.004 * (1.0 + (i % 7) as f32 * 0.1) };
+                *px = [v; 3];
+            }
+            auto_exposure(&img, 0.13, 1.0, 3.2).0.log2()
+        };
+        let (one_percent, half_percent) = (with_lamps(100), with_lamps(250));
+        assert!((one_percent - half_percent).abs() < 0.5,
+                "1 % of lamps gave {one_percent} EV, 0.4 % gave {half_percent} EV");
+        assert!(one_percent > 3.0, "the night was buried at {one_percent} EV");
+    }
+
+    /// A blue sky whose luminance fits but whose blue channel would not is
+    /// still a highlight to keep.
+    #[test]
+    fn a_saturated_sky_counts_as_a_highlight() {
+        let mut img = Image::new(120, 90);
+        for (i, px) in img.px_mut().iter_mut().enumerate() {
+            *px = if i % 3 == 0 { [0.12, 0.2, 0.45] } else { [0.02; 3] };
+        }
+        let (gain, _) = auto_exposure(&img, 0.13, 1.0, 3.2);
+        assert!(0.45 * gain * 0.6 <= HIGHLIGHT_CEILING * 1.01,
+                "the sky's blue was sent to {}", 0.45 * gain);
+    }
+
+    /// An ordinary frame about two and a half stops under, which is where a
+    /// raw scaled to its white level lands, is brought up to the target.
+    #[test]
+    fn a_normally_metered_raw_reaches_the_target() {
+        let normal = frame(0.13 / 2f32.powf(METERED_EV), 0.9, 120, 90);
+        let (gain, info) = auto_exposure(&normal, 0.13, 1.0, 3.2);
+        let key = info["key"].as_f64().unwrap() as f32;
+        assert!(((key * gain / 0.13).log2()).abs() < 0.15,
+                "landed {} EV from the target: {info}", (key * gain / 0.13).log2());
+    }
+
+    /// A bright window in a correctly exposed room is the guard's business,
+    /// not the key's: the room keeps its exposure.
+    #[test]
+    fn a_window_does_not_darken_the_room() {
+        let room = |window: bool| {
+            let mut img = Image::new(200, 100);
+            for (i, px) in img.px_mut().iter_mut().enumerate() {
+                let v = if window && i % 20 == 0 { 0.13 * 8.0 }
+                        else { 0.13 * (1.0 + 0.2 * ((i % 7) as f32 / 7.0 - 0.5)) };
+                *px = [v / 2f32.powf(METERED_EV); 3];
+            }
+            auto_exposure(&img, 0.13, 1.0, 3.2).1["key"].as_f64().unwrap()
+        };
+        let (plain, windowed) = (room(false), room(true));
+        assert!((windowed / plain).log2().abs() < 0.03,
+                "a 5 % window moved the key by {} EV", (windowed / plain).log2());
+    }
+
+    /// Above the ceiling a merged frame's reference had, a bright pale sky is
     /// a coloured thing, not the light, and is left out of the balance.
     #[test]
     fn the_balance_leaves_out_what_is_above_its_ceiling() {
@@ -558,7 +816,7 @@ mod tests {
         for (i, px) in thumb.px_mut().iter_mut().enumerate() {
             let v = 0.02 + 0.1 * (i % 13) as f32 / 13.0;
             let sky = 0.6 + 0.4 * (i % 11) as f32 / 11.0;
-            *px = if i % 3 == 0 { [0.5 * sky, 0.6 * sky, 0.85 * sky] } else { [v; 3] };
+            *px = if i % 3 != 0 { [0.8 * sky, 0.9 * sky, sky] } else { [v; 3] };
         }
         let warmth = |g: [f32; 3]| (g[0] / g[2]).log2();
         let (all, _) = auto_white_balance(&thumb, 1.0, 2.0, 1.0);
@@ -587,11 +845,50 @@ mod tests {
             *v = if i % 3 == 0 { 0.55 + (i % 7) as f32 * 0.01 }
                  else { 0.11 + (i % 5) as f32 * 0.002 };
         }
-        let (black, white, info) = auto_levels(&dark, 0.6, 0.15);
-        let survives = |l: f32| (l - black) / (white - black) > BLACK_LIGHTNESS;
+        let (black, white, info) = auto_levels(&dark, &dark, 0.6, 0.15);
+        let survives = |l: f32| levels(l, black, white) > BLACK_LIGHTNESS;
         let lost = dark.d.iter().filter(|l| !survives(**l)).count() as f32 / dark.d.len() as f32;
         assert!(lost <= CRUSH_BUDGET + 0.02,
                 "the black point pinned {:.1}% of the frame: {info}", lost * 100.0);
+    }
+
+    /// A black point removes a pedestal: a shadow a little above it keeps most
+    /// of its light, and the midtones barely move.
+    #[test]
+    fn the_black_point_is_taken_off_light_not_lightness() {
+        let (black, white) = (0.11, 0.99);
+        let ev = |l: f32| (levels(l, black, white) / l).powi(3).log2();
+        assert!(ev(0.2) > -0.3, "a shadow at L 0.2 lost {} EV", ev(0.2));
+        assert!(ev(0.5).abs() < 0.05, "the midtones moved {} EV", ev(0.5));
+        assert_eq!(levels(0.0, black, white), 0.0);
+        assert!((levels(white, black, white) - 1.0).abs() < 1e-5);
+    }
+
+    /// A dim frame with no true white keeps its highlights where they were,
+    /// near enough.
+    #[test]
+    fn a_frame_without_white_is_not_stretched_to_one() {
+        let mut dim = Plane::new(100, 100);
+        for (i, v) in dim.d.iter_mut().enumerate() {
+            *v = 0.2 + 0.6 * (i % 100) as f32 / 100.0;
+        }
+        let (_, white, _) = auto_levels(&dim, &dim, 0.6, 0.15);
+        assert!(white >= LOWEST_WHITE, "white point pulled to {white}");
+    }
+
+    /// Greys are not a reason to add colour.
+    #[test]
+    fn a_grey_frame_is_not_asked_to_be_colourful() {
+        let (w, h) = (64, 64);
+        let mut chroma = Plane::new(w, h);
+        let mut light = Plane::new(w, h);
+        for i in 0..w * h {
+            light.d[i] = 0.5;
+            // Mostly a faint white balance error, a little real colour.
+            chroma.d[i] = if i % 10 == 0 { 0.09 } else { 0.012 };
+        }
+        let (boost, info) = auto_vibrance(&chroma, &light, 0.078, 1.55);
+        assert!(boost < 1.05, "the greys asked for {boost}: {info}");
     }
 
     /// The floor is a property of the capture, so the same floor has to give

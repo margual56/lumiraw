@@ -29,7 +29,15 @@ pub struct Preset {
     pub target_chroma: f32,
     pub max_boost: f32,
     pub sharpen: f32,
+    /// Chroma gain on every colour, a look's own saturation, as a camera's
+    /// picture style has; vibrance (`target_chroma`) then lifts what is muted.
+    pub saturation: f32,
     pub denoise: bool,
+    /// How much of what the highlight guard held back the tone map gives back
+    /// to the rest of the frame: half of it by day (all of it brightened every
+    /// frame a stop past the camera's own rendering), none of it by night,
+    /// when dark is what the picture is (see `profile::tune`).
+    pub give_back: f32,
     /// The tone map brings the highlights under the shoulder however far it
     /// has to squeeze: for a merged bracket, which was shot to keep both its
     /// shadows and its highlights.
@@ -45,15 +53,17 @@ impl Default for Preset {
             name: "natural".into(),
             wb_strength: 1.0,
             exposure_strength: 1.0,
-            target_key: 0.13,
+            target_key: 0.10,
             comfortable_stops: 6.5,
             detail_boost: 1.15,
             levels_strength: 0.60,
-            contrast_amount: 0.45,
+            contrast_amount: 0.55,
             target_chroma: 0.078,
             max_boost: 1.55,
             sharpen: 0.55,
+            saturation: 1.10,
             denoise: true,
+            give_back: 0.5,
             keep_highlights: false,
             wb_ceiling: 1.0,
         }
@@ -69,10 +79,11 @@ pub fn preset_by_name(name: &str) -> Preset {
             comfortable_stops: 6.0,
             detail_boost: 1.25,
             levels_strength: 0.75,
-            contrast_amount: 0.60,
+            contrast_amount: 0.70,
             target_chroma: 0.095,
             max_boost: 1.8,
             sharpen: 0.75,
+            saturation: 1.2,
             ..base
         },
         "flat" => Preset {
@@ -86,6 +97,7 @@ pub fn preset_by_name(name: &str) -> Preset {
             target_chroma: 0.062,
             max_boost: 1.2,
             sharpen: 0.35,
+            saturation: 1.0,
             ..base
         },
         _ => base,
@@ -119,9 +131,8 @@ pub struct Decisions {
     pub exposure: f32,
     /// The tone map's compression, and the base level it pivots on (log2).
     pub tone: (f32, f32),
-    /// Where the tone map's shoulder starts (log2) and how hard it bends, when
-    /// it has one; see `Shoulder`.
-    pub shoulder: Option<(f32, f32)>,
+    /// The tone map's shoulder, when it has one.
+    pub shoulder: Option<Shoulder>,
     /// Black and white point, when levels were applied.
     pub levels: Option<(f32, f32)>,
     /// The contrast curve's amount and pivot.
@@ -130,12 +141,19 @@ pub struct Decisions {
     pub vibrance: f32,
     /// The colour of the air dehazing measured, when it ran.
     pub air: Option<[f32; 3]>,
+    /// How many stops the highlight guard held the exposure back: the tone map
+    /// gives them back to everything below the highlights.
+    pub held_back: f32,
+    /// What the tone map gave back of it: a lift of this many stops (log2) at
+    /// and below the first base level, fading to none at the second.
+    pub lift: (f32, f32, f32),
 }
 
 impl Default for Decisions {
     fn default() -> Self {
         Decisions { wb: None, exposure: 1.0, tone: (1.0, 0.0), shoulder: None, levels: None,
-                    contrast: (0.0, 0.5), vibrance: 1.0, air: None }
+                    contrast: (0.0, 0.5), vibrance: 1.0, air: None, held_back: 0.0,
+                    lift: (0.0, 0.0, 0.0) }
     }
 }
 
@@ -441,7 +459,13 @@ pub fn apply_white_balance(img: &mut Image, thumb: &mut Image, s: &Settings, p: 
         return;
     }
     // The tuned preset, not the named one: the capture decides how far the
-    // automatic balance may be trusted (see `profile::tune`).
+    // automatic balance may be trusted (see `profile::tune`), and not at all
+    // when the camera balanced the shot itself.
+    if p.wb_strength <= 0.0 {
+        report.skipped("white balance", "camera_balanced", json!({"source": "automatic"}));
+        apply_temp_tint(img, thumb, s, report);
+        return;
+    }
     let (gains, info) = analyze::auto_white_balance(thumb, p.wb_strength, WB_LIMIT_EV,
                                                     p.wb_ceiling);
     let info = with(info, json!({"source": "automatic", "strength": round_to(p.wb_strength, 2)}));
@@ -480,28 +504,48 @@ pub fn temp_tint_gains(temperature: f32, tint: f32) -> [f32; 3] {
 
 /// The white balance correction that per-channel `gains` describe, applied as a
 /// change of light rather than as three volume knobs.
+///
+/// A pixel blown in every channel holds no colour to correct: the decoder
+/// made it white, and white it stays, at the brightness the correction gives
+/// it. Corrected as a colour, a blown sky or sun would take the opposite of
+/// the correction's tint.
 pub fn adapt(img: &mut Image, gains: [f32; 3]) {
     if gains.iter().all(|g| (g - 1.0).abs() < 1e-6) {
         return;
     }
     let white = [1.0 / gains[0].max(1e-6), 1.0 / gains[1].max(1e-6), 1.0 / gains[2].max(1e-6)];
-    kit::bradford_adaptation(white).apply_to(&mut img.d);
+    let m = kit::bradford_adaptation(white);
+    for px in img.d.chunks_exact_mut(3) {
+        let blown = kit::smoothstep(0.95, 0.99, px[0].min(px[1]).min(px[2]));
+        let out = m.apply([px[0], px[1], px[2]]);
+        let y = kit::luminance_px(&out);
+        for c in 0..3 {
+            px[c] = out[c] + (y - out[c]) * blown;
+        }
+    }
 }
 
 pub fn apply_exposure(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
                       frame: Option<Rect>, d: &mut Decisions, frozen: bool,
                       report: &mut Report) -> f32 {
-    let gain = if frozen { d.exposure } else { decide_exposure(img, thumb, s, p, frame, report) };
+    let gain = if frozen {
+        d.exposure
+    } else {
+        let (gain, held) = decide_exposure(img, thumb, s, p, frame, report);
+        d.held_back = held;
+        gain
+    };
     d.exposure = gain;
     img.scale(gain);
     gain
 }
 
+/// The exposure gain, and how many stops the highlight guard held it back.
 fn decide_exposure(img: &Image, thumb: &Image, s: &Settings, p: &Preset, frame: Option<Rect>,
-                   report: &mut Report) -> f32 {
+                   report: &mut Report) -> (f32, f32) {
     if !s.on("exposure") {
         report.skipped("exposure", "switched_off", json!({}));
-        return s.exposure_bias.exp2();
+        return (s.exposure_bias.exp2(), 0.0);
     }
     if let Some(patch) = s.exposure_rect.and_then(|r| sample_rect(img, r, frame)) {
         // Geometric mean: a few bright specks in the selection should not
@@ -511,19 +555,21 @@ fn decide_exposure(img: &Image, thumb: &Image, s: &Settings, p: &Preset, frame: 
             .map(|px| kit::luminance_px(px).max(EPS).log2() as f64)
             .sum();
         let level = ((log_sum / patch.len() as f64) as f32).exp2();
-        let mut gain = (p.target_key / level).clamp(2f32.powi(-6), 2f32.powi(8));
-        gain *= s.exposure_bias.exp2();
+        let gain = (p.target_key / level).clamp(2f32.powi(-6), 2f32.powi(8));
+        // What the selection decided, without the photographer's own bias,
+        // the same as the automatic path reports it.
         report.add("exposure", json!({"applied": true, "source": "selection",
             "patch_level": round_to(level, 5), "gain_ev": round_to(gain.log2(), 3),
             "bias_ev": round_to(s.exposure_bias, 2)}));
-        return gain;
+        return (gain * s.exposure_bias.exp2(), 0.0);
     }
     let (mut gain, info) =
         analyze::auto_exposure(thumb, p.target_key, p.exposure_strength, 3.2);
     gain *= s.exposure_bias.exp2();
+    let held = info.get("highlight_guard_ev").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
     report.add("exposure", with(info, json!({"source": "automatic",
                                               "bias_ev": round_to(s.exposure_bias, 2)})));
-    gain
+    (gain, held)
 }
 
 /// Haze out or in, on the frame and on the thumbnail the tone map measures.
@@ -552,23 +598,19 @@ fn apply_dehaze(img: &mut Image, thumb: &mut Image, s: &Settings, long_edge: usi
 pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
                             long_edge: usize, d: &mut Decisions, frozen: bool,
                             report: &mut Report) -> f32 {
-    let (factor, info) = if frozen {
+    let (mut factor, info) = if frozen {
         (d.tone.0, json!({}))
     } else {
-        analyze::auto_tone_compression(thumb, p.comfortable_stops, 0.45)
+        analyze::auto_tone_compression(thumb, p.comfortable_stops, TONE_FLOOR)
     };
-    d.tone.0 = factor;
     // Clarity scales the fine-structure layer of this same split.
     let detail_boost = p.detail_boost * (1.0 + 0.6 * s.clarity);
     let info = with(info, json!({"detail_boost": round_to(detail_boost, 3),
                                  "clarity": round_to(s.clarity, 2)}));
     if !s.on("tone_map") {
+        d.tone.0 = factor;
         report.skipped("tone mapping", "switched_off", info);
         return 1.0;
-    }
-    if factor >= 0.995 && (detail_boost - 1.0).abs() < 1e-3 && !p.keep_highlights {
-        report.add("tone mapping", info);
-        return factor;
     }
 
     let y = kit::luminance(img);
@@ -580,47 +622,87 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
     let base = kit::guided_filter(&log_y, &log_y, radius, 0.15, 4);
 
     // Anchor on the 55th percentile of the base layer, every 4th pixel.
+    let mut lift = 0.0;
+    // The brightest large-scale light (log2, before compression) a merged
+    // bracket's shoulder is fitted to.
+    let mut bright = None;
     let anchor = if frozen {
         d.tone.1
     } else {
+        d.lift = (0.0, 0.0, 0.0);
         let mut sample: Vec<f32> = Vec::with_capacity(base.d.len() / 16 + 1);
         for yy in (0..base.h).step_by(4) {
             for xx in (0..base.w).step_by(4) {
                 sample.push(base.d[yy * base.w + xx]);
             }
         }
-        kit::percentile(&sample, 55.0)
-    };
-    d.tone.1 = anchor;
-
-    let shoulder = if frozen {
-        d.shoulder.map(|(knee, bend)| Shoulder { knee, bend })
-    } else if p.keep_highlights {
-        let mut sample: Vec<f32> = Vec::with_capacity(base.d.len() / 16 + 1);
-        for yy in (0..base.h).step_by(4) {
-            for xx in (0..base.w).step_by(4) {
-                sample.push(anchor + (base.d[yy * base.w + xx] - anchor) * factor);
-            }
+        let q = kit::percentiles(&sample, &[(analyze::CRUSH_BUDGET * 100.0) as f64, 55.0, 99.5,
+                                            SHOULDER_FITS_PCT]);
+        let (low, middle, high) = (q[0], q[1], q[2]);
+        bright = Some(q[3]);
+        let mut anchor = middle;
+        // The stops the highlight guard held the exposure back are given back
+        // to the middle of the frame here, so a room is not left dark for its
+        // window: a lift of that much at and below the middle, fading to none
+        // at the highlights, which stay where the guard put them. The shadows
+        // rise with the middle and no further, so what was black stays black
+        // against it; and no more is given than keeps a third of the contrast
+        // between the middle and the highlights.
+        let held = (d.held_back * p.give_back).clamp(0.0, analyze::MAX_RESCUE_EV);
+        if held > 0.0 && high > middle {
+            d.lift = (held.min((1.0 - HELD_FLOOR) * (high - middle)), middle, high);
         }
-        Shoulder::fitting(kit::percentile(&sample, SHOULDER_FITS_PCT))
-    } else {
-        None
+        // Shadows still below the display's floor are lifted the same way:
+        // the pivot moves up toward the highlights, so everything below it
+        // rises; then, if that is not enough, the compression deepens.
+        let need = (analyze::DISPLAY_FLOOR.log2() - low).clamp(0.0, analyze::MAX_RESCUE_EV);
+        if need > 0.0 && high > low {
+            if factor < 0.999 {
+                anchor = anchor.max((low + need / (1.0 - factor)).min(high));
+            }
+            let reach = (anchor - low) * (1.0 - factor);
+            if reach < need {
+                anchor = high;
+                factor = factor.min(1.0 - need / (high - low)).max(TONE_FLOOR);
+            }
+            lift = (anchor - low) * (1.0 - factor);
+        }
+        anchor
     };
-    d.shoulder = shoulder.map(|s| (s.knee, s.bend));
+    d.tone = (factor, anchor);
+    let (given, from, to) = d.lift;
+    let info = with(info, json!({"compression": round_to(factor, 3),
+                                 "shadow_lift_ev": round_to(lift, 2),
+                                 "held_back_ev": round_to(d.held_back, 2),
+                                 "given_back_ev": round_to(given, 2)}));
+    // Compression keeps the order of the base levels, so the percentile of the
+    // compressed light is the compressed percentile.
+    let shoulder = match bright {
+        Some(b) if p.keep_highlights => Shoulder::fitting(anchor + (b - anchor) * factor),
+        Some(_) => None,
+        None => d.shoulder,
+    };
+    d.shoulder = shoulder;
     let info = match shoulder {
         Some(s) => with(info, json!({"shoulder_knee": round_to(s.knee.exp2(), 3),
                                      "shoulder_bend": round_to(s.bend, 3)})),
         None => info,
     };
     report.add("tone mapping", info);
+    if factor >= 0.995 && (detail_boost - 1.0).abs() < 1e-3 && given <= 0.0
+        && shoulder.is_none() {
+        return factor;
+    }
 
     for (i, px) in img.px_mut().iter_mut().enumerate() {
         let detail = log_y.d[i] - base.d[i];
-        let mut level = anchor + (base.d[i] - anchor) * factor;
-        if let Some(s) = shoulder {
-            level = s.apply(level);
-        }
-        let new_log = level + detail * detail_boost;
+        let given_here = if given > 0.0 {
+            given * (1.0 - kit::smoothstep(from, to, base.d[i]))
+        } else {
+            0.0
+        };
+        let level = anchor + (base.d[i] - anchor) * factor + given_here;
+        let new_log = shoulder.map_or(level, |s| s.apply(level)) + detail * detail_boost;
         let scale = kit::fast_exp2(new_log - log_y.d[i]);
         for v in px.iter_mut() {
             *v *= scale;
@@ -628,6 +710,17 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
     }
     factor
 }
+
+/// The brightest a channel may be taken by vibrance and saturation, short of
+/// white, so that a boosted gradient keeps its steps.
+const BOOST_HEADROOM: f32 = 0.97;
+
+/// The most the tone map compresses a scene's range.
+const TONE_FLOOR: f32 = 0.45;
+
+/// What the tone map keeps of the contrast between the middle and the
+/// highlights when it gives back what the highlight guard held back.
+const HELD_FLOOR: f32 = 0.65;
 
 /// What share of the large-scale light a merged bracket's shoulder brings
 /// under `SHOULDER_TOP`.
@@ -644,8 +737,8 @@ const SHOULDER_TOP: f32 = 0.5;
 /// this brings down the highlights the dark frames held, with their detail
 /// put back on top like everywhere else. In stops, `x` above the knee goes
 /// to `x / (1 + bend x)`: untouched at the knee, and smooth through it.
-#[derive(Clone, Copy, Debug)]
-struct Shoulder {
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shoulder {
     knee: f32,
     bend: f32,
 }
@@ -673,10 +766,13 @@ pub fn filmic(img: &mut Image) {
         ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0.0, 1.0)
     }
     for px in img.d.chunks_exact_mut(3) {
-        let y = kit::luminance_px(px).max(EPS);
-        let ty = curve(y);
+        // Scaled by the brightest channel, not by luminance: a saturated colour
+        // has little luminance for its brightest channel, so a ratio taken from
+        // luminance sends that channel past white, where it clips flat.
+        let norm = px[0].max(px[1]).max(px[2]).max(EPS);
+        let ty = curve(norm);
         let w = kit::smoothstep(0.55, 1.0, ty);
-        let hue_preserving = [px[0] * (ty / y), px[1] * (ty / y), px[2] * (ty / y)];
+        let hue_preserving = [px[0] * (ty / norm), px[1] * (ty / norm), px[2] * (ty / norm)];
         let mut out = hue_preserving;
         if w > 0.0 {
             for c in 0..3 {
@@ -690,13 +786,30 @@ pub fn filmic(img: &mut Image) {
             if c0 > 1e-4 {
                 let (l, a, b) = kit::rgb_to_oklab_px(out[0], out[1], out[2]);
                 let chroma = a.hypot(b);
-                let (r, g, bl) = kit::oklab_to_rgb_px(l, a0 / c0 * chroma, b0 / c0 * chroma);
-                out = [r, g, bl];
+                let at = |k: f32| {
+                    let (r, g, bl) = kit::oklab_to_rgb_px(l, a0 / c0 * chroma * k,
+                                                          b0 / c0 * chroma * k);
+                    [r, g, bl]
+                };
+                let fits = |c: [f32; 3]| c.iter().all(|v| (-1e-4..=1.0 + 1e-4).contains(v));
+                out = at(1.0);
+                // Turned back to the hue it should have, a colour near white
+                // can land outside the gamut: take its chroma down until it
+                // fits, keeping its lightness and its hue.
+                if !fits(out) {
+                    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+                    for _ in 0..10 {
+                        let mid = 0.5 * (lo + hi);
+                        if fits(at(mid)) { lo = mid } else { hi = mid }
+                    }
+                    out = at(lo);
+                }
             }
         }
         for c in 0..3 {
-            // A loose bound, only so a stray value cannot run away downstream.
-            px[c] = out[c].clamp(-1.0, 2.0);
+            // Nothing the curve makes is past white; below black stays loose,
+            // for the gamut mapping at the end to deal with.
+            px[c] = out[c].clamp(-1.0, 1.0);
         }
     }
 }
@@ -706,14 +819,18 @@ pub fn filmic(img: &mut Image) {
 const CURVE_STEPS: usize = 4096;
 
 /// Smooth contrast curve anchored at the image's own midtone.
+///
+/// Midtone contrast only: the bend fades out toward black and white, so the
+/// curve leaves both ends at their own slope instead of pressing shadows into
+/// black and highlights into white.
 pub fn s_curve(x: f32, amount: f32, pivot: f32) -> f32 {
     if amount <= 1e-3 {
         return x;
     }
     let g = (0.5f32).ln() / pivot.clamp(0.1, 0.9).ln();
     let t = x.clamp(0.0, 1.0).powf(g);
-    let shaped = kit::smoothstep(0.0, 1.0, t);
-    ((1.0 - amount) * t + amount * shaped).powf(1.0 / g)
+    let bend = (kit::smoothstep(0.0, 1.0, t) - t) * 4.0 * t * (1.0 - t);
+    (t + amount * bend).clamp(0.0, 1.0).powf(1.0 / g)
 }
 
 /// The most any one tone zone may move a lightness.
@@ -753,7 +870,7 @@ fn denoise_skipped(on: bool, measured: f32) -> &'static str {
 
 /// Levels, contrast, vibrance, denoising and sharpening in Oklab.
 pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharpen_sigma: f32,
-                        compression: f32, focus_sigma: f32, render_scale: f32,
+                        focus_sigma: f32, render_scale: f32,
                         long_edge: usize, d: &mut Decisions, frozen: bool,
                         report: &mut Report, stats_rect: Option<Rect>) -> Image {
     let n = img.w * img.h;
@@ -772,8 +889,13 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     let levels = if frozen {
         d.levels
     } else {
+        let mut peak = Plane::new(img.w, img.h);
+        for (v, px) in peak.d.iter_mut().zip(img.px()) {
+            *v = px[0].max(px[1]).max(px[2]).max(0.0).cbrt();
+        }
         let (black, white, info) =
-            analyze::auto_levels(&measured(&lightness, stats_rect), p.levels_strength, 0.15);
+            analyze::auto_levels(&measured(&lightness, stats_rect),
+                                 &measured(&peak, stats_rect), p.levels_strength, 0.15);
         let levels_applied = info.get("applied").and_then(|v| v.as_bool()).unwrap_or(false);
         if s.on("levels") && levels_applied {
             report.add("levels", info);
@@ -787,9 +909,8 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     d.levels = levels;
     let mut light_new = Plane::new(img.w, img.h);
     if let Some((black, white)) = levels {
-        let span = (white - black).max(1e-6);
         for i in 0..n {
-            light_new.d[i] = ((lightness.d[i] - black) / span).clamp(0.0, 1.0);
+            light_new.d[i] = analyze::levels(lightness.d[i], black, white);
         }
     } else {
         light_new.d.copy_from_slice(&lightness.d);
@@ -800,7 +921,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
         d.contrast
     } else {
         let (amount, pivot, info) = analyze::auto_contrast(&measured(&light_new, stats_rect), 0.20,
-                                                           p.contrast_amount, compression);
+                                                           p.contrast_amount);
         if s.on("contrast") {
             report.add("contrast", info);
         } else {
@@ -814,10 +935,16 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
         let table: Vec<f32> = (0..=CURVE_STEPS + 1)
             .map(|i| s_curve((i as f32 / CURVE_STEPS as f32).min(1.0), amount, pivot))
             .collect();
-        for v in light_new.d.iter_mut() {
+        for (v, px) in light_new.d.iter_mut().zip(img.px()) {
             let f = v.clamp(0.0, 1.0) * CURVE_STEPS as f32;
             let j = f as usize;
-            *v = table[j] + (table[j + 1] - table[j]) * (f - j as f32);
+            let curved = table[j] + (table[j + 1] - table[j]) * (f - j as f32);
+            // Brightening a colour whose brightest channel is already near the
+            // top would take it out of the gamut, where the mapping at the end
+            // presses it flat: a bright saturated gradient would lose its
+            // steps. The lift fades out there; darkening is always kept.
+            let room = 1.0 - kit::smoothstep(0.85, 1.0, px[0].max(px[1]).max(px[2]));
+            *v = if curved > *v { *v + (curved - *v) * room } else { curved };
         }
     }
 
@@ -836,10 +963,14 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
         report.skipped("tone zones", "not_needed", json!({}));
     }
 
-    // Scale chroma with the lightness change, or lifted shadows go grey.
+    // Scale chroma with the lightness change, or lifted shadows go grey. Partly
+    // on the way up, so a lift does not oversaturate; fully on the way down,
+    // or a darkened region keeps its chroma and reads more saturated (and any
+    // tint in it stronger) than before.
     for i in 0..n {
         let ratio = (light_new.d[i].max(0.0) + 1e-3) / (lightness.d[i].max(0.0) + 1e-3);
-        let comp = kit::fast_exp2(0.35 * kit::fast_log2(ratio)).clamp(0.6, 1.8);
+        let exponent = if ratio < 1.0 { 1.0 } else { 0.35 };
+        let comp = kit::fast_exp2(exponent * kit::fast_log2(ratio)).clamp(0.25, 1.8);
         a.d[i] *= comp;
         b.d[i] *= comp;
     }
@@ -912,13 +1043,44 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     boost
     };
     d.vibrance = boost;
-    if (boost - 1.0).abs() > 0.001 {
+    // The look's own saturation, on every colour; switched off with vibrance.
+    let saturation = if s.on("vibrance") { p.saturation } else { 1.0 };
+    if (boost - 1.0).abs() > 0.001 || (saturation - 1.0).abs() > 0.001 {
         for i in 0..n {
             let c = chroma.d[i];
             let hue = kit::fast_atan2(b.d[i], a.d[i]);
-            let mut weight = 1.0 - kit::smoothstep(0.10, 0.30, c);
-            weight *= 1.0 - s.skin_protect * s.skin.likeness(hue, c);
-            let gain = 1.0 + (boost - 1.0) * weight;
+            // Vibrance lifts what is muted and leaves what is already vivid.
+            let muted = 1.0 - kit::smoothstep(0.10, 0.30, c);
+            // Neither touches what is meant to be neutral (its colour is a
+            // white balance error), nor what is nearly white, where there is
+            // no room left in the gamut, nor skin, as far as it is protected.
+            let room = kit::smoothstep(0.5 * analyze::NEUTRAL_CHROMA,
+                                       2.0 * analyze::NEUTRAL_CHROMA, c)
+                * (1.0 - kit::smoothstep(0.85, 0.97, light_new.d[i]))
+                * (1.0 - s.skin_protect * s.skin.likeness(hue, c));
+            let mut gain = 1.0 + ((boost - 1.0) * muted + (saturation - 1.0)) * room;
+            // Never to the gamut's edge: the mapping at the end would press the
+            // colour onto it, and a bright saturated gradient would come out
+            // flat there. Only as far as leaves a little room, and not at all
+            // for a colour already that close.
+            if gain > 1.0 {
+                let l = light_new.d[i];
+                let fits = |g: f32| {
+                    let (r, gg, bl) = kit::oklab_to_rgb_px(l, a.d[i] * g, b.d[i] * g);
+                    r.min(gg).min(bl) >= 0.0 && r.max(gg).max(bl) <= BOOST_HEADROOM
+                };
+                if !fits(gain) {
+                    let (mut lo, mut hi) = (1.0f32, gain);
+                    if !fits(lo) {
+                        hi = lo;
+                    }
+                    for _ in 0..8 {
+                        let mid = 0.5 * (lo + hi);
+                        if fits(mid) { lo = mid } else { hi = mid }
+                    }
+                    gain = lo;
+                }
+            }
             a.d[i] *= gain;
             b.d[i] *= gain;
         }
@@ -1074,8 +1236,7 @@ pub fn process(mut img: Image, settings: &Settings, args: ProcessArgs, report: &
     apply_dehaze(&mut img, &mut thumb, settings, long_edge, &mut d, frozen, report);
 
     step(&mut progress, &mut mark);
-    let compression = apply_local_tone_map(&mut img, &thumb, settings, &p, long_edge, &mut d,
-                                           frozen, report);
+    apply_local_tone_map(&mut img, &thumb, settings, &p, long_edge, &mut d, frozen, report);
     // Local filters on the light as it will be shown, before the shoulder
     // rolls it off; see `local` for why not earlier.
     crate::local::apply_filters(&mut img, &settings.filters, frame, args.masks);
@@ -1083,8 +1244,7 @@ pub fn process(mut img: Image, settings: &Settings, args: ProcessArgs, report: &
     step(&mut progress, &mut mark);
     filmic(&mut img);
     step(&mut progress, &mut mark);
-    let out = apply_perceptual(&img, settings, &p, noise, args.sharpen_sigma, compression,
-                               args.focus_sigma, args.render_scale, long_edge, &mut d, frozen,
+    let out = apply_perceptual(&img, settings, &p, noise, args.sharpen_sigma, args.focus_sigma, args.render_scale, long_edge, &mut d, frozen,
                                report, args.stats_rect);
     step(&mut progress, &mut mark);
     (out, d)
@@ -1164,8 +1324,8 @@ mod tests {
     /// pivot in place while it steepens either side of it.
     #[test]
     fn s_curve_matches_reference() {
-        for (x, want) in [(0.1f32, 0.071561f32), (0.25, 0.218064), (0.5, 0.509989),
-                          (0.75, 0.792776), (0.9, 0.929976)] {
+        for (x, want) in [(0.1f32, 0.0865191f32), (0.25, 0.223126), (0.45, 0.45),
+                          (0.75, 0.779422), (0.9, 0.90955)] {
             let got = s_curve(x, 0.4, 0.45);
             assert!((got - want).abs() < 1e-4, "x={} got {} want {}", x, got, want);
         }
@@ -1187,6 +1347,12 @@ mod tests {
         }
         let apart = (0..3).map(|c| (img.d[3 + c] - by_gains.d[3 + c]).abs()).fold(0.0f32, f32::max);
         assert!(apart > 0.005, "a saturated colour was treated like three volume knobs");
+        // A pixel blown in every channel stays white.
+        let mut blown = Image::filled(1, 1, [1.0; 3]);
+        adapt(&mut blown, gains);
+        let spread = blown.d.iter().cloned().fold(f32::MIN, f32::max)
+            - blown.d.iter().cloned().fold(f32::MAX, f32::min);
+        assert!(spread < 1e-5, "a blown pixel was tinted: {:?}", blown.d);
         let mut same = by_gains.clone();
         adapt(&mut same, [1.0, 1.0, 1.0]);
         assert_eq!(same.d, by_gains.d, "no correction must mean no change");
@@ -1336,7 +1502,7 @@ mod tests {
             let mut s = Settings::default();
             s.denoise = denoise;
             let mut report = Report::new();
-            apply_perceptual(&src, &s, &Preset::default(), noise, 1.0, 1.0, 0.0, 1.0,
+            apply_perceptual(&src, &s, &Preset::default(), noise, 1.0, 0.0, 1.0,
                              src.w.max(src.h), &mut Decisions::default(), false, &mut report, None);
             report.to_json()
         };

@@ -32,9 +32,6 @@ pub struct Development {
     /// The last "before" rendered, with the settings, size and 3D table it
     /// was rendered from.
     baseline: Option<(Settings, Option<usize>, u64, Image)>,
-    /// What an export would decide for these settings, measured for the last
-    /// region developed; see `decide_at_full_size`.
-    decided_full: Option<(Settings, Decisions)>,
     /// The whole frame at full size, corrected, framed and healed, while
     /// regions of it are being looked at.
     full_frame: Option<(String, Vec<crate::local::Spot>, Image)>,
@@ -60,7 +57,15 @@ struct Graded {
     masks: (bool, bool),
     image: Image,
     report: Report,
+    /// What the automatic corrections decided for it.
+    decided: Decisions,
 }
+
+/// The size every automatic decision is measured at, whatever the size of
+/// the render: the main preview's. An export or the 100 % view measured at
+/// its own size decided a little differently (white balance by a few percent,
+/// exposure by a tenth of a stop), so what was shown was not what was saved.
+const DECIDE_EDGE: usize = 1300;
 
 /// The settings with what only `finish` reads put back to its defaults: two
 /// renders that agree on these agree on everything before `finish`.
@@ -158,7 +163,6 @@ impl Development {
             cache: Vec::new(),
             focus: None,
             baseline: None,
-            decided_full: None,
             full_frame: None,
             graded: None,
             masks: None,
@@ -183,7 +187,6 @@ impl Development {
             self.baseline = None;
             self.graded = None;
             self.full_frame = None;
-            self.decided_full = None;
             self.masks = None;
         }
     }
@@ -254,7 +257,18 @@ impl Development {
         // Framing comes after lens correction (distortion must be undone in the
         // original frame) and before everything tonal, so metering and the auto
         // levels only ever see the picture that will actually be kept.
-        let eff = geometry::effective_crop(src.w, src.h, &s.framing);
+        // The part of what this returns the estimators should measure: all of
+        // it when it is already cropped, otherwise the crop that will be kept,
+        // or, when nothing is kept, the largest rectangle without the empty
+        // corners a rotation leaves. Measured, those corners read as a fifth of
+        // the frame in deep black and send the exposure up by stops.
+        let kept = geometry::effective_crop(src.w, src.h, &s.framing);
+        let eff = match kept {
+            Some(_) if crop => None,
+            Some(r) => Some(r),
+            None if s.framing.transforms() => Some(geometry::cover_crop(src.w, src.h, &s.framing)),
+            None => None,
+        };
         if !s.framing.is_identity() {
             src = Cow::Owned(geometry::apply(&src, &s.framing, crop));
         }
@@ -278,18 +292,18 @@ impl Development {
         if long_edge.is_none() {
             self.release_region();
         }
+        if let Some(g) = self.kept(settings, long_edge, crop) {
+            let mut report = g.report.clone();
+            let image = g.image.clone();
+            let window = Window::whole(&image);
+            return (finish(image, settings, window, &mut report), report);
+        }
+        // A full-size render applies what the preview decided.
+        let decided = long_edge.is_none().then(|| self.decide(settings));
         let masks = self.masks_for(settings);
         let mask_kinds = (masks.get(crate::masks::Kind::Sky).is_some(),
                           masks.get(crate::masks::Kind::Subject).is_some());
         let upstream = before_finish(settings);
-        if let Some(g) = &self.graded {
-            if long_edge.is_some() && g.long_edge == long_edge && g.crop == crop
-                && g.masks == mask_kinds && g.settings == upstream {
-                let mut report = g.report.clone();
-                let window = Window::whole(&g.image);
-                return (finish(g.image.clone(), settings, window, &mut report), report);
-            }
-        }
         let mut report = Report::new();
         let (src, lens_info, eff_crop) = self.corrected(settings, long_edge, crop, &mut progress);
         self.report_lens(settings, &lens_info, &mut report);
@@ -299,9 +313,9 @@ impl Development {
         let scale = self.working_edge(settings, long_edge, crop)
             .map_or(1.0, |e| (e as f32 / native as f32).min(1.0));
 
-        // When the canvas is shown uncropped, the estimators must still measure
-        // only the rectangle being kept, see geometry::stats_view.
-        let stats_rect = if crop { None } else { eff_crop };
+        // The estimators measure only the picture, see `corrected` and
+        // geometry::stats_view.
+        let stats_rect = eff_crop;
 
         let mut graded_progress = after_lens(progress);
         let measured_width = self.focus_width();
@@ -309,10 +323,11 @@ impl Development {
             stats_rect,
             render_scale: scale,
             focus_sigma: self.focus_sigma_at((native as f32 * scale).round() as usize),
+            decided,
             progress: graded_progress.as_mut().map(|f| &mut **f as &mut dyn FnMut(f32, &str)),
             ..self.process_args(settings, &masks, Window::whole(&src))
         };
-        let (rgb, _) = grade::process(src, settings, args, &mut report);
+        let (rgb, decided) = grade::process(src, settings, args, &mut report);
 
         report.add("focus", match measured_width {
             None => json!({"measured": false, "verdict": "unknown"}),
@@ -333,7 +348,7 @@ impl Development {
         // Only previews are kept: a full-size frame is too big to hold twice.
         self.graded = long_edge.map(|_| Graded {
             settings: upstream, long_edge, crop, masks: mask_kinds,
-            image: rgb.clone(), report: report.clone(),
+            image: rgb.clone(), report: report.clone(), decided,
         });
         let window = Window::whole(&rgb);
         (finish(rgb, settings, window, &mut report), report)
@@ -341,21 +356,29 @@ impl Development {
 
     pub fn release_region(&mut self) {
         self.full_frame = None;
-        self.decided_full = None;
     }
 
-    fn decide_at_full_size(&mut self, full: &Image, settings: &Settings) -> Decisions {
-        if let Some((s, d)) = &self.decided_full {
-            if s == settings {
-                return d.clone();
-            }
-        }
-        let proxy = kit::thumbnail(full, 1024);
+    /// The preview this development keeps, if it was made at this size from
+    /// these settings.
+    fn kept(&mut self, settings: &Settings, long_edge: Option<usize>, crop: bool)
+            -> Option<&Graded> {
         let masks = self.masks_for(settings);
-        let args = self.process_args(settings, &masks, Window::whole(&proxy));
-        let (_, decided) = grade::process(proxy, settings, args, &mut Report::new());
-        self.decided_full = Some((settings.clone(), decided.clone()));
-        decided
+        let mask_kinds = (masks.get(crate::masks::Kind::Sky).is_some(),
+                          masks.get(crate::masks::Kind::Subject).is_some());
+        let upstream = before_finish(settings);
+        self.graded.as_ref().filter(|g| {
+            long_edge.is_some() && g.long_edge == long_edge && g.crop == crop
+                && g.masks == mask_kinds && g.settings == upstream
+        })
+    }
+
+    /// What the automatic corrections decide for these settings, measured on
+    /// the main preview, so that every size of render agrees with it.
+    fn decide(&mut self, settings: &Settings) -> Decisions {
+        if self.kept(settings, Some(DECIDE_EDGE), true).is_none() {
+            self.render(settings, Some(DECIDE_EDGE), true, None);
+        }
+        self.graded.as_ref().map(|g| g.decided.clone()).unwrap_or_default()
     }
 
     /// What every development hands `grade::process`, for a full-size render
@@ -422,7 +445,7 @@ impl Development {
         let (key, spots, full) = self.full_frame.take().expect("made above");
         // Healed above, on the whole frame.
         let healed = Settings { spots: Vec::new(), ..settings.clone() };
-        let decided = self.decide_at_full_size(&full, &healed);
+        let decided = self.decide(settings);
         let (fw, fh) = (full.w, full.h);
         let (w, h) = (want.0.clamp(1, fw), want.1.clamp(1, fh));
         let place = |c: f32, size: usize, whole: usize| {
@@ -460,7 +483,13 @@ fn find_lens(db: Option<&Database>, meta: &Meta) -> Option<LensMatch> {
             .and_then(|(maker, lens)| db.find_identified(&meta.make, &meta.model, maker, lens, f, a, d))
             .or_else(|| db.find_lens(&meta.make, &meta.model, &meta.lens_model, f, a, d))
     });
-    found.or_else(|| camera_lens(db, meta))
+    match found {
+        Some(mut m) => {
+            m.camera_vignetting = meta.embedded_lens.clone();
+            Some(m)
+        }
+        None => camera_lens(db, meta),
+    }
 }
 
 /// The corrections the camera wrote into the file, as a lens.
@@ -872,11 +901,35 @@ mod tests {
         assert_eq!(dev.render(&warmer, Some(64), true, None).0.d, fresh.d, "a stale kept preview");
     }
 
+    /// The empty corners a rotation leaves are not part of the picture, and
+    /// must not be metered as if they were, whether or not they are cropped.
+    #[test]
+    fn empty_corners_are_not_metered() {
+        let gain = |auto_fit: bool| {
+            let mut s = Settings::default();
+            s.framing.angle = 6.0;
+            s.framing.auto_fit = auto_fit;
+            let (_, report) = development().render(&s, Some(96), true, None);
+            report.to_json()["exposure"]["gain_ev"].as_f64().unwrap()
+        };
+        let (cropped, uncropped) = (gain(true), gain(false));
+        assert!((cropped - uncropped).abs() < 0.25,
+                "the empty corners moved the exposure from {cropped} to {uncropped} EV");
+    }
+
     /// Matched to its own picture with a tint graded in, a photograph gets
     /// wheels pointing the way of that tint.
     #[test]
     fn matching_a_tinted_copy_finds_the_tint() {
-        let mut dev = development();
+        // A frame with real shadows and highlights in it: wheels are fitted
+        // zone by zone, and a zone with nothing in it has nothing to say.
+        let mut img = Image::new(96, 64);
+        for (i, px) in img.px_mut().iter_mut().enumerate() {
+            let (x, y) = ((i % 96) as f32 / 96.0, (i / 96) as f32 / 64.0);
+            let level = 0.002 * 400f32.powf(x);
+            *px = [level * (0.9 + 0.2 * y), level, level * (1.1 - 0.2 * y)];
+        }
+        let mut dev = Development::from_frame("test", img, Meta::default(), Vec::new(), None);
         let plain = Settings::default();
         let mut tinted = plain.clone();
         tinted.wheels.shadows = crate::wheels::Wheel { hue: 220.0, amount: 0.7, lum: 0.0 };

@@ -1,0 +1,27 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>card</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0d0e10; color: #e8e9ea; font-family: "Noto Sans", system-ui, sans-serif; cursor: none; }
+  body { display: grid; place-items: center; }
+  .wrap { text-align: center; animation: in .9s ease-out both; }
+  .name { font-size: 76px; font-weight: 700; letter-spacing: -1.5px; }
+  .name span { color: #e5a03c; }
+  .title { font-size: 20px; margin-top: 12px; color: #e8e9ea; font-weight: 500; }
+  .sub { font-size: 20px; margin-top: 18px; color: #8d939c; }
+  .url { display: inline-block; margin-top: 30px; font-size: 23px; font-weight: 600; color: #17130a; background: #e5a03c; padding: 12px 20px; border-radius: 10px; }
+  @keyframes in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+  #__cur { display: none !important; }
+</style>
+<div class="wrap">
+  <div class="name">Lumi<span>Raw</span></div>
+  <div class="title" id="t"></div>
+  <div class="sub" id="s"></div>
+  <div id="u"></div>
+</div>
+<script>
+  const q = new URLSearchParams(location.search);
+  document.getElementById('t').textContent = q.get('title') || '';
+  document.getElementById('s').textContent = q.get('sub') || '';
+  if (q.has('url')) document.getElementById('u').innerHTML = '<div class="url">lumiraw.app</div>';
+</script>

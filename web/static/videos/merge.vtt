@@ -1,0 +1,46 @@
+WEBVTT
+
+00:00:00.600 --> 00:00:03.169
+Some scenes don't fit in a single frame.
+
+00:00:03.169 --> 00:00:07.730
+LumiRaw's merge page combines several shots of the same scene into one.
+
+00:00:08.034 --> 00:00:09.913
+There are five ways to do it.
+
+00:00:09.913 --> 00:00:11.792
+Exposure merge, for brackets.
+
+00:00:11.792 --> 00:00:15.874
+Average, for less noise, or a long exposure made of short ones.
+
+00:00:15.874 --> 00:00:18.530
+Median, to remove people walking through.
+
+00:00:18.530 --> 00:00:21.057
+Lighten, for star trails and fireworks.
+
+00:00:21.057 --> 00:00:25.204
+And focus stack, for pictures that are sharp from front to back.
+
+00:00:25.604 --> 00:00:27.484
+Here's a bracket of the coast:
+
+00:00:27.484 --> 00:00:32.058
+one frame for the sky, and one over three stops brighter for the shadows.
+
+00:00:32.058 --> 00:00:36.694
+LumiRaw reads each frame's exposure, and tells you if something looks off.
+
+00:00:37.098 --> 00:00:37.852
+Shot by hand?
+
+00:00:37.852 --> 00:00:42.088
+It lines the frames up for you, and removes ghosts where something moved.
+
+00:00:42.852 --> 00:00:46.979
+And the merged picture opens in the developer like any other raw file,
+
+00:00:46.979 --> 00:00:50.812
+with both the bright sky and the deep shadows there to work with.

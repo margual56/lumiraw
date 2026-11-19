@@ -1,0 +1,11 @@
+{
+ "intro": "This is LumiRaw: a raw photo developer that runs entirely in your browser. There's nothing to install, and nothing is uploaded. Your photos never leave your computer.",
+ "open": "Drop in a raw file, and a few seconds later it's open, with a first edit already done. Exposure, white balance, colour and lens corrections are all measured from the photo itself.",
+ "framing": "From there, you go step by step. First, framing: straighten the horizon, or pick a crop.",
+ "brightness": "Then brightness. The exposure is already set, and these three sliders lift or hold back the shadows, midtones and highlights, each on their own.",
+ "wb": "White balance works the same way. Drag a box over something neutral, or warm the picture up a little by hand.",
+ "compare": "Before and after shows how far the photo has come from what the camera recorded. Every automatic correction is listed, down to the profile for this exact lens, and any of them can be switched off.",
+ "grade": "Then the fun part: the grade. Pick a look to start from, and fine-tune it with curves, a colour mixer and colour wheels.",
+ "download": "Finally, download it at full resolution, as a JPEG, PNG, WebP, or a sixteen-bit TIFF.",
+ "outro": "LumiRaw. Raw photos, developed in your browser, at lumiraw dot app."
+}

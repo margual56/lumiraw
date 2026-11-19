@@ -7,7 +7,10 @@ const CACHE = `lumiraw-${version}`;
 const IMMUTABLE = new Set(build);
 // `_headers` and `_redirects` are instructions to the host, which never serves them.
 const served = (f) => !/\/_[^/]*$/.test(f);
-const ALL = [...build, ...files.filter(served), ...prerendered];
+// The demo's recordings (/videos/*.mp4): big, watched once, and fetched a range
+// at a time, which a cache can't keep. Always from the network.
+const streamed = (f) => f.includes('/videos/');
+const ALL = [...build, ...files.filter((f) => served(f) && !streamed(f)), ...prerendered];
 // The scoring and face networks too: 16 MB that only the gallery page ever wants.
 const onDemand = (path) =>
   /\/(lens-[^/]*|lensfun-[^/]*)\.json$|\/((nima|face)-[^/]*|segmenter|denoiser)\.bin$/.test(path);
@@ -47,7 +50,7 @@ self.addEventListener('install', (event) => {
     // The code and the engine must all be there, or offline is a promise the
     // page cannot keep.
     await cache.addAll([...build.filter((f) => !onDemand(f)),
-                        ...files.filter((f) => served(f) && !f.includes('/samples/'))]);
+                        ...files.filter((f) => served(f) && !streamed(f) && !f.includes('/samples/'))]);
     // Pages are best effort, each on its own.
     await Promise.all(prerendered.flatMap((page) => [page, `${page.replace(/\/$/, '')}.html`])
       .map((url) => cache.add(url).catch(() => {})));
@@ -76,6 +79,7 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
+  if (url.origin === self.location.origin && streamed(url.pathname)) return;
   if (url.origin !== self.location.origin) {
     const rule = ruleFor(request.url);
     if (rule) event.respondWith(remote(request.url, rule));

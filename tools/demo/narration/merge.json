@@ -1,0 +1,8 @@
+{
+ "intro": "Some scenes don't fit in a single frame. LumiRaw's merge page combines several shots of the same scene into one.",
+ "modes": "There are five ways to do it. Exposure merge, for brackets. Average, for less noise, or a long exposure made of short ones. Median, to remove people walking through. Lighten, for star trails and fireworks. And focus stack, for pictures that are sharp from front to back.",
+ "drop": "Here's a bracket of the coast: one frame for the sky, and one over three stops brighter for the shadows. LumiRaw reads each frame's exposure, and tells you if something looks off.",
+ "merge": "Shot by hand? It lines the frames up for you, and removes ghosts where something moved.",
+ "result": "And the merged picture opens in the developer like any other raw file, with both the bright sky and the deep shadows there to work with.",
+ "outro": "LumiRaw. Raw photos, developed in your browser, at lumiraw dot app."
+}

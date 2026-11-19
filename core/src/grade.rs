@@ -38,6 +38,13 @@ pub struct Preset {
     /// frame a stop past the camera's own rendering), none of it by night,
     /// when dark is what the picture is (see `profile::tune`).
     pub give_back: f32,
+    /// The tone map brings the highlights under the shoulder however far it
+    /// has to squeeze: for a merged bracket, which was shot to keep both its
+    /// shadows and its highlights.
+    pub keep_highlights: bool,
+    /// Where the frame's highlights stop counting for the automatic white
+    /// balance: 1, except for a merged bracket (see `profile::tune`).
+    pub wb_ceiling: f32,
 }
 
 impl Default for Preset {
@@ -57,6 +64,8 @@ impl Default for Preset {
             saturation: 1.10,
             denoise: true,
             give_back: 0.5,
+            keep_highlights: false,
+            wb_ceiling: 1.0,
         }
     }
 }
@@ -122,6 +131,8 @@ pub struct Decisions {
     pub exposure: f32,
     /// The tone map's compression, and the base level it pivots on (log2).
     pub tone: (f32, f32),
+    /// The tone map's shoulder, when it has one.
+    pub shoulder: Option<Shoulder>,
     /// Black and white point, when levels were applied.
     pub levels: Option<(f32, f32)>,
     /// The contrast curve's amount and pivot.
@@ -140,7 +151,7 @@ pub struct Decisions {
 
 impl Default for Decisions {
     fn default() -> Self {
-        Decisions { wb: None, exposure: 1.0, tone: (1.0, 0.0), levels: None,
+        Decisions { wb: None, exposure: 1.0, tone: (1.0, 0.0), shoulder: None, levels: None,
                     contrast: (0.0, 0.5), vibrance: 1.0, air: None, held_back: 0.0,
                     lift: (0.0, 0.0, 0.0) }
     }
@@ -470,7 +481,8 @@ pub fn apply_white_balance(img: &mut Image, thumb: &mut Image, s: &Settings, p: 
         apply_temp_tint(img, thumb, s, report);
         return;
     }
-    let (gains, info) = analyze::auto_white_balance(thumb, p.wb_strength, WB_LIMIT_EV);
+    let (gains, info) = analyze::auto_white_balance(thumb, p.wb_strength, WB_LIMIT_EV,
+                                                    p.wb_ceiling);
     let info = with(info, json!({"source": "automatic", "strength": round_to(p.wb_strength, 2)}));
     let applied = info.get("applied").and_then(|v| v.as_bool()).unwrap_or(false);
     report.add("white balance", info);
@@ -626,6 +638,9 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
 
     // Anchor on the 55th percentile of the base layer, every 4th pixel.
     let mut lift = 0.0;
+    // The brightest large-scale light (log2, before compression) a merged
+    // bracket's shoulder is fitted to.
+    let mut bright = None;
     let anchor = if frozen {
         d.tone.1
     } else {
@@ -636,8 +651,10 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
                 sample.push(base.d[yy * base.w + xx]);
             }
         }
-        let q = kit::percentiles(&sample, &[(analyze::CRUSH_BUDGET * 100.0) as f64, 55.0, 99.5]);
+        let q = kit::percentiles(&sample, &[(analyze::CRUSH_BUDGET * 100.0) as f64, 55.0, 99.5,
+                                            SHOULDER_FITS_PCT]);
         let (low, middle, high) = (q[0], q[1], q[2]);
+        bright = Some(q[3]);
         let mut anchor = middle;
         // The stops the highlight guard held the exposure back are given back
         // to the middle of the frame here, so a room is not left dark for its
@@ -666,8 +683,22 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
                                  "shadow_lift_ev": round_to(lift, 2),
                                  "held_back_ev": round_to(d.held_back, 2),
                                  "given_back_ev": round_to(given, 2)}));
+    // Compression keeps the order of the base levels, so the percentile of the
+    // compressed light is the compressed percentile.
+    let shoulder = match bright {
+        Some(b) if p.keep_highlights => Shoulder::fitting(anchor + (b - anchor) * factor),
+        Some(_) => None,
+        None => d.shoulder,
+    };
+    d.shoulder = shoulder;
+    let info = match shoulder {
+        Some(s) => with(info, json!({"shoulder_knee": round_to(s.knee.exp2(), 3),
+                                     "shoulder_bend": round_to(s.bend, 3)})),
+        None => info,
+    };
     report.add("tone mapping", info);
-    if factor >= 0.995 && (detail_boost - 1.0).abs() < 1e-3 && given <= 0.0 {
+    if factor >= 0.995 && (detail_boost - 1.0).abs() < 1e-3 && given <= 0.0
+        && shoulder.is_none() {
         return factor;
     }
 
@@ -678,8 +709,8 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
         } else {
             0.0
         };
-        let new_log = anchor + (base.d[i] - anchor) * factor + detail * detail_boost
-            + given_here;
+        let level = anchor + (base.d[i] - anchor) * factor + given_here;
+        let new_log = shoulder.map_or(level, |s| s.apply(level)) + detail * detail_boost;
         let scale = kit::fast_exp2(new_log - log_y.d[i]);
         for v in px.iter_mut() {
             *v *= scale;
@@ -757,6 +788,42 @@ fn filmic_depth(px: [f32; 3]) -> f32 {
     let weakest_steep = steep[0].min(steep[1]).min(steep[2]);
     let (y, y_steep) = (kit::luminance_px(&px), kit::luminance_px(&steep));
     ((top - weakest_steep) * y) / ((top - weakest) * y_steep).max(EPS)
+}
+
+/// What share of the large-scale light a merged bracket's shoulder brings
+/// under `SHOULDER_TOP`.
+const SHOULDER_FITS_PCT: f64 = 99.0;
+/// Where the shoulder starts, in scene light after exposure: a little above
+/// middle grey, so the shadows and midtones stay as the exposure set them.
+const SHOULDER_KNEE: f32 = 0.3;
+/// Where it brings the bright areas to: the filmic curve shows 1 at about
+/// 80 %, which leaves room for the detail riding on them.
+const SHOULDER_TOP: f32 = 0.5;
+
+/// A roll-off on the tone map's large-scale light above a knee, for a merged
+/// bracket: the exposure is set for the shadows the bright frames held, and
+/// this brings down the highlights the dark frames held, with their detail
+/// put back on top like everywhere else. In stops, `x` above the knee goes
+/// to `x / (1 + bend x)`: untouched at the knee, and smooth through it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shoulder {
+    knee: f32,
+    bend: f32,
+}
+
+impl Shoulder {
+    /// The shoulder that brings `bright` (log2) to the top, or none when it
+    /// is there already.
+    fn fitting(bright: f32) -> Option<Shoulder> {
+        let (knee, top) = (SHOULDER_KNEE.log2(), SHOULDER_TOP.log2());
+        let (x, t) = (bright - knee, top - knee);
+        (x > t).then(|| Shoulder { knee, bend: (x / t - 1.0) / x })
+    }
+
+    fn apply(&self, level: f32) -> f32 {
+        let x = level - self.knee;
+        if x <= 0.0 { level } else { self.knee + x / (1.0 + self.bend * x) }
+    }
 }
 
 /// Scene-linear -> display-linear with a filmic shoulder.
@@ -1259,6 +1326,26 @@ pub fn process(mut img: Image, settings: &Settings, args: ProcessArgs, report: &
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A merged bracket's shoulder leaves the shadows and midtones where the
+    /// exposure put them and brings the highlights down to its top, smoothly.
+    #[test]
+    fn the_shoulder_fits_the_highlights_and_leaves_the_rest() {
+        let s = Shoulder::fitting(2.0).expect("two stops over white needs one");
+        for level in [-6.0, -3.0, SHOULDER_KNEE.log2()] {
+            assert_eq!(s.apply(level), level, "{level} was moved");
+        }
+        assert!((s.apply(2.0) - SHOULDER_TOP.log2()).abs() < 1e-4);
+        let mut last = f32::MIN;
+        for i in 0..200 {
+            let out = s.apply(-4.0 + i as f32 * 0.05);
+            assert!(out > last, "not rising at {i}");
+            last = out;
+        }
+        let slope = (s.apply(SHOULDER_KNEE.log2() + 1e-3) - SHOULDER_KNEE.log2()) / 1e-3;
+        assert!((slope - 1.0).abs() < 0.01, "a kink at the knee: {slope}");
+        assert!(Shoulder::fitting(SHOULDER_TOP.log2() - 0.1).is_none(), "nothing to fit");
+    }
 
     /// Unmeasured skin keeps the broad default target, measured skin is narrower,
     /// and a frame with nobody in it has none.

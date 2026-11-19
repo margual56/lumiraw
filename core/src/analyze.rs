@@ -71,15 +71,17 @@ const WB_KNEE_EV: f32 = 0.5;
 /// the estimate is refined over a few passes. A blue sky, a red rock or a
 /// field of flowers is not a grey surface under a coloured light, and letting
 /// it vote (as a shades-of-grey estimate does) tints the whole picture the
-/// opposite way. Too few greys, and the camera's balance stands.
-pub fn auto_white_balance(thumb: &Image, strength: f32, limit_ev: f32) -> ([f32; 3], Value) {
+/// opposite way. Too few greys, and the camera's balance stands. Pixels at
+/// or above `ceiling` are left out, clipped or not.
+pub fn auto_white_balance(thumb: &Image, strength: f32, limit_ev: f32, ceiling: f32)
+                          -> ([f32; 3], Value) {
     let y = kit::luminance(thumb);
     let pct = kit::percentiles(&y.d, &[3.0, 97.0]);
     let (lo, hi) = (pct[0].max(EPS), pct[1]);
     let candidates: Vec<usize> = (0..y.d.len())
         .filter(|&i| {
             let px = &thumb.px()[i];
-            y.d[i] > lo && y.d[i] < hi && px[0].max(px[1]).max(px[2]) < 0.98
+            y.d[i] > lo && y.d[i] < hi && px[0].max(px[1]).max(px[2]) < 0.98 * ceiling
                 && px.iter().all(|v| *v > EPS)
         })
         .collect();
@@ -543,7 +545,7 @@ mod tests {
             // Cool (more blue than red) and magenta (less green than both).
             px.copy_from_slice(&[v, v * 0.9, v * 1.2]);
         }
-        let (gains, _) = auto_white_balance(&thumb, 1.0, 2.0);
+        let (gains, _) = auto_white_balance(&thumb, 1.0, 2.0, 1.0);
         let (temp, tint) = temp_tint(gains);
         // The cast is 0.13 warm-cool and 0.19 green-magenta, log2.
         assert!((temp - 0.13).abs() < 0.02, "the blue was not taken out: {gains:?}");
@@ -569,7 +571,7 @@ mod tests {
                 px[c] = v * colour[c];
             }
         }
-        let (gains, info) = auto_white_balance(&thumb, 1.0, 0.8);
+        let (gains, info) = auto_white_balance(&thumb, 1.0, 0.8, 1.0);
         let (temp, tint) = temp_tint(gains);
         assert!(temp.abs() < 0.02 && tint.abs() < 0.02,
                 "a neutral scene was pushed to {temp} / {tint}: {info}");
@@ -587,7 +589,7 @@ mod tests {
             px.copy_from_slice(&[v * 2f32.powf(0.3), v, v * 2f32.powf(-0.3)]);
         }
         // A tight limit, so that it bites.
-        let (gains, _) = auto_white_balance(&thumb, 1.0, 0.2);
+        let (gains, _) = auto_white_balance(&thumb, 1.0, 0.2, 1.0);
         let (temp, tint) = temp_tint(gains);
         assert!(temp < -0.12 && temp > -0.2, "the limit did not hold the warmth: {gains:?}");
         assert!(tint.abs() < 0.01, "a warm-cool correction came out with tint {tint}");
@@ -602,7 +604,7 @@ mod tests {
             let v = 0.05 + 0.6 * (i % 97) as f32 / 97.0;
             px.copy_from_slice(&[v * 0.4, v * 0.9, v * 0.3]);   // a field of leaves
         }
-        let (gains, _) = auto_white_balance(&thumb, 1.0, 0.8);
+        let (gains, _) = auto_white_balance(&thumb, 1.0, 0.8, 1.0);
         assert_eq!(gains, [1.0, 1.0, 1.0]);
     }
 
@@ -848,6 +850,23 @@ mod tests {
         let (gain, info) = auto_exposure(&dark, 0.13, 1.0, 3.2);
         let lifted = gain.log2() - METERED_EV;
         assert!((lifted - 1.0).abs() < 0.2, "two stops dark was lifted {lifted}: {info}");
+    }
+
+    /// Above the ceiling a merged frame's reference had, a bright pale sky is
+    /// a coloured thing, not the light, and is left out of the balance.
+    #[test]
+    fn the_balance_leaves_out_what_is_above_its_ceiling() {
+        let mut thumb = Image::new(64, 64);
+        for (i, px) in thumb.px_mut().iter_mut().enumerate() {
+            let v = 0.02 + 0.1 * (i % 13) as f32 / 13.0;
+            let sky = 0.6 + 0.4 * (i % 11) as f32 / 11.0;
+            *px = if i % 3 != 0 { [0.8 * sky, 0.9 * sky, sky] } else { [v; 3] };
+        }
+        let warmth = |g: [f32; 3]| (g[0] / g[2]).log2();
+        let (all, _) = auto_white_balance(&thumb, 1.0, 2.0, 1.0);
+        let (below, _) = auto_white_balance(&thumb, 1.0, 2.0, 0.25);
+        assert!(warmth(all) > 0.2, "the sky should have warmed it: {all:?}");
+        assert!(warmth(below).abs() < 0.05, "the grey alone is neutral: {below:?}");
     }
 
     /// A properly exposed frame must come out exactly as it did before the

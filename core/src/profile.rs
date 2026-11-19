@@ -21,6 +21,11 @@ pub struct CaptureProfile {
     pub flash: bool,
     /// The camera chose the white balance itself; see `decode::Meta`.
     pub camera_auto_wb: Option<bool>,
+    /// The stops a merged frame was put together from; zero straight from
+    /// the camera.
+    pub bracket_stops: f32,
+    /// Where, in stops below 1, a merged frame's reference frame clipped.
+    pub kept_above_stops: f32,
     pub crop_factor: f32,
     pub pixel_pitch_um: f32,
     pub megapixels: f32,
@@ -77,6 +82,8 @@ pub fn derive(meta: &Meta, w: usize, h: usize, crop_factor: Option<f32>) -> Capt
         exposure_comp: meta.exposure_comp,
         flash: meta.flash,
         camera_auto_wb: meta.camera_auto_wb,
+        bracket_stops: meta.bracket_stops.max(0.0),
+        kept_above_stops: meta.kept_above_stops.max(0.0),
         crop_factor: 1.5,
         pixel_pitch_um: 4.0,
         megapixels: (w * h) as f32 / 1e6,
@@ -132,6 +139,8 @@ pub fn derive(meta: &Meta, w: usize, h: usize, crop_factor: Option<f32>) -> Capt
     let penalty = (p.iso.max(25.0) / 100.0).log2() - 2.0 * (p.pixel_pitch_um.max(0.5) / 4.0).log2();
     p.noise_prior = (penalty / 7.0).clamp(0.0, 1.0);
     p.usable_stops = (12.6 - penalty.max(0.0) * 0.85).clamp(5.5, 13.5);
+    // A bracket holds its range at the top as well as the sensor's at the bottom.
+    p.usable_stops += p.bracket_stops;
     if p.noise_prior > 0.25 {
         p.notes.push(json!({"code": "noise",
             "params": {"iso": p.iso as i64, "stops": round_to(p.usable_stops, 1)}}));
@@ -203,6 +212,16 @@ pub fn tune(preset: &Preset, p: &CaptureProfile) -> Preset {
     if p.camera_auto_wb == Some(true) {
         out.wb_strength = 0.0;
     }
+
+    // The frames of a bracket were shot to keep the shadows and the
+    // highlights both: the exposure is set for the shadows as for any frame,
+    // and the tone map rolls the highlights off under it (`grade::Shoulder`).
+    out.keep_highlights = p.bracket_stops > 0.0;
+    // And its colour is judged on what its reference frame saw, as it would
+    // have been alone: the white balance reads a frame's brightest pixels for
+    // its light, and the highlights a merge brings back, a whole blue sky,
+    // are coloured things rather than the light.
+    out.wb_ceiling = (-p.kept_above_stops).exp2();
     out
 }
 

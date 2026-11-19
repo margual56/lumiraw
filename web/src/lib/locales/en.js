@@ -308,7 +308,7 @@ export default {
   'match.failed': 'Could not read {file}.',
   'skin.protect': 'Protect skin tones',
   'skin.measuring': 'Looking for faces to measure skin on…',
-  'skin.typical': 'No faces found, so a typical skin tone is protected.',
+  'skin.typical': 'No faces found, so no colour is held back as skin.',
   'skin.measured': 'Skin measured on the faces in this photo ({count}).',
 
   'roll.title': 'The roll',

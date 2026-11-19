@@ -30,10 +30,23 @@ fn tone_map(img: &mut Image) {
 }
 
 fn perceptual(img: &Image) -> Image {
+    perceptual_with(img, &Settings::default())
+}
+
+/// The perceptual stage with these stages switched off.
+fn perceptual_without(img: &Image, off: &[&str]) -> Image {
+    let mut s = Settings::default();
+    for stage in off {
+        s.enabled.insert(stage.to_string(), false);
+    }
+    perceptual_with(img, &s)
+}
+
+fn perceptual_with(img: &Image, s: &Settings) -> Image {
     let (noise, sharpen_sigma, focus_sigma, render_scale) = (0.1, 1.0, 0.0, 1.0);
-    grade::apply_perceptual(img, &Settings::default(), &Preset::default(), noise, sharpen_sigma,
-                            focus_sigma, render_scale, img.w.max(img.h),
-                            &mut Decisions::default(), false, &mut Report::new(), None)
+    grade::apply_perceptual(img, s, &Preset::default(), noise, sharpen_sigma, focus_sigma,
+                            render_scale, img.w.max(img.h), &mut Decisions::default(), false,
+                            &mut Report::new(), None)
 }
 
 /// Scene light brought to display levels, where middle grey sits at the
@@ -185,6 +198,30 @@ fn the_perceptual_stage_keeps_hue_and_greys() {
     assert!(chroma < 0.002, "the perceptual stage tinted the chart's greys: {chroma}");
 }
 
+/// Where the filmic curve is steep, through the shadows and the middle, a
+/// colour deepens as it would under a camera's curve laid on each channel,
+/// and keeps its hue; levels, contrast and vibrance switched off.
+#[test]
+fn colour_deepens_where_the_curve_is_steep() {
+    // Brick, bark, foliage and sky in the shadows and the middle, where most
+    // of a photograph's colour is.
+    for colour in [[0.6f32, 0.35, 0.25], [0.45, 0.4, 0.3], FOLIAGE, SKY] {
+        for level in [0.02f32, 0.06, 0.12] {
+            let peak = colour.iter().cloned().fold(0.0, f32::max);
+            let mut img = scene(40, 10, |_, _, _| colour.map(|v| v * level / peak));
+            grade::filmic(&mut img);
+            let out = perceptual_without(&img, &["levels", "contrast", "vibrance"]);
+            let (before, after) = (lch(img.px()[0]), lch(out.px()[0]));
+            // Oklab chroma over lightness: what a gain on every channel keeps.
+            let deeper = (after.1 / after.0) / (before.1 / before.0);
+            assert!(deeper > 1.1, "{colour:?} at {level}: saturation only ×{deeper}");
+            assert!(deeper < 1.8, "{colour:?} at {level}: saturation ×{deeper}");
+            assert!(hue_gap(after.2, before.2).abs() < 1.0,
+                    "{colour:?} at {level} turned from {} to {}", before.2, after.2);
+        }
+    }
+}
+
 /// Darkening may lose detail, never invent colour: what levels and contrast
 /// take from a shadow's lightness they take from its chroma too.
 #[test]
@@ -193,10 +230,33 @@ fn darkened_shadows_get_no_more_saturated() {
         [0.6, 0.45, 0.4].map(|v| v * 0.01 * (1.0 + 4.0 * x) * grain(i, 0.2))
     }));
     grade::filmic(&mut img);
-    let out = perceptual(&img);
     let ratio = |im: &Image| { let (l, c, _) = lch(mean(im, 0.0, 0.0, 0.2, 1.0)); c / l.max(1e-6) };
-    let (before, after) = (ratio(&img), ratio(&out));
+    let before = ratio(&perceptual_without(&img, &["levels", "contrast", "vibrance"]));
+    let after = ratio(&perceptual_without(&img, &["vibrance"]));
     assert!(after <= before * 1.05, "saturation of the shadows rose from {before} to {after}");
+}
+
+// Resampling
+
+/// Straightening a picture by a degree keeps its fine detail: the sampler
+/// does not average neighbouring pixels together wherever it lands between
+/// them, which a lens correction or a rotation does all over the frame.
+#[test]
+fn straightening_keeps_the_fine_detail() {
+    use lumiraw_core::geometry::{self, Framing};
+    // Fine stripes, five pixels a cycle, across the frame.
+    let img = scene(300, 200, |x, _, _| {
+        [0.2 + 0.15 * (x * 300.0 * std::f32::consts::TAU / 5.0).sin(); 3]
+    });
+    let swing = |im: &Image| {
+        let row = middle_row(im);
+        let (from, to) = (row.len() / 4, row.len() * 3 / 4);
+        row[from..to].iter().map(|p| p[1]).fold(0.0, f32::max)
+            - row[from..to].iter().map(|p| p[1]).fold(1.0, f32::min)
+    };
+    let turned = geometry::apply(&img, &Framing { angle: 1.0, ..Framing::default() }, true);
+    let (before, after) = (swing(&img), swing(&turned));
+    assert!(after > 0.85 * before, "the stripes went from {before} to {after} peak to peak");
 }
 
 // White balance as a change of light

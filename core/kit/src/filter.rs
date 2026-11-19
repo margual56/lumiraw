@@ -228,8 +228,8 @@ pub fn guided_filter_each<const N: usize>(guide: &Plane, srcs: [&Plane; N], radi
     })
 }
 
-/// Bilinear sample with edge clamping, the sampler used by every resample
-/// (lens geometry, framing, radial scaling).
+/// Bilinear sample with edge clamping: for masks, alignment and anything
+/// else that is not the picture itself (see `sample_lanczos`).
 #[inline]
 pub fn sample_bilinear(p: &Plane, x: f32, y: f32) -> f32 {
     let w = p.w;
@@ -245,6 +245,98 @@ pub fn sample_bilinear(p: &Plane, x: f32, y: f32) -> f32 {
     let top = p.d[y0 * w + x0] * (1.0 - fx) + p.d[y0 * w + x1] * fx;
     let bot = p.d[y1 * w + x0] * (1.0 - fx) + p.d[y1 * w + x1] * fx;
     top * (1.0 - fy) + bot * fy
+}
+
+/// The six Lanczos-3 weights for the taps at -2..=3 around a fractional
+/// position `t` (0..1), normalised. From one sine and one sine and cosine of
+/// a third of the angle: the taps are whole pixels apart, so the rest follow
+/// by symmetry.
+#[inline]
+fn lanczos3_weights(t: f32) -> [f32; 6] {
+    use std::f32::consts::PI;
+    // On a pixel, the kernel is that pixel; the formula divides by zero there.
+    if t < 1e-6 {
+        return [0.0, 0.0, 1.0, 0.0, 0.0, 0.0];
+    }
+    if t > 1.0 - 1e-6 {
+        return [0.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+    }
+    let a = PI * t;
+    let (s, (s3, c3)) = (a.sin(), (a / 3.0).sin_cos());
+    // sin(πk/3) and cos(πk/3) for k = -2..=3.
+    const SK: [f32; 6] = [-0.866_025_4, -0.866_025_4, 0.0, 0.866_025_4, 0.866_025_4, 0.0];
+    const CK: [f32; 6] = [-0.5, 0.5, 1.0, 0.5, -0.5, -1.0];
+    let mut w: [f32; 6] = std::array::from_fn(|i| {
+        let k = i as f32 - 2.0;
+        let d = t - k;
+        let sign = if (i % 2) == 0 { 1.0 } else { -1.0 };
+        // sin(π d) = ±sin(a), sin(π d / 3) = sin(a/3 - πk/3).
+        3.0 * sign * s * (s3 * CK[i] - c3 * SK[i]) / (PI * PI * d * d)
+    });
+    let sum: f32 = w.iter().sum();
+    w.iter_mut().for_each(|v| *v /= sum);
+    w
+}
+
+/// Steps per pixel in the table of Lanczos weights: a sixty-fourth of a
+/// pixel is far below anything a warp's position is known to.
+const LANCZOS_STEPS: usize = 64;
+
+/// `lanczos3_weights` at the nearest step, from a table built once.
+#[inline]
+fn lanczos3_table(t: f32) -> &'static [f32; 6] {
+    static TABLE: std::sync::OnceLock<Vec<[f32; 6]>> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        (0..=LANCZOS_STEPS).map(|i| lanczos3_weights(i as f32 / LANCZOS_STEPS as f32)).collect()
+    });
+    &table[((t * LANCZOS_STEPS as f32).round() as usize).min(LANCZOS_STEPS)]
+}
+
+#[cfg(test)]
+pub(crate) fn lanczos3_weights_for_test(t: f32) -> [f32; 6] {
+    lanczos3_weights(t)
+}
+
+/// Lanczos-3 sample of the channels `channels` of an interleaved frame, with
+/// edge clamping, kept within the range of the four nearest pixels.
+///
+/// A picture warped with bilinear sampling is blurred wherever a pixel lands
+/// between two: half-way between, it is the average of the pair, and a warp
+/// that is nearly the identity (a lens correction) lands there all over the
+/// frame. At preview size that blur is a whole preview pixel wide. Lanczos
+/// keeps that detail; held to its nearest pixels' range, it cannot ring at an
+/// edge.
+pub fn sample_lanczos<const N: usize>(img: &Image, channels: [usize; N], x: f32, y: f32)
+                                      -> [f32; N] {
+    let (w, h) = (img.w, img.h);
+    let x = x.clamp(0.0, w as f32 - 1.0);
+    let y = y.clamp(0.0, h as f32 - 1.0);
+    let (x0, y0) = (x.floor() as isize, y.floor() as isize);
+    let tap = |o: isize, i: usize, n: usize| (o + i as isize - 2).clamp(0, n as isize - 1) as usize;
+    let cols: [usize; 6] = std::array::from_fn(|i| tap(x0, i, w));
+    let rows: [usize; 6] = std::array::from_fn(|j| tap(y0, j, h));
+    let (wx, wy) = (lanczos3_table(x - x0 as f32), lanczos3_table(y - y0 as f32));
+    let at = |i: usize, j: usize| &img.d[(rows[j] * w + cols[i]) * 3..][..3];
+    let mut v = [0.0f32; N];
+    for j in 0..6 {
+        let mut line = [0.0f32; N];
+        for i in 0..6 {
+            let px = at(i, j);
+            for k in 0..N {
+                line[k] += wx[i] * px[channels[k]];
+            }
+        }
+        for k in 0..N {
+            v[k] += wy[j] * line[k];
+        }
+    }
+    let near = [at(2, 2), at(3, 2), at(2, 3), at(3, 3)];
+    std::array::from_fn(|k| {
+        let c = channels[k];
+        let lo = near.iter().map(|p| p[c]).fold(f32::MAX, f32::min);
+        let hi = near.iter().map(|p| p[c]).fold(f32::MIN, f32::max);
+        v[k].clamp(lo, hi)
+    })
 }
 
 /// `sample_bilinear` on all three channels of an interleaved frame at once,

@@ -116,6 +116,7 @@ brightness is the mean lightness difference ×100.
 | `main`             | 14.0 | 0.78   | 1.12     | −0.8       | 0.094 / 0.442          |
 | before N6–N9       | 4.6  | 0.96   | 0.90     | +9.2       | 0.208 / 0.595          |
 | after N6–N9        | 5.3  | 0.87   | 0.98     | +4.1       | 0.163 / 0.529          |
+| after N13–N21      | 4.2  | 1.00   | 0.95     | +2.2       | 0.155 / 0.480          |
 | darktable defaults | 5.5  | 0.75   | 0.85     | −4.8       | 0.132 / 0.376          |
 
 - [x] **N3** The automatic white balance refined a camera's own auto
@@ -138,13 +139,66 @@ brightness is the mean lightness difference ×100.
 - [x] **N9** Automatic contrast gets a constant boost; the curve no longer
       brightens a colour already near the gamut's top. (`analyze.rs`,
       `grade.rs`)
+- [x] **N12** The contrast curve buried deep shadows on dark frames: a low
+      pivot stretched them out where its bend fades, and a shadow at lightness
+      0.08 lost a stop and a half. Its darkening now also fades in lightness.
+      (`grade.rs`)
+- [x] **N13** The exposure metered a frame's log-average, which on contrasty
+      scenes sits well below what a camera's meter reads; frames came out 0.42
+      stops brighter than the camera's on the median. It meters average
+      lightness now: 0.26 stops. (`analyze.rs`)
+- [x] **N14** Automatic exposure corrected all of a frame's departure from
+      the camera's metering, so dark- and pale-toned subjects were pulled to
+      one middle. Half is corrected now, from a measured two-stop headroom:
+      per-frame error against the camera 0.68 → 0.54 stops. (`analyze.rs`)
+- [-] **N15** A backlit silhouette (DSC05486) comes out lit, about seven
+      stops over the camera's rendering: the buried-shadow rescue lifts it.
+      Rescue against a photographer's silhouette is taste, and the guard
+      rails forbid crushing most of a frame; left as it is.
+- [-] **N16** On the synthetic colour chart (`tests/known.rs`) the dark end comes
+      out below the published values (black 52 → 20, neutral 3.5 85 → 56);
+      hue, chroma, neutrality and cast removal are right. A tone curve that is
+      the identity below a knee was tried: it moved the chart's darks up but
+      made real photos' shadows lighter than the camera's own JPEGs (darkest
+      percent 0.193 against the camera's 0.150) and cut contrast to 0.84, so
+      it was rejected. The published values are a linear rendering, which no
+      camera uses; for tone, the cameras' JPEGs are the reference, and against
+      them the shadows match.
+- [x] **N17** The preview showed a third less detail than the export: lens
+      correction and framing resampled the picture bilinearly, a blur a whole
+      preview pixel wide. Lanczos-3 now; detail on the demo raws 33 → 43
+      (darktable 43). (`kit/filter.rs`, `lensdb.rs`, `geometry.rs`)
+- [x] **N18** The tone map's shadow lift jumped its pivot to the highlights
+      when rounding put the exact lift a hair short, lifting by far more than
+      needed (1.34 stops for 0.87 on one frame). (`grade.rs`)
+- [x] **N19** The real-raw guard rails counted crushed blacks pixel by pixel,
+      which penalised any sharpening; they count 3×3 areas now.
+- [x] **N20** Colour came out a third greyer than the camera's through the
+      shadows and the middle (chroma ×0.67 under Oklab L 0.5), and greener
+      than it on what it left neutral. The filmic curve is laid on the
+      brightest channel, which keeps every ratio between channels; a camera
+      lays its curve on each channel, which raises them to the curve's
+      log-slope (1.4–1.6 there) and deepens the colour. The perceptual stage
+      now takes chroma by that much, keeping lightness and hue: chroma ×0.87 →
+      ×0.97 of the camera's, tint against it 5.3 → 4.1, nothing else moved.
+      (`grade.rs`)
+- [x] **N21** A frame looked over for faces and found to have none still had
+      vibrance held back on every skin-like hue, which in a landscape is every
+      orange rock, roof and patch of earth. None found now protects nothing;
+      a frame not yet looked at keeps the typical skin. Reds and oranges
+      ×0.79–0.80 → ×0.88–0.89 of the camera's chroma, nothing else moved.
+      (`grade.rs`, `skin.rs`)
 - [-] **N10** High-ISO noise is about three times the camera JPEG's at ISO
       6400. Not a bug: noise reduction runs at its automatic maximum there
       (colour 0.85, luminance 0.55, sharpening off); the camera smooths far
       harder at the cost of texture. How much is taste.
-- [-] **N11** Colourful pixels are 6–19 % less saturated than Sony's look, and
-      blues lean toward purple as in every matrix decoder. A look choice, and
-      a hue-twist table for the blues; not done.
+- [~] **N11** Colourful pixels are 6–19 % less saturated than Sony's look, and
+      blues lean toward purple as in every matrix decoder. Most of the
+      saturation was the curve, not a look (N20), and most of the rest skin
+      protection on frames without faces (N21). The blues' lean is not one:
+      darktable has it too (+3.7°), and frame by frame it runs from −17° to
+      +19°, the white balance on low-chroma skies, so a fixed hue twist would
+      fit noise.
 
 ## Other
 

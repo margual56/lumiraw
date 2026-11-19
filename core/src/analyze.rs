@@ -152,11 +152,18 @@ pub fn auto_white_balance(thumb: &Image, strength: f32, limit_ev: f32, ceiling: 
 
 // Exposure
 /// Where a normally metered raw lands against the target key: the file is
-/// scaled to the sensor's white level, which sits two and a half stops or so
-/// above what the camera metered for, to keep highlight headroom. The soft
-/// limit restrains departures from this, not from zero, or every ordinary
-/// frame is held a fraction of a stop dark.
-pub const METERED_EV: f32 = 2.5;
+/// scaled to the sensor's white level, which sits about two stops above what
+/// the camera metered for, to keep highlight headroom (measured against the
+/// cameras' own JPEGs of the same frames). Departures are counted, and
+/// restrained, from this, not from zero.
+pub const METERED_EV: f32 = 2.0;
+
+/// How much of a frame's departure from the camera's metering the exposure
+/// corrects, at full strength. A camera keeps a dark stone wall dark and a
+/// white one bright; correcting all of the difference pulled every frame to
+/// the same middle, further from the camera's rendering than its metering
+/// already was.
+pub const DEPARTURE_CORRECTED: f32 = 0.5;
 
 /// How far past white the highlight guard lets the brightest highlights go
 /// (the 99.5th percentile of what it measures): the filmic shoulder rolls the
@@ -179,7 +186,7 @@ fn highlight_measure(px: &[f32; 3]) -> f32 {
     kit::luminance_px(px).max(0.6 * px[0].max(px[1]).max(px[2]))
 }
 
-/// Match the log-average luminance to middle grey, partially, under a
+/// Match the average lightness to middle grey, partially, under a
 /// highlight guard; lift a buried frame only as far as the guard allows.
 ///
 /// The guard is never waived. When the shadows and the highlights want
@@ -193,14 +200,23 @@ pub fn auto_exposure(thumb: &Image, target_key: f32, strength: f32, limit_ev: f3
     // exposed room a fraction of a stop dark.
     let ends = kit::percentiles(&y.d, &[1.0, 95.0]);
     let (floor, top) = (ends[0].max(1e-5), ends[1]);
-    let sample: Vec<f32> = y.d.iter().cloned().filter(|v| *v > floor && *v <= top).collect();
-    if sample.len() < 64 {
+    let (count, cube_roots) = y.d.iter().filter(|v| **v > floor && **v <= top)
+        .fold((0usize, 0f64), |(n, sum), v| (n + 1, sum + (*v as f64).cbrt()));
+    if count < 64 {
         return (1.0, json!({"applied": false}));
     }
-    let log_mean: f64 = sample.iter().map(|v| v.log2() as f64).sum::<f64>() / sample.len() as f64;
-    let key = (log_mean as f32).exp2();
-    let wanted = (target_key / key.max(EPS)).log2() * strength;
-    let delta = METERED_EV + soft_limit(wanted - METERED_EV, limit_ev);
+    // The average lightness (cube root of luminance, then back), not the
+    // log-average: on a contrasty scene the log-average sits well below what
+    // the eye and a camera's meter make of it, and matching it to the target
+    // exposed every such frame brighter than the camera would. The plain
+    // average of light swings too far the other way, and a bright sky darkens
+    // the foreground under it more than a camera does. On an even scene all
+    // three agree.
+    let key = (cube_roots / count as f64).powi(3) as f32;
+    // The camera's own metering is where a raw lands; only part of a frame's
+    // departure from it is corrected (see `DEPARTURE_CORRECTED`).
+    let departure = (target_key / key.max(EPS)).log2() - METERED_EV;
+    let delta = METERED_EV + soft_limit(departure * DEPARTURE_CORRECTED * strength, limit_ev);
     let key_gain = delta.exp2();
 
     // The highlight guard, on what the shoulder has to hold. Pixels the raw
@@ -790,6 +806,24 @@ mod tests {
                 "landed {} EV from the target: {info}", (key * gain / 0.13).log2());
     }
 
+    /// A contrasty scene is metered by its average lightness, not by its
+    /// log-average, which sits far below what the eye makes of it.
+    #[test]
+    fn the_meter_reads_the_average_lightness() {
+        let mut img = Image::new(200, 100);
+        for (i, px) in img.px_mut().iter_mut().enumerate() {
+            // A quarter of the frame in light, the rest in shade four and a
+            // half stops down, with a little texture.
+            let base = if i % 4 == 0 { 0.1 } else { 0.0045 };
+            *px = [base * (1.0 + 0.02 * ((i % 7) as f32 - 3.0)); 3];
+        }
+        let (_, info) = auto_exposure(&img, 0.13, 1.0, 3.2);
+        let key = info["key"].as_f64().unwrap() as f32;
+        let average = (0.25 * 0.1f32.cbrt() + 0.75 * 0.0045f32.cbrt()).powi(3);
+        assert!((key / average - 1.0).abs() < 0.1,
+                "metered at {key}, the average lightness is {average}");
+    }
+
     /// A bright window in a correctly exposed room is the guard's business,
     /// not the key's: the room keeps its exposure.
     #[test]
@@ -806,6 +840,16 @@ mod tests {
         let (plain, windowed) = (room(false), room(true));
         assert!((windowed / plain).log2().abs() < 0.03,
                 "a 5 % window moved the key by {} EV", (windowed / plain).log2());
+    }
+
+    /// A dark-toned subject, metered normally, keeps part of its tone: half of
+    /// its departure from the camera's metering is corrected, not all of it.
+    #[test]
+    fn a_dark_subject_keeps_part_of_its_tone() {
+        let dark = frame(0.13 / 2f32.powf(METERED_EV + 2.0), 0.3, 120, 90);
+        let (gain, info) = auto_exposure(&dark, 0.13, 1.0, 3.2);
+        let lifted = gain.log2() - METERED_EV;
+        assert!((lifted - 1.0).abs() < 0.2, "two stops dark was lifted {lifted}: {info}");
     }
 
     /// Above the ceiling a merged frame's reference had, a bright pale sky is

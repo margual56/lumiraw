@@ -1,6 +1,6 @@
 //! Framing: straightening, perspective and crop.
 
-use kit::{sample_bilinear_rgb, Image, Mat3d, Matrix3, Plane};
+use kit::{sample_lanczos, Image, Mat3d, Matrix3, Plane};
 use std::borrow::Cow;
 
 pub const MAX_CANVAS_GROWTH: f64 = 2.4;
@@ -139,7 +139,7 @@ pub fn apply(img: &Image, f: &Framing, crop: bool) -> Image {
             let gx = (ox as f64 + 0.5 + x0) - cw as f64 / 2.0;
             let (sx, sy) = to_source(&inv, gx, gy, w, h);
             if inside(sx, sy, w, h) {
-                dst[oy * out_w + ox] = sample_bilinear_rgb(img, sx as f32, sy as f32);
+                dst[oy * out_w + ox] = sample_lanczos(img, [0, 1, 2], sx as f32, sy as f32);
             }
         }
     }

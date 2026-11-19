@@ -768,18 +768,6 @@ pub fn apply_geometry(img: &Image, m: &LensMatch, distortion: bool, tca: bool) -
     // channel when lateral CA is not being corrected, since then all three
     // channels come from the same place.
     let mut out = Image::new(w, h);
-    let at = |sx: f32, sy: f32| -> (usize, usize, usize, usize, f32, f32) {
-        let x = sx.clamp(0.0, w as f32 - 1.001);
-        let y = sy.clamp(0.0, h as f32 - 1.001);
-        let (x0, y0) = (x as usize, y as usize);
-        (x0, y0, (x0 + 1).min(w - 1), (y0 + 1).min(h - 1), x - x0 as f32, y - y0 as f32)
-    };
-    let sample = |c: usize, (x0, y0, x1, y1, fx, fy): (usize, usize, usize, usize, f32, f32)| {
-        let p = |x: usize, y: usize| img.d[(y * w + x) * 3 + c];
-        let top = p(x0, y0) * (1.0 - fx) + p(x1, y0) * fx;
-        let bot = p(x0, y1) * (1.0 - fx) + p(x1, y1) * fx;
-        top * (1.0 - fy) + bot * fy
-    };
     for y in 0..h {
         let ny = (y as f32 - cy) / unit;
         for x in 0..w {
@@ -789,13 +777,11 @@ pub fn apply_geometry(img: &Image, m: &LensMatch, distortion: bool, tca: bool) -
             let i = (y * w + x) * 3;
             let place = |chan: f32| {
                 let f = base * chan / scale;
-                at(cx + nx * unit * f, cy + ny * unit * f)
+                (cx + nx * unit * f, cy + ny * unit * f)
             };
             if tk.model == 0 {
-                let p = place(1.0);
-                for c in 0..3 {
-                    out.d[i + c] = sample(c, p);
-                }
+                let (sx, sy) = place(1.0);
+                out.d[i..i + 3].copy_from_slice(&kit::sample_lanczos(img, [0, 1, 2], sx, sy));
                 continue;
             }
             for c in 0..3 {
@@ -812,7 +798,8 @@ pub fn apply_geometry(img: &Image, m: &LensMatch, distortion: bool, tca: bool) -
                     }
                     _ => 1.0,
                 };
-                out.d[i + c] = sample(c, place(chan));
+                let (sx, sy) = place(chan);
+                out.d[i + c] = kit::sample_lanczos(img, [c], sx, sy)[0];
             }
         }
     }
@@ -851,26 +838,13 @@ fn apply_embedded_geometry(img: &Image, e: &Embedded, distortion: bool, tca: boo
                     _ => 1.0,
                 };
                 let f = base * chan;
-                out.d[i + c] = bilinear(img, c, cx + nx * unit * f, cy + ny * unit * f);
+                let (sx, sy) = (cx + nx * unit * f, cy + ny * unit * f);
+                out.d[i + c] = kit::sample_lanczos(img, [c], sx, sy)[0];
             }
         }
     }
     (out, json!({"applied": true, "distortion": distortion, "tca": tca,
                  "scale": ((scale * 10000.0).round() / 10000.0)}))
-}
-
-/// Channel `c` of `img` at a fractional position, clamped to the frame.
-fn bilinear(img: &Image, c: usize, sx: f32, sy: f32) -> f32 {
-    let (w, h) = (img.w, img.h);
-    let x = sx.clamp(0.0, w as f32 - 1.001);
-    let y = sy.clamp(0.0, h as f32 - 1.001);
-    let (x0, y0) = (x as usize, y as usize);
-    let (x1, y1) = ((x0 + 1).min(w - 1), (y0 + 1).min(h - 1));
-    let (fx, fy) = (x - x0 as f32, y - y0 as f32);
-    let p = |x: usize, y: usize| img.d[(y * w + x) * 3 + c];
-    let top = p(x0, y0) * (1.0 - fx) + p(x1, y0) * fx;
-    let bot = p(x0, y1) * (1.0 - fx) + p(x1, y1) * fx;
-    top * (1.0 - fy) + bot * fy
 }
 
 /// The smallest zoom that leaves no empty edge after correction, lensfun's

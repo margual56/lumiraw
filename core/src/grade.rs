@@ -351,20 +351,31 @@ fn rect_of(v: &Value) -> Option<Rect> {
 
 /// What skin looks like in this photograph, so the stages that move colour
 /// can leave faces alone: an Oklab hue and chroma, measured from the faces in
-/// the frame (see `skin`), or a typical skin when nobody has been found.
+/// the frame (see `skin`), a typical skin until the frame has been looked at,
+/// and none once it has and nobody is in it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Skin {
     pub hue: f32,
     pub chroma: f32,
-    /// Whether this was measured on this photograph's faces.
-    pub measured: bool,
+    pub source: SkinSource,
+}
+
+/// Where the skin being protected comes from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SkinSource {
+    /// Nobody has looked for faces yet: a typical skin, broadly.
+    Typical,
+    /// Read off this photograph's faces.
+    Measured,
+    /// Looked for and none found: a landscape's oranges are not skin.
+    NoFaces,
 }
 
 impl Default for Skin {
     fn default() -> Self {
         let lin = [0.76f32, 0.57, 0.46].map(kit::srgb_decode_scalar);
         let (_, a, b) = kit::rgb_to_oklab_px(lin[0], lin[1], lin[2]);
-        Skin { hue: b.atan2(a), chroma: a.hypot(b), measured: false }
+        Skin { hue: b.atan2(a), chroma: a.hypot(b), source: SkinSource::Typical }
     }
 }
 
@@ -373,7 +384,8 @@ impl Skin {
         let read = |k: &str| v.and_then(|v| v.get(k)).and_then(|x| x.as_f64()).map(|x| x as f32);
         match (read("hue"), read("chroma")) {
             (Some(hue), Some(chroma)) if chroma > 0.005 =>
-                Skin { hue, chroma: chroma.min(0.3), measured: true },
+                Skin { hue, chroma: chroma.min(0.3), source: SkinSource::Measured },
+            _ if read("faces") == Some(0.0) => Skin { source: SkinSource::NoFaces, ..Skin::default() },
             _ => Skin::default(),
         }
     }
@@ -385,8 +397,11 @@ impl Skin {
         while d > std::f32::consts::PI {
             d = (std::f32::consts::TAU - d).abs();
         }
-        if !self.measured {
-            return (1.0 - kit::smoothstep(0.25, 0.60, d)) * (1.0 - kit::smoothstep(0.10, 0.20, chroma));
+        match self.source {
+            SkinSource::NoFaces => return 0.0,
+            SkinSource::Typical => return (1.0 - kit::smoothstep(0.25, 0.60, d))
+                * (1.0 - kit::smoothstep(0.10, 0.20, chroma)),
+            SkinSource::Measured => {}
         }
         let c = self.chroma;
         (1.0 - kit::smoothstep(0.15, 0.40, d))
@@ -657,14 +672,7 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
         // rises; then, if that is not enough, the compression deepens.
         let need = (analyze::DISPLAY_FLOOR.log2() - low).clamp(0.0, analyze::MAX_RESCUE_EV);
         if need > 0.0 && high > low {
-            if factor < 0.999 {
-                anchor = anchor.max((low + need / (1.0 - factor)).min(high));
-            }
-            let reach = (anchor - low) * (1.0 - factor);
-            if reach < need {
-                anchor = high;
-                factor = factor.min(1.0 - need / (high - low)).max(TONE_FLOOR);
-            }
+            (anchor, factor) = lift_shadows(low, anchor, high, factor, need);
             lift = (anchor - low) * (1.0 - factor);
         }
         anchor
@@ -711,6 +719,25 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
     factor
 }
 
+/// Where the tone map pivots, and how hard it compresses, to lift shadows at
+/// `low` by `need` stops (all in log2 of the base layer): the pivot moves up
+/// from `anchor` toward the highlights at `high`, so everything below it
+/// rises; if even the highlights are not high enough, the compression
+/// deepens.
+fn lift_shadows(low: f32, anchor: f32, high: f32, factor: f32, need: f32) -> (f32, f32) {
+    let reach = |anchor: f32| (anchor - low) * (1.0 - factor);
+    if reach(anchor) >= need {
+        return (anchor, factor);
+    }
+    // The pivot that lifts them exactly that far. Decided on where it falls,
+    // not on its lift recomputed, which rounding can put a hair short.
+    let wanted = if factor < 0.999 { low + need / (1.0 - factor) } else { f32::INFINITY };
+    if wanted <= high {
+        return (wanted, factor);
+    }
+    (high, factor.min(1.0 - need / (high - low)).max(TONE_FLOOR))
+}
+
 /// The brightest a channel may be taken by vibrance and saturation, short of
 /// white, so that a boosted gradient keeps its steps.
 const BOOST_HEADROOM: f32 = 0.97;
@@ -721,6 +748,47 @@ const TONE_FLOOR: f32 = 0.45;
 /// What the tone map keeps of the contrast between the middle and the
 /// highlights when it gives back what the highlight guard held back.
 const HELD_FLOOR: f32 = 0.65;
+
+/// The filmic curve, y = x (A x + B) / (C x² + D x + E).
+const FILMIC: [f32; 5] = [2.51, 0.03, 2.43, 0.59, 0.14];
+
+#[inline]
+fn curve(x: f32) -> f32 {
+    let [a, b, c, d, e] = FILMIC;
+    let x = x.max(0.0);
+    ((x * (a * x + b)) / (x * (c * x + d) + e)).clamp(0.0, 1.0)
+}
+
+/// How much a curve laid on each channel, as a camera lays its own, would
+/// deepen a colour `filmic` has laid it on by its brightest channel: the
+/// factor its chroma for its lightness takes. The curve raises each ratio
+/// to the brightest channel to its log-slope γ (d ln y / d ln x) there,
+/// which widens the spread between the channels for their luminance; that
+/// is where a camera's colour gets its depth through the shadows and the
+/// middle, and without it they come out a third greyer than the camera's.
+/// One where the curve flattens, toward the shoulder (the bleaching there
+/// is `filmic`'s), for a grey, and for a colour with a channel below zero,
+/// outside sRGB, which has no ratio to raise.
+fn filmic_depth(px: [f32; 3]) -> f32 {
+    let [a, b, c, d, e] = FILMIC;
+    let (top, weakest) = (px[0].max(px[1]).max(px[2]), px[0].min(px[1]).min(px[2]));
+    if weakest <= 0.0 || top >= 1.0 || weakest >= top {
+        return 1.0;
+    }
+    // The scene level the curve took to `top`: the positive root of
+    // (top C - A) x² + (top D - B) x + top E = 0.
+    let (qa, qb, qc) = (top * c - a, top * d - b, top * e);
+    let x = (-qb - (qb * qb - 4.0 * qa * qc).max(0.0).sqrt()) / (2.0 * qa);
+    let gamma = 1.0 + a * x / (a * x + b) - x * (2.0 * c * x + d) / (x * (c * x + d) + e);
+    if gamma <= 1.0 {
+        return 1.0;
+    }
+    // r^γ = r r^(γ-1), to first order in γ - 1 (at most 0.6 here).
+    let steep = px.map(|v| v * (1.0 - (gamma - 1.0) * (1.0 - v / top)));
+    let weakest_steep = steep[0].min(steep[1]).min(steep[2]);
+    let (y, y_steep) = (kit::luminance_px(&px), kit::luminance_px(&steep));
+    ((top - weakest_steep) * y) / ((top - weakest) * y_steep).max(EPS)
+}
 
 /// What share of the large-scale light a merged bracket's shoulder brings
 /// under `SHOULDER_TOP`.
@@ -760,11 +828,6 @@ impl Shoulder {
 
 /// Scene-linear -> display-linear with a filmic shoulder.
 pub fn filmic(img: &mut Image) {
-    #[inline]
-    fn curve(x: f32) -> f32 {
-        let x = x.max(0.0);
-        ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0.0, 1.0)
-    }
     for px in img.d.chunks_exact_mut(3) {
         // Scaled by the brightest channel, not by luminance: a saturated colour
         // has little luminance for its brightest channel, so a ratio taken from
@@ -830,8 +893,15 @@ pub fn s_curve(x: f32, amount: f32, pivot: f32) -> f32 {
     let g = (0.5f32).ln() / pivot.clamp(0.1, 0.9).ln();
     let t = x.clamp(0.0, 1.0).powf(g);
     let bend = (kit::smoothstep(0.0, 1.0, t) - t) * 4.0 * t * (1.0 - t);
-    (t + amount * bend).clamp(0.0, 1.0).powf(1.0 / g)
+    let y = (t + amount * bend).clamp(0.0, 1.0).powf(1.0 / g);
+    // The bend fades toward black in `t`, but a low pivot stretches the
+    // shadows out in `t`, and a deep shadow could lose a stop and a half. On
+    // the dark side, the darkening also fades out in lightness itself.
+    if y < x { x + (y - x) * kit::smoothstep(0.0, SHADOW_FADE, x) } else { y }
 }
+
+/// The lightness below which the contrast curve's darkening fades out.
+const SHADOW_FADE: f32 = 0.25;
 
 /// The most any one tone zone may move a lightness.
 pub const ZONE_RANGE: f32 = 0.14;
@@ -1045,7 +1115,7 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
     d.vibrance = boost;
     // The look's own saturation, on every colour; switched off with vibrance.
     let saturation = if s.on("vibrance") { p.saturation } else { 1.0 };
-    if (boost - 1.0).abs() > 0.001 || (saturation - 1.0).abs() > 0.001 {
+    {
         for i in 0..n {
             let c = chroma.d[i];
             let hue = kit::fast_atan2(b.d[i], a.d[i]);
@@ -1058,7 +1128,10 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
                                        2.0 * analyze::NEUTRAL_CHROMA, c)
                 * (1.0 - kit::smoothstep(0.85, 0.97, light_new.d[i]))
                 * (1.0 - s.skin_protect * s.skin.likeness(hue, c));
-            let mut gain = 1.0 + ((boost - 1.0) * muted + (saturation - 1.0)) * room;
+            // The curve's own depth, before levels and contrast moved the
+            // colour, on every colour.
+            let depth = filmic_depth(img.px()[i]);
+            let mut gain = (1.0 + ((boost - 1.0) * muted + (saturation - 1.0)) * room) * depth;
             // Never to the gamut's edge: the mapping at the end would press the
             // colour onto it, and a bright saturated gradient would come out
             // flat there. Only as far as leaves a little room, and not at all
@@ -1274,7 +1347,8 @@ mod tests {
         assert!(Shoulder::fitting(SHOULDER_TOP.log2() - 0.1).is_none(), "nothing to fit");
     }
 
-    /// Unmeasured skin keeps the broad default target; measured skin is narrower.
+    /// Unmeasured skin keeps the broad default target, measured skin is narrower,
+    /// and a frame with nobody in it has none.
     #[test]
     fn skin_is_protected_as_measured() {
         let typical = Skin::default();
@@ -1289,13 +1363,17 @@ mod tests {
             assert_eq!(typical.likeness(hue, chroma), old(hue, chroma));
         }
         let measured = Skin::from_json(Some(&json!({"hue": 0.8, "chroma": 0.07})));
-        assert!(measured.measured);
+        assert_eq!(measured.source, SkinSource::Measured);
         assert!(measured.likeness(0.8, 0.07) > 0.99);
         assert!(measured.likeness(1.3, 0.07) < 0.05, "a yellow taken for skin");
         assert!(measured.likeness(0.8, 0.005) < 0.05, "a grey taken for skin");
-        // No faces found reads as the typical skin.
-        assert_eq!(Skin::from_json(Some(&json!({"faces": 0}))), typical);
+        // Not looked for yet reads as the typical skin; looked for and not
+        // found protects nothing, however skin-like the colour.
+        assert_eq!(Skin::from_json(None), typical);
         assert_eq!(Skin::from_json(Some(&json!(false))), typical);
+        let nobody = Skin::from_json(Some(&json!({"faces": 0})));
+        assert_eq!(nobody.source, SkinSource::NoFaces);
+        assert_eq!(nobody.likeness(typical.hue, 0.05), 0.0);
     }
 
     /// The interface draws the white balance and exposure boxes on the framed
@@ -1320,11 +1398,40 @@ mod tests {
         assert_eq!(whole, vec![img.px()[0], img.px()[1], img.px()[8], img.px()[9]]);
     }
 
+    /// The shadows are lifted by what they need: never by more because the
+    /// sum came out a hair short, which jumped the pivot to the highlights.
+    #[test]
+    fn the_shadows_are_lifted_by_what_they_need() {
+        for i in 0..40 {
+            for j in 0..40 {
+                let (low, high) = (-9.0 + i as f32 * 0.07, -0.5 + j as f32 * 0.011);
+                for factor in [0.55f32, 0.62, 0.7, 0.803, 0.9] {
+                    let need = (analyze::DISPLAY_FLOOR.log2() - low).clamp(0.0, analyze::MAX_RESCUE_EV);
+                    let (anchor, f) = lift_shadows(low, low + 0.3, high, factor, need);
+                    let lift = (anchor - low) * (1.0 - f);
+                    assert!(lift <= need + 1e-3 || f <= TONE_FLOOR + 1e-6,
+                            "low {low} high {high} factor {factor}: lifted {lift} for {need}");
+                    assert!(lift >= need - 1e-3 || f <= TONE_FLOOR + 1e-6,
+                            "low {low} high {high} factor {factor}: lifted {lift} short of {need}");
+                }
+            }
+        }
+    }
+
+    /// A low pivot stretches the shadows out under the curve; a deep shadow
+    /// must still keep most of its light, not lose a stop and a half to it.
+    #[test]
+    fn the_curve_does_not_bury_a_deep_shadow() {
+        let out = s_curve(0.08, 0.65, 0.3);
+        let stops = (out / 0.08).powi(3).log2();
+        assert!(stops > -0.4, "a shadow at lightness 0.08 went to {out}, {stops} stops down");
+    }
+
     /// The S-curve is pivoted on the image's own midtone, so it must hold the
     /// pivot in place while it steepens either side of it.
     #[test]
     fn s_curve_matches_reference() {
-        for (x, want) in [(0.1f32, 0.0865191f32), (0.25, 0.223126), (0.45, 0.45),
+        for (x, want) in [(0.1f32, 0.095255f32), (0.25, 0.223126), (0.45, 0.45),
                           (0.75, 0.779422), (0.9, 0.90955)] {
             let got = s_curve(x, 0.4, 0.45);
             assert!((got - want).abs() < 1e-4, "x={} got {} want {}", x, got, want);

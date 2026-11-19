@@ -4,7 +4,7 @@
   import Zoom from './Zoom.svelte';
   import Histogram from './Histogram.svelte';
   import { analyse, clipMask } from '$lib/histogram.js';
-  import { app, settingsKey } from '$lib/state.svelte.js';
+  import { app, viewKey, proofParam } from '$lib/state.svelte.js';
   import { t } from '$lib/i18n.svelte.js';
   import * as api from '$lib/api.js';
 
@@ -32,16 +32,16 @@
   const comparable = $derived(!!src && (src === app.preview.image || src === app.output.image));
   let holding = $state(false);
   let fetching = $state(false);
-  const before = $derived(app.wipe.key === settingsKey() ? app.wipe.before : '');
+  const before = $derived(app.wipe.key === viewKey() ? app.wipe.before : '');
 
   async function hold(on) {
     holding = on;
     if (!on || before || fetching || !app.id) return;
     fetching = true;
-    const key = settingsKey();
+    const key = viewKey();
     try {
-      const out = await api.compare({ settings: app.settings, size: 1300 });
-      if (key === settingsKey()) app.wipe = { key, before: out.before, after: out.after };
+      const out = await api.compare({ settings: app.settings, size: 1300, proof: proofParam() });
+      if (key === viewKey()) app.wipe = { key, before: out.before, after: out.after };
     } catch {
       holding = false;
     } finally {
@@ -320,7 +320,10 @@
     <img class="before" src={before} alt={t('compare.before')} draggable="false"
          style:left={`${placement.left}px`} style:top={`${placement.top}px`}
          style:width={`${placement.width}px`} style:height={`${placement.height}px`} />
-    <span class="before-tag">{t('compare.before')}</span>
+    <span class="tag before-tag">{t('compare.before')}</span>
+  {/if}
+  {#if app.colour.proof && src && !zoomed}
+    <span class="tag proof-tag">{t('colour.proofTag', { name: app.colour.profile?.name ?? '' })}</span>
   {/if}
   {#if children && placement.width && !zoomed}
     {@render children(placement)}
@@ -385,10 +388,15 @@
   img.before {
     position: absolute; z-index: 1; pointer-events: none; object-fit: contain;
   }
-  .before-tag {
-    position: absolute; right: 12px; bottom: 12px; z-index: 2; padding: 4px 10px; border-radius: 999px;
-    background: rgb(8 9 11 / 72%); color: #fff; font-size: 11.5px; letter-spacing: .04em;
-    text-transform: uppercase; pointer-events: none;
+  .tag {
+    position: absolute; bottom: 12px; z-index: 2; padding: 4px 10px; border-radius: 999px;
+    background: rgb(8 9 11 / 72%); color: #fff; font-size: 11.5px; pointer-events: none;
+  }
+  .before-tag { right: 12px; letter-spacing: .04em; text-transform: uppercase; }
+  /* Opposite the "before" tag, so both can show at once. */
+  .proof-tag {
+    left: 12px; max-width: calc(100% - 140px); border: 1px solid var(--color-accent);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .hold { touch-action: none; user-select: none; }
   .zoom-toggle {

@@ -51,13 +51,8 @@ pub struct CubeInfo {
 pub fn load_cube(bytes: &[u8]) -> Result<CubeInfo, String> {
     let lut = lumiraw_core::lut::Lut::parse(&String::from_utf8_lossy(bytes))?;
     let (size, title) = (lut.size, lut.title.clone());
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in bytes {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x100_0000_01b3);
-    }
     lumiraw_core::lut::set(Some(lut));
-    Ok(CubeInfo { size, title, id: format!("{h:x}") })
+    Ok(CubeInfo { size, title, id: kit::digest(bytes) })
 }
 
 /// Forget the 3D table.

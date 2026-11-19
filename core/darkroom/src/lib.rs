@@ -1,6 +1,7 @@
 //! LumiRaw's API: what can be done to a photograph, in a handful of calls.
 
 mod bracket;
+mod colour;
 mod grades;
 mod photo;
 pub mod stack;
@@ -8,7 +9,8 @@ pub mod wasm;
 
 pub use bracket::{finding_json, notes_json, Bracket, FrameInfo};
 pub use grades::{clear_cube, curves, load_cube, looks, CubeInfo};
-pub use photo::{Developed, Encoded, Export, Exported, Photo, Size};
+pub use photo::{ColourSpace, Developed, Encoded, Export, Exported, Photo, Size};
+pub use lumiraw_core::icc::Intent;
 pub use stack::{Stack, StackMode};
 pub use lumiraw_core::models;
 
@@ -98,10 +100,11 @@ pub fn exposure(bytes: &[u8]) -> serde_json::Value {
                        "captured_s": m.captured_s})
 }
 
-/// The export formats, for a picker: `{id, label, ext, mime}` each.
+/// The export formats, for a picker: `{id, label, ext, mime, cmyk}` each.
 pub fn formats() -> serde_json::Value {
     serde_json::json!(lumiraw_core::output::FORMATS.iter()
-        .map(|f| serde_json::json!({"id": f.id, "label": f.label, "ext": f.ext, "mime": f.mime}))
+        .map(|f| serde_json::json!({"id": f.id, "label": f.label, "ext": f.ext, "mime": f.mime,
+                                 "cmyk": f.cmyk}))
         .collect::<Vec<_>>())
 }
 
@@ -133,6 +136,10 @@ mod tests {
         let e = Export::new("jpeg");
         assert_eq!((e.format.as_str(), e.quality, e.long_edge, e.modified.as_deref()),
                    ("jpeg", 92, None, None));
+        assert_eq!(e.space, ColourSpace::Srgb);
+        assert_eq!(ColourSpace::from_code("cmyk:relative"), ColourSpace::Cmyk(Intent::Relative));
+        assert_eq!(ColourSpace::from_code("cmyk"), ColourSpace::Cmyk(Intent::Perceptual));
+        assert_eq!(ColourSpace::from_code("srgb"), ColourSpace::Srgb);
         let ids: Vec<_> = formats().as_array().unwrap().iter()
             .map(|f| f["id"].as_str().unwrap().to_string()).collect();
         assert_eq!(ids, ["png8", "png16", "jpeg", "webp", "tiff"]);

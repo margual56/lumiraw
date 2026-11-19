@@ -18,6 +18,8 @@ uses.
 - `lensdb.rs` - lensfun corrections
 - `merge.rs` - exposure brackets
 - `output.rs` - PNG, JPEG, TIFF
+- `icc.rs` - colour profiles: CMYK for print and soft proofing, with Coated
+  FOGRA39 built in (from colord; "free of known copyright restrictions")
 
 ## Tests
 

@@ -2,7 +2,9 @@
   import GuideLink from '$lib/components/GuideLink.svelte';
   import Viewer from '$lib/components/Viewer.svelte';
   import Slider from '$lib/components/Slider.svelte';
-  import { app } from '$lib/state.svelte.js';
+  import ColourOut from '$lib/components/ColourOut.svelte';
+  import Section from '$lib/components/Section.svelte';
+  import { app, exportSpace } from '$lib/state.svelte.js';
   import { NAME } from '$lib/brand.js';
   import { t, n, localized } from '$lib/i18n.svelte.js';
   import { lookLabel, formatLabel, stageText, errorText, saveFile } from '$lib/format.js';
@@ -16,13 +18,18 @@
   let maxSize = $state('');
   let working = $state(false);
 
-  const lossy = $derived(['jpeg', 'webp'].includes(format));
+  const lossy = $derived(['jpeg', 'webp'].includes(chosen));
 
   // WebP is encoded by the browser, and not every engine can (WebKit, which
   // the desktop app runs in on Linux, cannot): offered only where it works.
   const webp = typeof document !== 'undefined'
     && document.createElement('canvas').toDataURL('image/webp').startsWith('data:image/webp');
-  const formats = $derived((app.info?.formats ?? []).filter((f) => f.id !== 'webp' || webp));
+  // CMYK goes into JPEG and TIFF only. The format chosen is kept as it was
+  // made; while CMYK rules it out, the first format that can is used.
+  const cmyk = $derived(exportSpace() !== 'srgb');
+  const formats = $derived((app.info?.formats ?? [])
+    .filter((f) => (f.id !== 'webp' || webp) && (!cmyk || f.cmyk)));
+  const chosen = $derived(formats.some((f) => f.id === format) ? format : formats[0]?.id);
   // The grade is the one thing on this step's picture that is easy to have
   // forgotten, so it is named, when there is one.
   const graded = $derived(app.settings.look
@@ -44,7 +51,7 @@
     const started = performance.now();
     try {
       const { blob, count, failed } = await exportRoll({
-        format, quality, max_size: maxSize || null,
+        format: chosen, quality, max_size: maxSize || null, space: exportSpace(),
         onstatus: (text, progress) => (batch = { text, progress }),
       });
       const first = (app.roll.find((item) => item.keep)?.name ?? NAME).replace(/\.[^.]+$/, '');
@@ -100,10 +107,11 @@
     try {
       const { blob, filename } = await exportOnce({
         settings: app.settings,
-        format,
+        format: chosen,
         quality,
         max_size: maxSize || null,
         original_name: app.info.original_name,
+        space: exportSpace(),
       }, (progress, stage) => {
         app.job = { progress, stage, stage_params: {}, elapsed: elapsed() };
       });
@@ -128,7 +136,7 @@
 
     <div class="field">
       <label for="format">{t('download.format')}</label>
-      <select id="format" bind:value={format}>
+      <select id="format" value={chosen} onchange={(e) => (format = e.currentTarget.value)}>
         {#each formats as option}
           <option value={option.id}>{formatLabel(option.id)}</option>
         {/each}
@@ -151,13 +159,21 @@
       </select>
     </div>
 
+    <!-- Print colour and slicing, which most downloads never need. The dot
+         says when something in here is changing the download or the view. -->
+    <div class="advanced">
+      <Section title={t('download.advanced')} group="download"
+               edited={exportSpace() !== 'srgb' || app.colour.proof}>
+        <ColourOut />
+        <button class="ghost roll" onclick={slice} disabled={working}>{t('slice.fromDevelop')}</button>
+        <p class="hint small">{t('slice.fromDevelopHint')}</p>
+      </Section>
+    </div>
+
     {#if graded}<p class="lede">{graded}</p>{/if}
     <button class="go" onclick={download} disabled={working}>
       {working ? t('download.working') : t('download.button')}
     </button>
-
-    <button class="ghost roll" onclick={slice} disabled={working}>{t('slice.fromDevelop')}</button>
-    <p class="hint small">{t('slice.fromDevelopHint')}</p>
 
     {#if app.roll.length > 1}
       <button class="ghost roll" onclick={downloadRoll} disabled={working || !kept}>
@@ -194,6 +210,7 @@
   /* The one thing this step is for, as wide as the thumb that presses it. */
   .go { @include phone { width: 100%; min-height: 48px; } }
   .roll { margin-top: 8px; width: 100%; }
+  .advanced { margin: 4px 0 14px; }
   .small { display: block; margin-top: 4px; @include small(11.5px); }
   .hint { white-space: pre-line; }
   .track {

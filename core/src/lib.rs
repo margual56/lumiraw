@@ -15,6 +15,7 @@ pub mod develop;
 pub mod effects;
 pub mod exif;
 pub mod geometry;
+pub mod icc;
 pub mod grade;
 pub mod lensdb;
 pub mod local;

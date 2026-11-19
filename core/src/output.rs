@@ -1,6 +1,7 @@
 //! Quantisation and delivery formats.
 
 use crate::exif::{self, Entry, Ifd};
+use crate::icc::{self, Intent, Profile};
 use kit::Image;
 
 /// Display-linear -> sRGB integers.
@@ -44,34 +45,83 @@ pub fn rgba8(img: &Image) -> Vec<u8> {
     out
 }
 
+/// RGBA8 sRGB, as a canvas holds it, back to display-linear.
+pub fn from_rgba8(rgba: &[u8], w: usize, h: usize) -> Image {
+    let mut out = Image::new(w, h);
+    for (px, src) in out.px_mut().iter_mut().zip(rgba.chunks_exact(4)) {
+        *px = [0, 1, 2].map(|c| kit::srgb_decode_scalar(src[c] as f32 / 255.0));
+    }
+    out
+}
+
 pub struct Format {
     pub id: &'static str,
     pub ext: &'static str,
     pub label: &'static str,
     pub mime: &'static str,
+    /// Whether the format can hold CMYK. PNG and WebP are RGB only.
+    pub cmyk: bool,
 }
 
 pub const FORMATS: [Format; 5] = [
-    Format { id: "png8", ext: "png", label: "PNG (8-bit)", mime: "image/png" },
-    Format { id: "png16", ext: "png", label: "PNG (16-bit)", mime: "image/png" },
-    Format { id: "jpeg", ext: "jpg", label: "JPEG", mime: "image/jpeg" },
-    Format { id: "webp", ext: "webp", label: "WebP", mime: "image/webp" },
-    Format { id: "tiff", ext: "tif", label: "TIFF (8-bit)", mime: "image/tiff" },
+    Format { id: "png8", ext: "png", label: "PNG (8-bit)", mime: "image/png", cmyk: false },
+    Format { id: "png16", ext: "png", label: "PNG (16-bit)", mime: "image/png", cmyk: false },
+    Format { id: "jpeg", ext: "jpg", label: "JPEG", mime: "image/jpeg", cmyk: true },
+    Format { id: "webp", ext: "webp", label: "WebP", mime: "image/webp", cmyk: false },
+    Format { id: "tiff", ext: "tif", label: "TIFF (8-bit)", mime: "image/tiff", cmyk: true },
 ];
 
 pub fn format_spec(id: &str) -> &'static Format {
     FORMATS.iter().find(|f| f.id == id).unwrap_or(&FORMATS[0])
 }
 
-/// Encode the finished image, carrying the original's metadata with it.
+/// The colour space a file is written in.
+#[derive(Clone, Copy, Debug)]
+pub enum Space<'a> {
+    /// What every screen and the web assume.
+    Srgb,
+    /// Ink, through a CMYK profile, for print.
+    Cmyk(&'a Profile, Intent),
+}
+
+/// Encode the finished image in sRGB, carrying the original's metadata with it.
 pub fn save(img: &Image, fmt: &str, quality: u8, meta: &[Entry], modified: Option<&str>)
     -> Result<Vec<u8>, String> {
+    save_in(img, fmt, quality, meta, modified, Space::Srgb)
+}
+
+/// Encode the finished image in a colour space, with that space's profile
+/// embedded where the format has room for one.
+pub fn save_in(img: &Image, fmt: &str, quality: u8, meta: &[Entry], modified: Option<&str>,
+               space: Space) -> Result<Vec<u8>, String> {
+    check_space(fmt, space)?;
     let block = exif::build(meta, img.w as u32, img.h as u32, crate::SOFTWARE, modified);
     match fmt {
         "png16" => png_bytes(img, 16, &block, meta, modified),
-        "jpeg" => jpeg_bytes(img, quality, &block),
-        "tiff" => tiff_bytes(img, meta, modified),
+        "jpeg" => jpeg_bytes(img, quality, &block, space),
+        "tiff" => tiff_bytes(img, meta, modified, space),
         _ => png_bytes(img, 8, &block, meta, modified),
+    }
+}
+
+/// Whether a file of this format can be written in this space: CMYK needs a
+/// format that holds it and a CMYK profile.
+pub fn check_space(fmt: &str, space: Space) -> Result<(), String> {
+    let Space::Cmyk(profile, _) = space else { return Ok(()) };
+    let spec = format_spec(fmt);
+    if !spec.cmyk {
+        return Err(format!("{} cannot hold CMYK; JPEG and TIFF can", spec.label));
+    }
+    profile.require_cmyk()
+}
+
+/// The picture's samples in the space, with the profile that describes them:
+/// RGB or CMYK, 8 bits a channel.
+fn samples<'a>(img: &Image, space: Space<'a>) -> Result<(Vec<u8>, &'a [u8]), String> {
+    let rgb = encode8(img, true);
+    match space {
+        Space::Srgb => Ok((rgb, icc::srgb_bytes())),
+        Space::Cmyk(profile, intent) => Ok((icc::to_cmyk8(&rgb, profile, intent)?, &profile.bytes)),
     }
 }
 
@@ -140,7 +190,8 @@ fn png_bytes(img: &Image, bits: u8, block: &[u8], meta: &[Entry], modified: Opti
     Ok(buf)
 }
 
-fn jpeg_bytes(img: &Image, quality: u8, block: &[u8]) -> Result<Vec<u8>, String> {
+fn jpeg_bytes(img: &Image, quality: u8, block: &[u8], space: Space)
+    -> Result<Vec<u8>, String> {
     let mut buf: Vec<u8> = Vec::new();
     let mut enc = jpeg_encoder::Encoder::new(&mut buf, quality);
     // 4:4:4: no chroma subsampling.
@@ -151,50 +202,79 @@ fn jpeg_bytes(img: &Image, quality: u8, block: &[u8]) -> Result<Vec<u8>, String>
     app1.extend_from_slice(b"Exif\0\0");
     app1.extend_from_slice(block);
     enc.add_app_segment(1, &app1).map_err(|e| e.to_string())?;
-    enc.encode(&encode8(img, true), img.w as u16, img.h as u16, jpeg_encoder::ColorType::Rgb)
-        .map_err(|e| e.to_string())?;
+    let (data, profile) = samples(img, space)?;
+    enc.add_icc_profile(profile).map_err(|e| e.to_string())?;
+    // The encoder writes CMYK the way Photoshop does (Adobe APP14, inverted),
+    // which is what every reader expects of a CMYK JPEG.
+    let colour = match space {
+        Space::Srgb => jpeg_encoder::ColorType::Rgb,
+        Space::Cmyk(..) => jpeg_encoder::ColorType::Cmyk,
+    };
+    enc.encode(&data, img.w as u16, img.h as u16, colour).map_err(|e| e.to_string())?;
     Ok(buf)
 }
 
 /// TIFF is itself a directory format, so the descriptive tags go in at the top
 /// level where any reader will find them.
-fn tiff_bytes(img: &Image, meta: &[Entry], modified: Option<&str>)
+fn tiff_bytes(img: &Image, meta: &[Entry], modified: Option<&str>, space: Space)
     -> Result<Vec<u8>, String> {
-    use tiff::tags::Tag;
+    use tiff::encoder::colortype::{CMYK8, RGB8};
+    let (data, profile) = samples(img, space)?;
     let mut buf = std::io::Cursor::new(Vec::new());
     {
         let mut enc = tiff::encoder::TiffEncoder::new(&mut buf).map_err(|e| e.to_string())?;
-        let mut image = enc
-            .new_image::<tiff::encoder::colortype::RGB8>(img.w as u32, img.h as u32)
-            .map_err(|e| e.to_string())?;
-        {
-            let dir = image.encoder();
-            let _ = dir.write_tag(Tag::Software, crate::SOFTWARE);
-            let _ = dir.write_tag(Tag::Orientation, 1u16);
-            for (tag, number) in [
-                (Tag::Make, 0x010Fu16),
-                (Tag::Model, 0x0110),
-                (Tag::Artist, 0x013B),
-                (Tag::Copyright, 0x8298),
-                (Tag::ImageDescription, 0x010E),
-            ] {
-                if let Some(text) = exif::text_of(meta, Ifd::Primary, number) {
-                    let _ = dir.write_tag(tag, text.as_str());
-                }
-            }
-            // DateTime is when the file was written, which is now.
-            if let Some(stamp) = modified {
-                let _ = dir.write_tag(Tag::DateTime, &stamp[..stamp.len().min(19)]);
-            } else if let Some(when) = exif::captured_at(meta) {
-                let _ = dir.write_tag(Tag::DateTime, when.as_str());
-            }
-            if let Some(when) = exif::captured_at(meta) {
-                let _ = dir.write_tag(Tag::Unknown(0x9003), when.as_str());
-            }
-        }
-        image.write_data(&encode8(img, true)).map_err(|e| e.to_string())?;
+        // The encoder's colour type is a type parameter, so each space is its
+        // own instantiation.
+        let (w, h) = (img.w as u32, img.h as u32);
+        match space {
+            Space::Srgb => tiff_image::<_, RGB8>(&mut enc, w, h, &data, meta, modified, profile),
+            Space::Cmyk(..) => tiff_image::<_, CMYK8>(&mut enc, w, h, &data, meta, modified, profile),
+        }?;
     }
     Ok(buf.into_inner())
+}
+
+fn tiff_image<W: std::io::Write + std::io::Seek, C>(
+    enc: &mut tiff::encoder::TiffEncoder<W>, w: u32, h: u32, data: &[u8], meta: &[Entry],
+    modified: Option<&str>, profile: &[u8]) -> Result<(), String>
+where C: tiff::encoder::colortype::ColorType<Inner = u8>, [u8]: tiff::encoder::TiffValue {
+    let mut image = enc.new_image::<C>(w, h).map_err(|e| e.to_string())?;
+    if C::TIFF_VALUE == tiff::tags::PhotometricInterpretation::CMYK {
+        // InkSet: CMYK, in that order.
+        let _ = image.encoder().write_tag(tiff::tags::Tag::Unknown(332), 1u16);
+    }
+    tiff_tags(image.encoder(), meta, modified, profile);
+    image.write_data(data).map_err(|e| e.to_string())
+}
+
+fn tiff_tags<W: std::io::Write + std::io::Seek, K: tiff::encoder::TiffKind>(
+    dir: &mut tiff::encoder::DirectoryEncoder<W, K>, meta: &[Entry], modified: Option<&str>,
+    profile: &[u8]) {
+    use tiff::tags::Tag;
+    // The ICC profile, tag 34675, where every TIFF reader looks.
+    let _ = dir.write_tag(Tag::Unknown(34675), profile);
+    let _ = dir.write_tag(Tag::Software, crate::SOFTWARE);
+    let _ = dir.write_tag(Tag::Orientation, 1u16);
+    for (tag, number) in [
+        (Tag::Make, 0x010Fu16),
+        (Tag::Model, 0x0110),
+        (Tag::Artist, 0x013B),
+        (Tag::Copyright, 0x8298),
+        (Tag::ImageDescription, 0x010E),
+    ] {
+        if let Some(text) = exif::text_of(meta, Ifd::Primary, number) {
+            let _ = dir.write_tag(tag, text.as_str());
+        }
+    }
+    // DateTime is when the file was written, which is now.
+    if let Some(stamp) = modified {
+        let _ = dir.write_tag(Tag::DateTime, &stamp[..stamp.len().min(19)]);
+    } else if let Some(when) = exif::captured_at(meta) {
+        let _ = dir.write_tag(Tag::DateTime, when.as_str());
+    }
+    if let Some(when) = exif::captured_at(meta) {
+        let _ = dir.write_tag(Tag::Unknown(0x9003), when.as_str());
+    }
 }
 
 #[cfg(test)]
@@ -325,6 +405,90 @@ mod tests {
             let read = read_back(&bytes);
             use ::exif::{In, Tag};
             assert!(read.get_field(Tag::Software, In::PRIMARY).is_some(), "{format}");
+        }
+    }
+
+    /// The JPEG's markers, as (marker, payload) up to the start of scan.
+    fn markers(bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
+        let mut out = Vec::new();
+        let mut i = 2;
+        while i + 4 <= bytes.len() && bytes[i] == 0xFF {
+            let marker = bytes[i + 1];
+            let len = u16::from_be_bytes([bytes[i + 2], bytes[i + 3]]) as usize;
+            out.push((marker, bytes[i + 4..i + 2 + len].to_vec()));
+            if marker == 0xDA {
+                break;
+            }
+            i += 2 + len;
+        }
+        out
+    }
+
+    fn icc_in_jpeg(bytes: &[u8]) -> Vec<u8> {
+        markers(bytes).into_iter()
+            .filter(|(m, p)| *m == 0xE2 && p.starts_with(b"ICC_PROFILE\0"))
+            .flat_map(|(_, p)| p[14..].to_vec())
+            .collect()
+    }
+
+    /// A print shop gets four channels, the profile they are in, and still
+    /// the camera's metadata.
+    #[test]
+    fn a_cmyk_jpeg_is_four_channels_with_its_profile() {
+        let profile = Profile::builtin_cmyk();
+        let bytes = save_in(&frame(), "jpeg", 92, &recorded(), None,
+                            Space::Cmyk(&profile, Intent::Perceptual)).expect("encode");
+        let all = markers(&bytes);
+        let sof = all.iter().find(|(m, _)| *m == 0xC0 || *m == 0xC2).expect("a frame header");
+        assert_eq!(sof.1[5], 4, "not four components");
+        assert!(all.iter().any(|(m, p)| *m == 0xEE && p.starts_with(b"Adobe")),
+                "no Adobe marker, so readers will not know how the CMYK is stored");
+        assert_eq!(icc_in_jpeg(&bytes), profile.bytes, "the profile did not go with it");
+        let read = read_back(&bytes);
+        assert!(read.get_field(::exif::Tag::Model, ::exif::In::PRIMARY).is_some());
+    }
+
+    #[test]
+    fn an_srgb_jpeg_says_so() {
+        let bytes = save(&frame(), "jpeg", 92, &[], None).expect("encode");
+        let icc = icc_in_jpeg(&bytes);
+        assert!(!icc.is_empty(), "no profile embedded");
+        assert_eq!(Profile::parse(&icc).unwrap().kind, icc::Kind::Rgb);
+    }
+
+    #[test]
+    fn a_cmyk_tiff_is_separated_with_its_profile() {
+        use tiff::decoder::{Decoder, DecodingResult};
+        use tiff::tags::Tag;
+        let profile = Profile::builtin_cmyk();
+        let mut img = Image::new(4, 4);
+        for v in img.d.iter_mut() {
+            *v = 1.0;
+        }
+        let bytes = save_in(&img, "tiff", 92, &recorded(), None,
+                            Space::Cmyk(&profile, Intent::Perceptual)).expect("encode");
+        let mut dec = Decoder::new(std::io::Cursor::new(&bytes)).expect("a TIFF");
+        assert_eq!(dec.colortype().unwrap(), tiff::ColorType::CMYK(8));
+        // This decoder widens a BYTE array to u64s; the values are what count.
+        let icc: Vec<u8> = dec.get_tag_u64_vec(Tag::Unknown(34675)).unwrap()
+            .into_iter().map(|v| v as u8).collect();
+        assert_eq!(icc, profile.bytes, "the profile did not go with it");
+        match dec.read_image().unwrap() {
+            // White paper takes no ink.
+            DecodingResult::U8(px) => assert!(px.iter().all(|&v| v < 8), "{:?}", &px[..4]),
+            _ => panic!("not 8-bit"),
+        }
+        let read = read_back(&bytes);
+        assert!(read.get_field(::exif::Tag::Model, ::exif::In::PRIMARY).is_some());
+    }
+
+    #[test]
+    fn formats_without_cmyk_refuse_it() {
+        let profile = Profile::builtin_cmyk();
+        for format in ["png8", "png16", "webp", "nonsense"] {
+            assert!(save_in(&frame(), format, 92, &[], None,
+                            Space::Cmyk(&profile, Intent::Perceptual)).is_err(),
+                    "{format} took CMYK");
         }
     }
 }

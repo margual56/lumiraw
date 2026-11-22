@@ -256,6 +256,9 @@ pub struct Notes {
     /// The ghost removal that was used, measured or as given.
     pub deghost_used: f32,
     pub shifts: Vec<(i32, i32)>,
+    /// Where each frame was read for each pixel of the merged frame; `shifts`
+    /// is what these come to at its middle.
+    pub warps: Vec<Warp>,
     /// Fraction of the frame where the exposures disagreed enough to be
     /// treated as movement.
     pub ghosted: f32,
@@ -471,13 +474,25 @@ pub fn merge(frames: &[Frame], options: Options) -> Result<(Image, Notes), Strin
     notes.range_stops = span(&notes.stops);
     notes.intended_range_stops = span(&notes.bias);
 
+    // Everything is expressed in the reference frame's light, so a frame given
+    // twice the exposure contributes half the value for the same radiance.
+    let scale: Vec<f32> = notes.stops.iter().map(|s| (-s).exp2()).collect();
+
+    let mut warps = vec![Warp::IDENTITY; frames.len()];
     if options.align {
-        let anchor = median_bitmaps(&frames[reference].linear);
         let mut lost = Vec::new();
         for (i, frame) in frames.iter().enumerate() {
             if i != reference {
-                match align(&anchor, &median_bitmaps(&frame.linear)) {
-                    Some(shift) => notes.shifts[i] = shift,
+                // Both frames as the light both of them recorded, so that
+                // the difference between them is where things are.
+                let (lo, hi) = shared_range(1.0, scale[i]);
+                let anchor = light_pyramid(&frames[reference].linear, 1.0, lo, hi);
+                let other = light_pyramid(&frame.linear, scale[i], lo, hi);
+                match align_light(&anchor, &other) {
+                    Some(warp) => {
+                        warps[i] = warp;
+                        notes.shifts[i] = warp.centre_shift(w, h);
+                    }
                     // Not "no shift needed": the aligner could not find this
                     // frame in the reference at all.
                     None => lost.push(i),
@@ -488,10 +503,7 @@ pub fn merge(frames: &[Frame], options: Options) -> Result<(Image, Notes), Strin
             notes.findings.push(Finding::new("no_correspondence", lost, 0.0));
         }
     }
-
-    // Everything is expressed in the reference frame's light, so a frame given
-    // twice the exposure contributes half the value for the same radiance.
-    let scale: Vec<f32> = notes.stops.iter().map(|s| (-s).exp2()).collect();
+    notes.warps = warps.clone();
 
     // A frame given more light is a better measurement of the same radiance,
     // and not by a little.
@@ -507,12 +519,11 @@ pub fn merge(frames: &[Frame], options: Options) -> Result<(Image, Notes), Strin
     let mut fallback_score = vec![f32::MIN; n];
 
     for (j, frame) in frames.iter().enumerate() {
-        let (dx, dy) = notes.shifts[j];
+        let warp = warps[j];
         let src_px = frame.linear.px();
-        for y in overlap(h, dy) {
-            let sy = (y as i32 + dy) as usize;
-            for x in overlap(w, dx) {
-                let sx = (x as i32 + dx) as usize;
+        for y in 0..h {
+            for x in 0..w {
+                let Some((sx, sy)) = warp.source(x, y, w, h) else { continue };
                 let dst = (y * w + x) * 3;
                 let px = src_px[sy * w + sx];
                 let level = px[0].max(px[1]).max(px[2]);
@@ -773,6 +784,398 @@ pub fn align(anchor: &Bitmaps, other: &Bitmaps) -> Option<(i32, i32)> {
     Some(shift)
 }
 
+/// Where a frame is read for each pixel of the reference: a homography, so
+/// that a handheld bracket's turn and tilt are put back as well as its drift.
+/// The frame is read at ((m0·x + m1·y + m2) / q, (m3·x + m4·y + m5) / q),
+/// with q = m6·x + m7·y + 1.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Warp {
+    pub m: [f32; 8],
+}
+
+impl Warp {
+    pub const IDENTITY: Warp = Warp { m: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0] };
+
+    pub fn shift((dx, dy): (i32, i32)) -> Warp {
+        Warp { m: [1.0, 0.0, dx as f32, 0.0, 1.0, dy as f32, 0.0, 0.0] }
+    }
+
+    /// Where the frame is read for reference position (x, y).
+    pub fn map(&self, x: f32, y: f32) -> (f32, f32) {
+        let m = &self.m;
+        let q = m[6] * x + m[7] * y + 1.0;
+        ((m[0] * x + m[1] * y + m[2]) / q, (m[3] * x + m[4] * y + m[5]) / q)
+    }
+
+    /// The nearest pixel of a `w`×`h` frame this reference pixel reads, if
+    /// the frame covers it. Nearest rather than interpolated: half a pixel
+    /// of misplacement is below what the merge can see, and a resampled
+    /// frame would no longer match its own sensor saturation.
+    pub fn source(&self, x: usize, y: usize, w: usize, h: usize) -> Option<(usize, usize)> {
+        let (sx, sy) = self.map(x as f32, y as f32);
+        let (sx, sy) = (sx.round(), sy.round());
+        if !(sx >= 0.0 && sy >= 0.0 && sx < w as f32 && sy < h as f32) {
+            return None;
+        }
+        Some((sx as usize, sy as usize))
+    }
+
+    /// How far the frame is moved at the middle of a `w`×`h` frame.
+    pub fn centre_shift(&self, w: usize, h: usize) -> (i32, i32) {
+        let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+        let (sx, sy) = self.map(cx, cy);
+        ((sx - cx).round() as i32, (sy - cy).round() as i32)
+    }
+}
+
+/// How the alignment of a bracket cuts the frame up, and how far it looks.
+///
+/// The frame is cut into tiles to see how far each part of it moved, and a
+/// homography fitted to them.
+const TILES_X: usize = 6;
+const TILES_Y: usize = 4;
+/// The tiles start from the first pyramid level no wider than this, looking
+/// this many of its pixels either side of where the whole frame moved.
+const TILE_START_EDGE: usize = 400;
+const TILE_SEARCH: i32 = 6;
+/// A tile only counts when its best shift is clearly better than the others
+/// it tried: a dark sky matches itself anywhere.
+const TILE_DISTINCT: f32 = 0.7;
+/// A tile that disagrees with the fitted map by more than this, in pixels of
+/// the full frame, is left out of the fit and the map fitted again.
+const TILE_OUTLIER_PX: f32 = 6.0;
+/// The fewest tiles a homography is fitted to: four pin one down exactly, so
+/// a wrong one would go unnoticed.
+const MIN_TILES: usize = 6;
+/// A turn is fitted only when a shift misses the tiles by more than this, in
+/// pixels (root mean square; the tiles are measured at half size, to two
+/// pixels), and the turn misses them by less than this share of that.
+const TURN_WORTH_PX: f32 = 3.0;
+const TURN_WORTH_SHARE: f32 = 0.6;
+/// How far, as a share of the frame, a fitted map may move a corner beyond
+/// what it does to the middle before it is not believed.
+const WARP_LIMIT: f32 = 0.1;
+/// Below this correlation at the best shift, the two frames are not showing
+/// the same thing.
+const MIN_CORRELATION: f32 = 0.5;
+/// The light compared runs from a little above the noise to short of the
+/// ceiling, in each frame's own values.
+const ALIGN_FLOOR: f32 = 0.004;
+
+/// The light two frames, `a` and `b` scaled into the reference's light,
+/// both recorded clear of noise and clipping.
+fn shared_range(a: f32, b: f32) -> (f32, f32) {
+    ((ALIGN_FLOOR * a).max(ALIGN_FLOOR * b), (TRUSTED_HIGH * a).min(TRUSTED_HIGH * b))
+}
+
+/// A frame as the alignment compares it: log luminance in the reference's
+/// light, held to `lo..hi`, at half size and smaller. Two frames of one
+/// bracket look the same this way, whatever their exposures, apart from
+/// what moved.
+pub struct LightPyramid {
+    levels: Vec<kit::Plane>,
+}
+
+fn light_pyramid(img: &Image, scale: f32, lo: f32, hi: f32) -> LightPyramid {
+    let (w, h) = (img.w / 2, img.h / 2);
+    let mut base = kit::Plane::new(w, h);
+    let (llo, lhi) = (lo.max(1e-9).log2(), hi.max(lo * 1.01).log2());
+    let px = img.px();
+    for y in 0..h {
+        for x in 0..w {
+            let mut sum = 0.0;
+            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                sum += kit::luminance_px(&px[(2 * y + dy) * img.w + 2 * x + dx]);
+            }
+            base.d[y * w + x] = (sum * 0.25 * scale).max(1e-9).log2().clamp(llo, lhi);
+        }
+    }
+    let mut levels = vec![base];
+    loop {
+        let last = levels.last().unwrap();
+        if last.w <= 64 || last.h <= 64 {
+            break;
+        }
+        let next = kit::resize_plane(last, last.w / 2, last.h / 2);
+        levels.push(next);
+    }
+    LightPyramid { levels }
+}
+
+/// The mean difference between `a` and `b` read `shift` away, over the
+/// part of `rect` (x0, y0, x1, y1) of `a` both cover; none when that is less
+/// than a quarter of it.
+fn difference(a: &kit::Plane, b: &kit::Plane, (dx, dy): (i32, i32),
+              rect: (usize, usize, usize, usize)) -> Option<f32> {
+    let (xs, ys) = (overlap(a.w, dx), overlap(a.h, dy));
+    let (x0, x1) = (rect.0.max(xs.start), rect.2.min(xs.end));
+    let (y0, y1) = (rect.1.max(ys.start), rect.3.min(ys.end));
+    if x1 <= x0 || y1 <= y0 || (x1 - x0) * (y1 - y0) * 4 < (rect.2 - rect.0) * (rect.3 - rect.1) {
+        return None;
+    }
+    let mut sum = 0.0f64;
+    for y in y0..y1 {
+        let row_a = &a.d[y * a.w..][x0..x1];
+        let sy = (y as i32 + dy) as usize;
+        let sx = (x0 as i32 + dx) as usize;
+        let row_b = &b.d[sy * b.w..][sx..sx + (x1 - x0)];
+        sum += row_a.iter().zip(row_b).map(|(p, q)| (p - q).abs()).sum::<f32>() as f64;
+    }
+    Some((sum / ((x1 - x0) * (y1 - y0)) as f64) as f32)
+}
+
+/// The best shift within `r` of `around`, its difference, and the median
+/// difference of all it tried.
+fn search(a: &kit::Plane, b: &kit::Plane, around: (i32, i32), r: (i32, i32),
+          rect: (usize, usize, usize, usize)) -> Option<((i32, i32), f32, f32)> {
+    let mut best: Option<((i32, i32), f32)> = None;
+    let mut all = Vec::new();
+    for dy in -r.1..=r.1 {
+        for dx in -r.0..=r.0 {
+            let c = (around.0 + dx, around.1 + dy);
+            let Some(d) = difference(a, b, c, rect) else { continue };
+            all.push(d);
+            if best.is_none_or(|(_, bd)| d < bd) {
+                best = Some((c, d));
+            }
+        }
+    }
+    let (at, d) = best?;
+    all.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    Some((at, d, all[all.len() / 2]))
+}
+
+/// How alike `a` and `b` are read `shift` apart, -1..1.
+fn correlation(a: &kit::Plane, b: &kit::Plane, (dx, dy): (i32, i32)) -> f32 {
+    let (mut n, mut sa, mut sb, mut saa, mut sbb, mut sab) = (0f64, 0f64, 0f64, 0f64, 0f64, 0f64);
+    for y in overlap(a.h, dy) {
+        let sy = (y as i32 + dy) as usize;
+        for x in overlap(a.w, dx) {
+            let p = a.d[y * a.w + x] as f64;
+            let q = b.d[sy * b.w + (x as i32 + dx) as usize] as f64;
+            n += 1.0;
+            sa += p;
+            sb += q;
+            saa += p * p;
+            sbb += q * q;
+            sab += p * q;
+        }
+    }
+    if n < 1.0 {
+        return 0.0;
+    }
+    let cov = sab / n - sa * sb / n / n;
+    let va = saa / n - sa * sa / n / n;
+    let vb = sbb / n - sb * sb / n / n;
+    if va <= 1e-12 || vb <= 1e-12 {
+        return 0.0;
+    }
+    (cov / (va * vb).sqrt()) as f32
+}
+
+/// The map that lines `other` up with `anchor`, or none if they are not the
+/// same scene. The whole frame first, searched across a quarter of it either
+/// way, since a handheld bracket drifts by hundreds of pixels; then each tile
+/// from there, for the turn and tilt between frames.
+fn align_light(anchor: &LightPyramid, other: &LightPyramid) -> Option<Warp> {
+    let depth = anchor.levels.len().min(other.levels.len());
+    if depth == 0 || (0..depth).any(|l| anchor.levels[l].w != other.levels[l].w
+                                     || anchor.levels[l].h != other.levels[l].h) {
+        return None;
+    }
+    let whole = |p: &kit::Plane| (0, 0, p.w, p.h);
+    let top = &anchor.levels[depth - 1];
+    let (mut shift, _, _) = search(top, &other.levels[depth - 1], (0, 0),
+                                   ((top.w / 4) as i32, (top.h / 4) as i32), whole(top))?;
+    let start = (0..depth).find(|l| anchor.levels[*l].w <= TILE_START_EDGE).unwrap_or(depth - 1);
+    let mut at_start = shift;
+    for level in (0..depth - 1).rev() {
+        shift = (shift.0 * 2, shift.1 * 2);
+        let a = &anchor.levels[level];
+        shift = search(a, &other.levels[level], shift, (1, 1), whole(a))?.0;
+        if level == start {
+            at_start = shift;
+            if correlation(a, &other.levels[level], shift) < MIN_CORRELATION {
+                return None;
+            }
+        }
+    }
+    // The pyramid starts at half size.
+    let fallback = Warp::shift((shift.0 * 2, shift.1 * 2));
+    let (fw, fh) = (anchor.levels[0].w as f32 * 2.0, anchor.levels[0].h as f32 * 2.0);
+
+    // (centre x, centre y, source x, source y), in full-frame pixels.
+    let mut found = Vec::new();
+    for ty in 0..TILES_Y {
+        for tx in 0..TILES_X {
+            let mut at = at_start;
+            let mut usable = true;
+            for level in (0..=start).rev() {
+                let (a, b) = (&anchor.levels[level], &other.levels[level]);
+                let rect = (tx * a.w / TILES_X, ty * a.h / TILES_Y,
+                            (tx + 1) * a.w / TILES_X, (ty + 1) * a.h / TILES_Y);
+                let r = if level == start { TILE_SEARCH } else { 1 };
+                if level < start {
+                    at = (at.0 * 2, at.1 * 2);
+                }
+                let Some((best, d, median)) = search(a, b, at, (r, r), rect) else {
+                    usable = false;
+                    break;
+                };
+                if level == start && d >= TILE_DISTINCT * median {
+                    usable = false;
+                    break;
+                }
+                at = best;
+            }
+            if usable {
+                let cx = (tx as f32 + 0.5) * fw / TILES_X as f32;
+                let cy = (ty as f32 + 0.5) * fh / TILES_Y as f32;
+                found.push((cx, cy, cx + at.0 as f32 * 2.0, cy + at.1 as f32 * 2.0));
+            }
+        }
+    }
+
+    if found.is_empty() {
+        return Some(fallback);
+    }
+    // Fitted, and fitted again without the tile it fits worst, for as long as
+    // that tile is out of line: a tile on something that moved, or on a
+    // repeating pattern, is wrong in its own way.
+    let mut keep = vec![true; found.len()];
+    let mut turned = None;
+    while let Some(warp) = fit_homography(&found, &keep) {
+        let worst = found.iter().enumerate().filter(|(k, _)| keep[*k])
+            .map(|(k, (cx, cy, sx, sy))| {
+                let (u, v) = warp.map(*cx, *cy);
+                (k, (u - sx).hypot(v - sy))
+            })
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        match worst {
+            Some((k, miss)) if miss > TILE_OUTLIER_PX => keep[k] = false,
+            _ => {
+                turned = believable(&warp, fw, fh).then_some(warp);
+                break;
+            }
+        }
+    }
+    // Where the tiles agree the frame moved, which is the middle of what they
+    // say: the same tiles the turn was fitted to, when it was.
+    let kept: Vec<_> = found.iter().zip(&keep).filter(|(_, k)| **k || turned.is_none())
+        .map(|(f, _)| *f).collect();
+    let middle = |mut v: Vec<f32>| {
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        v[v.len() / 2]
+    };
+    let dx = middle(kept.iter().map(|f| f.2 - f.0).collect());
+    let dy = middle(kept.iter().map(|f| f.3 - f.1).collect());
+    let shifted = Warp::shift((dx.round() as i32, dy.round() as i32));
+    // The turn only where it explains the tiles clearly better than the shift
+    // does. On a tripod the tiles disagree by their own measuring error alone,
+    // which a homography fits too, and carries out to the corners several
+    // times over, misplacing them by pixels.
+    let Some(turned) = turned else { return Some(shifted) };
+    let miss = |w: &Warp| {
+        let sum: f32 = kept.iter().map(|(cx, cy, sx, sy)| {
+            let (u, v) = w.map(*cx, *cy);
+            (u - sx).powi(2) + (v - sy).powi(2)
+        }).sum();
+        (sum / kept.len() as f32).sqrt()
+    };
+    let (by_shift, by_turn) = (miss(&shifted), miss(&turned));
+    Some(if by_shift > TURN_WORTH_PX && by_turn < TURN_WORTH_SHARE * by_shift { turned } else { shifted })
+}
+
+/// Whether a fitted map is something a hand holding a camera could have done:
+/// the frame's corners land within a tenth of its size of where a shift alone
+/// would put them.
+fn believable(warp: &Warp, w: f32, h: f32) -> bool {
+    let (cx, cy) = warp.map(w / 2.0, h / 2.0);
+    let (sx, sy) = (cx - w / 2.0, cy - h / 2.0);
+    [(0.0, 0.0), (w, 0.0), (0.0, h), (w, h)].iter().all(|(x, y)| {
+        let (u, v) = warp.map(*x, *y);
+        (u - x - sx).abs() < WARP_LIMIT * w && (v - y - sy).abs() < WARP_LIMIT * h
+    })
+}
+
+/// The homography that best carries the tiles' centres to where they were
+/// found, by least squares; none if the tiles kept cannot pin one down.
+fn fit_homography(found: &[(f32, f32, f32, f32)], keep: &[bool]) -> Option<Warp> {
+    let kept: Vec<_> = found.iter().zip(keep).filter(|(_, k)| **k).map(|(f, _)| *f).collect();
+    if kept.len() < MIN_TILES {
+        return None;
+    }
+    // In coordinates centred on the tiles and about a unit across, for a
+    // well-conditioned system; the same normalisation both sides.
+    let n = kept.len() as f64;
+    let mx = kept.iter().map(|f| f.0 as f64).sum::<f64>() / n;
+    let my = kept.iter().map(|f| f.1 as f64).sum::<f64>() / n;
+    let k = kept.iter().map(|f| ((f.0 as f64 - mx).abs()).max((f.1 as f64 - my).abs()))
+        .fold(1.0f64, f64::max);
+    let mut ata = [[0f64; 8]; 8];
+    let mut atb = [0f64; 8];
+    for (cx, cy, tx, ty) in &kept {
+        let (x, y) = ((*cx as f64 - mx) / k, (*cy as f64 - my) / k);
+        let (u, v) = ((*tx as f64 - mx) / k, (*ty as f64 - my) / k);
+        for (row, rhs) in [([x, y, 1.0, 0.0, 0.0, 0.0, -x * u, -y * u], u),
+                           ([0.0, 0.0, 0.0, x, y, 1.0, -x * v, -y * v], v)] {
+            for i in 0..8 {
+                for j in 0..8 {
+                    ata[i][j] += row[i] * row[j];
+                }
+                atb[i] += row[i] * rhs;
+            }
+        }
+    }
+    let h = solve8(ata, atb)?;
+    // Back to pixels: H = T⁻¹ · Hn · T, with T(p) = (p − m) / k.
+    let t = [[1.0 / k, 0.0, -mx / k], [0.0, 1.0 / k, -my / k], [0.0, 0.0, 1.0]];
+    let ti = [[k, 0.0, mx], [0.0, k, my], [0.0, 0.0, 1.0]];
+    let hn = [[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], 1.0]];
+    let mul = |a: [[f64; 3]; 3], b: [[f64; 3]; 3]| {
+        let mut c = [[0f64; 3]; 3];
+        for i in 0..3 {
+            for j in 0..3 {
+                c[i][j] = (0..3).map(|l| a[i][l] * b[l][j]).sum();
+            }
+        }
+        c
+    };
+    let full = mul(mul(ti, hn), t);
+    let z = full[2][2];
+    if z.abs() < 1e-12 {
+        return None;
+    }
+    let m = [full[0][0], full[0][1], full[0][2], full[1][0], full[1][1], full[1][2],
+             full[2][0], full[2][1]].map(|v| (v / z) as f32);
+    Some(Warp { m })
+}
+
+/// Solve an 8×8 linear system by elimination with partial pivoting.
+fn solve8(mut a: [[f64; 8]; 8], mut b: [f64; 8]) -> Option<[f64; 8]> {
+    for col in 0..8 {
+        let pivot = (col..8).max_by(|i, j| a[*i][col].abs().partial_cmp(&a[*j][col].abs()).unwrap())?;
+        if a[pivot][col].abs() < 1e-12 {
+            return None;
+        }
+        a.swap(col, pivot);
+        b.swap(col, pivot);
+        for row in col + 1..8 {
+            let f = a[row][col] / a[col][col];
+            for j in col..8 {
+                a[row][j] -= f * a[col][j];
+            }
+            b[row] -= f * b[col];
+        }
+    }
+    let mut x = [0f64; 8];
+    for row in (0..8).rev() {
+        let s: f64 = (row + 1..8).map(|j| a[row][j] * x[j]).sum();
+        x[row] = (b[row] - s) / a[row][row];
+    }
+    Some(x)
+}
+
 /// How many of the pixels worth comparing disagree, and how many were worth
 /// comparing.
 fn mismatch(a: &[bool], a_use: &[bool], b: &[bool], b_use: &[bool], w: usize, h: usize,
@@ -992,6 +1395,102 @@ mod tests {
         let turned = median_bitmaps(&paint(3.0, (3, -2), 1.5));
         assert_eq!(align(&anchor, &turned), Some((3, -2)),
                    "a turn this size should leave the translation standing");
+    }
+
+    /// A scene with texture at every scale, seen two stops apart through a
+    /// camera that drifted by `shift` and turned by `degrees` about the
+    /// middle, clipping as a sensor does: the frame shows at p what the
+    /// reference shows at the point the frame's warp reads p from.
+    fn handheld(stops: f32, shift: (f32, f32), degrees: f32) -> Image {
+        let (w, h) = (768usize, 512usize);
+        let scene = |x: f32, y: f32| {
+            let mut r = 0.01 * 2f32.powf(6.0 * x / w as f32);
+            r *= 1.0 + 0.7 * (x * 0.05).sin() * (y * 0.07).cos();
+            r *= 1.0 + 0.4 * (x * 0.31 + y * 0.17).sin();
+            for (bx, by, rad) in [(150.0f32, 120.0f32, 40.0f32), (500.0, 300.0, 70.0),
+                                  (650.0, 100.0, 30.0), (300.0, 400.0, 55.0)] {
+                if (x - bx).hypot(y - by) < rad {
+                    r *= 4.0;
+                }
+            }
+            r
+        };
+        let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+        let (sin, cos) = degrees.to_radians().sin_cos();
+        let mut img = Image::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                // Undo the shift, then the turn.
+                let (ux, uy) = (x as f32 - shift.0 - cx, y as f32 - shift.1 - cy);
+                let (sx, sy) = (cos * ux + sin * uy + cx, -sin * ux + cos * uy + cy);
+                let seen = (scene(sx, sy) * stops.exp2()).min(1.0);
+                img.d[(y * w + x) * 3..][..3].copy_from_slice(&[seen; 3]);
+            }
+        }
+        img
+    }
+
+    fn line_up(reference: &Image, other: &Image, stops: f32) -> Option<Warp> {
+        let scale = (-stops).exp2();
+        let (lo, hi) = shared_range(1.0, scale);
+        align_light(&light_pyramid(reference, 1.0, lo, hi), &light_pyramid(other, scale, lo, hi))
+    }
+
+    /// Where a warp puts each corner of the frame, against where it should.
+    fn worst_corner(warp: &Warp, truth: impl Fn(f32, f32) -> (f32, f32)) -> f32 {
+        [(40.0, 40.0), (728.0, 40.0), (40.0, 472.0), (728.0, 472.0), (384.0, 256.0)].iter()
+            .map(|(x, y)| {
+                let (u, v) = warp.map(*x, *y);
+                let (tu, tv) = truth(*x, *y);
+                (u - tu).hypot(v - tv)
+            })
+            .fold(0.0, f32::max)
+    }
+
+    /// A handheld bracket drifts by far more than a few pixels between frames.
+    #[test]
+    fn a_frame_far_out_of_place_is_found() {
+        let reference = handheld(0.0, (0.0, 0.0), 0.0);
+        let other = handheld(2.0, (110.0, -70.0), 0.0);
+        let warp = line_up(&reference, &other, 2.0).expect("the same scene");
+        let miss = worst_corner(&warp, |x, y| (x + 110.0, y - 70.0));
+        assert!(miss < 2.5, "should read the frame where it moved to, missed by {miss} px");
+    }
+
+    /// And turns as it drifts, which a single shift cannot put back at the
+    /// corners.
+    #[test]
+    fn a_turned_frame_is_put_back_corner_to_corner() {
+        let reference = handheld(0.0, (0.0, 0.0), 0.0);
+        let other = handheld(-2.0, (-40.0, 25.0), 1.5);
+        let warp = line_up(&reference, &other, -2.0).expect("the same scene");
+        let (cx, cy) = (384.0, 256.0);
+        let (sin, cos) = 1.5f32.to_radians().sin_cos();
+        // The frame shows at p what the reference shows at turn⁻¹(p − shift),
+        // so the reference's x is read from the frame at turn(x) + shift.
+        let truth = |x: f32, y: f32| {
+            let (ux, uy) = (x - cx, y - cy);
+            (cos * ux - sin * uy + cx - 40.0, sin * ux + cos * uy + cy + 25.0)
+        };
+        let miss = worst_corner(&warp, truth);
+        let shift_only = worst_corner(&Warp::shift(warp.centre_shift(768, 512)), truth);
+        assert!(miss < 2.5, "should follow the turn to the corners, missed by {miss} px");
+        assert!(shift_only > 5.0, "the test needs a turn a shift cannot absorb: {shift_only}");
+    }
+
+    /// Lining up still has to be able to say "these are not the same picture".
+    #[test]
+    fn lining_up_refuses_two_different_scenes() {
+        let reference = handheld(0.0, (0.0, 0.0), 0.0);
+        let mut other = Image::new(reference.w, reference.h);
+        let mut state = 0x243F6A88u32;
+        for v in other.d.iter_mut() {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            *v = 0.3 * state as f32 / u32::MAX as f32;
+        }
+        assert_eq!(line_up(&reference, &other, 0.0), None);
     }
 
     /// Two frames is the minimum, and frames of different sizes are not a

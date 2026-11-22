@@ -26,7 +26,7 @@ fn exposure(img: &mut Image) -> f32 {
 fn tone_map(img: &mut Image) {
     let (thumb, long) = (kit::thumbnail(img, 1024), img.w.max(img.h));
     grade::apply_local_tone_map(img, &thumb, &Settings::default(), &Preset::default(), long,
-                                &mut Decisions::default(), false, &mut Report::new());
+                                &mut Decisions::default(), false, None, &mut Report::new());
 }
 
 fn perceptual(img: &Image) -> Image {

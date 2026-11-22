@@ -317,7 +317,7 @@ const NO_CORRESPONDENCE: f32 = 0.22;
 // A frame's reading is worth having when it is clear of the noise at the bottom
 // and clear of the ceiling at the top.
 const NOISE_FLOOR: f32 = 0.0015;
-const TRUSTED_LOW: f32 = 0.02;
+pub(crate) const TRUSTED_LOW: f32 = 0.02;
 const TRUSTED_HIGH: f32 = 0.80;
 const CEILING: f32 = 0.97;
 
@@ -1564,6 +1564,47 @@ mod tests {
         assert_eq!(meta.exposure_comp, 0.0, "the middle of the bracket");
         assert_eq!((meta.bracket_stops, meta.kept_above_stops), (4.0, 2.0));
         assert_eq!(meta.shutter_s, frames[1].meta.shutter_s, "otherwise the reference's");
+    }
+
+    /// What a frame of the bracket held, a merged bracket's development keeps:
+    /// nothing the darkest frame recorded under its ceiling comes out clipped,
+    /// and nothing the brightest recorded clear of its noise comes out black,
+    /// in the preview and in a piece of the frame looked at at 100 %.
+    #[test]
+    fn a_merged_bracket_keeps_what_its_frames_held() {
+        let frames = bracket((0, 0));
+        let (darkest, brightest) = (&frames[0].linear, &frames[2].linear);
+        let (image, notes) = merge(&frames, Options { align: false, deghost: Some(0.0) })
+            .expect("merge");
+        let mut dev = crate::develop::Development::from_frame(
+            "merged", image, merged_meta(&frames, &notes), Vec::new(), None);
+        let settings = crate::grade::Settings::default();
+        let code = |v: f32| kit::srgb_encode_scalar(v) * 255.0;
+        let check = |out: &Image, x0: usize, y0: usize| {
+            let (mut held, mut seen) = (0, 0);
+            for y in 0..out.h {
+                for x in 0..out.w {
+                    let px = out.px()[y * out.w + x];
+                    let i = (y + y0) * darkest.w + x + x0;
+                    if darkest.px()[i][0] < 0.9 {
+                        held += 1;
+                        assert!(px.iter().all(|v| code(*v) < 254.5),
+                                "held at {x},{y} came out clipped: {px:?}");
+                    }
+                    if brightest.px()[i][0] > 0.03 {
+                        seen += 1;
+                        assert!(code(kit::luminance_px(&px)) >= 8.0,
+                                "seen at {x},{y} came out black: {px:?}");
+                    }
+                }
+            }
+            assert!(held > 100 && seen > 100, "the scene should test both: {held} {seen}");
+        };
+        let (preview, _) = dev.render(&settings, Some(128), true, None);
+        assert_eq!((preview.w, preview.h), (darkest.w, darkest.h));
+        check(&preview, 0, 0);
+        let piece = dev.render_region(&settings, (0.6, 0.5), (48, 40), None);
+        check(&piece.image, piece.x, piece.y);
     }
 
     /// One frame, described the way the grouping reads it: when it was taken,

@@ -222,6 +222,11 @@ pub fn tune(preset: &Preset, p: &CaptureProfile) -> Preset {
     // its light, and the highlights a merge brings back, a whole blue sky,
     // are coloured things rather than the light.
     out.wb_ceiling = (-p.kept_above_stops).exp2();
+    // The brightest frame's noise floor, in the merged frame's values, which
+    // are the darkest frame's: that frame was given `bracket_stops` more light.
+    if p.bracket_stops > 0.0 {
+        out.bracket_floor = crate::merge::TRUSTED_LOW * (-p.bracket_stops).exp2();
+    }
     out
 }
 

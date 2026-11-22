@@ -45,6 +45,10 @@ pub struct Preset {
     /// Where the frame's highlights stop counting for the automatic white
     /// balance: 1, except for a merged bracket (see `profile::tune`).
     pub wb_ceiling: f32,
+    /// For a merged bracket, the faintest light its brightest frame saw clear
+    /// of its noise, in the merged frame's values; zero for any other frame.
+    /// With `keep_highlights`, what `Vouched` holds the development to.
+    pub bracket_floor: f32,
 }
 
 impl Default for Preset {
@@ -66,6 +70,7 @@ impl Default for Preset {
             give_back: 0.5,
             keep_highlights: false,
             wb_ceiling: 1.0,
+            bracket_floor: 0.0,
         }
     }
 }
@@ -612,7 +617,7 @@ fn apply_dehaze(img: &mut Image, thumb: &mut Image, s: &Settings, long_edge: usi
 /// Compress the scene's range on the low-frequency layer only.
 pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Preset,
                             long_edge: usize, d: &mut Decisions, frozen: bool,
-                            report: &mut Report) -> f32 {
+                            held: Option<&[u8]>, report: &mut Report) -> f32 {
     let (mut factor, info) = if frozen {
         (d.tone.0, json!({}))
     } else {
@@ -698,9 +703,10 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
     };
     report.add("tone mapping", info);
     if factor >= 0.995 && (detail_boost - 1.0).abs() < 1e-3 && given <= 0.0
-        && shoulder.is_none() {
+        && shoulder.is_none() && held.is_none() {
         return factor;
     }
+    let ceiling = HeldCeiling::new();
 
     for (i, px) in img.px_mut().iter_mut().enumerate() {
         let detail = log_y.d[i] - base.d[i];
@@ -710,7 +716,14 @@ pub fn apply_local_tone_map(img: &mut Image, thumb: &Image, s: &Settings, p: &Pr
             0.0
         };
         let level = anchor + (base.d[i] - anchor) * factor + given_here;
-        let new_log = shoulder.map_or(level, |s| s.apply(level)) + detail * detail_boost;
+        let mut new_log = shoulder.map_or(level, |s| s.apply(level)) + detail * detail_boost;
+        // What the dark frames held is rolled off under white here, detail
+        // and all, rather than flattened there by the curve after: a street
+        // light rides on the detail layer, which the shoulder never sees.
+        if let Some(w) = held.map(|h| h[i] as f32 / 255.0).filter(|w| *w > 0.0) {
+            let top = (px[0].max(px[1]).max(px[2]).max(EPS)).log2() + new_log - log_y.d[i];
+            new_log -= w * (top - ceiling.apply(top));
+        }
         let scale = kit::fast_exp2(new_log - log_y.d[i]);
         for v in px.iter_mut() {
             *v *= scale;
@@ -823,6 +836,160 @@ impl Shoulder {
     fn apply(&self, level: f32) -> f32 {
         let x = level - self.knee;
         if x <= 0.0 { level } else { self.knee + x / (1.0 + self.bend * x) }
+    }
+}
+
+/// Where a merged bracket's frames vouch for a pixel, from its merged value:
+/// how far it is below the darkest frame's ceiling (`held`), and above the
+/// brightest frame's noise (`seen`), each 0..255. A held pixel must not come
+/// out clipped, nor a seen one black: what one of the frames showed, the
+/// merge shows too.
+#[derive(Clone)]
+pub struct Vouched {
+    pub w: usize,
+    pub held: Vec<u8>,
+    pub seen: Vec<u8>,
+}
+
+/// Below this share of the darkest frame's ceiling a merged value was held.
+const HELD_BELOW: f32 = 0.95;
+
+impl Vouched {
+    /// The weights as an image, `[held, seen, 0]`, from a merged frame's own
+    /// values (in the darkest frame's light, so 1 is its ceiling) and the
+    /// brightest frame's noise floor in them (`Preset::bracket_floor`). An
+    /// image, so that it can go through the same lens geometry and framing
+    /// as the frame: measured after them, a corrected vignette would have
+    /// moved the ceiling.
+    pub fn marks(img: &Image, floor: f32) -> Image {
+        let mut out = Image::new(img.w, img.h);
+        for (m, px) in out.px_mut().iter_mut().zip(img.px()) {
+            let top = px[0].max(px[1]).max(px[2]);
+            // Fully seen from half the floor: the merge averages the darker
+            // frames' readings in, which can leave it a little under what the
+            // brightest frame alone saw.
+            *m = [1.0 - kit::smoothstep(HELD_BELOW, 1.0, top),
+                  kit::smoothstep(0.25 * floor, 0.5 * floor, top), 0.0];
+        }
+        out
+    }
+
+    /// The weights kept, a byte each, once the marks have been through
+    /// whatever moves the frame.
+    pub fn from_marks(marks: &Image) -> Vouched {
+        let weight = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+        Vouched {
+            w: marks.w,
+            held: marks.px().iter().map(|m| weight(m[0])).collect(),
+            seen: marks.px().iter().map(|m| weight(m[1])).collect(),
+        }
+    }
+
+    /// The weights of a piece of the frame, as `Image::crop` cuts it.
+    pub fn crop(&self, x: usize, y: usize, w: usize, h: usize) -> Vouched {
+        let rows = |v: &[u8]| (y..y + h).flat_map(|r| v[r * self.w + x..][..w].iter().copied())
+            .collect();
+        Vouched { w, held: rows(&self.held), seen: rows(&self.seen) }
+    }
+
+    /// For a merged frame (`Preset::keep_highlights`) straight from the merge,
+    /// with no lens correction or framing between; none for any other frame.
+    pub fn measure(img: &Image, p: &Preset) -> Option<Vouched> {
+        (p.keep_highlights && p.bracket_floor > 0.0)
+            .then(|| Vouched::from_marks(&Vouched::marks(img, p.bracket_floor)))
+    }
+
+    /// Hold a finished development, display-linear, to what the frames
+    /// vouched for: a held pixel's channels under white, a seen pixel's
+    /// luminance over black. Both are soft, so that what was already clear of
+    /// them barely moves and nothing that was in order turns over.
+    pub fn enforce(&self, img: &mut Image) -> (usize, usize) {
+        let (mut capped, mut lifted) = (0, 0);
+        for (i, px) in img.px_mut().iter_mut().enumerate() {
+            let (h, s) = (self.held[i] as f32 / 255.0, self.seen[i] as f32 / 255.0);
+            let y = kit::luminance_px(px);
+            if s > 0.0 && y < 3.0 * SEEN_FLOOR_Y {
+                // (Y⁴ + floor⁴)^¼: the floor at black, the pixel itself well
+                // above it. The light it lacks is added to every channel
+                // alike, rather than the pixel scaled: that close to black its
+                // colour is mostly the sensor's noise, which scaling would
+                // bring up with it, magenta and all.
+                let m = s * SEEN_FLOOR_Y;
+                let target = (y.max(0.0).powi(4) + m.powi(4)).powf(0.25);
+                let add = target - y.max(0.0);
+                *px = px.map(|v| v.max(0.0) + add);
+                lifted += 1;
+            }
+            let top = px[0].max(px[1]).max(px[2]);
+            if h > 0.0 && top > HELD_TOP_RGB - 0.06 {
+                let (mut l, mut a, mut b) = kit::rgb_to_oklab_px(px[0], px[1], px[2]);
+                // The same on the distance from white, in lightness.
+                let m = h * (1.0 - HELD_TOP_RGB.cbrt());
+                let x = (1.0 - l).max(0.0);
+                l = 1.0 - (x.powi(4) + m.powi(4)).powf(0.25);
+                // And the colour drawn in until every channel fits under the
+                // ceiling, keeping its hue and lightness.
+                let limit = 1.0 - h * (1.0 - HELD_TOP_RGB);
+                let fits = |k: f32| {
+                    let (r, g, bl) = kit::oklab_to_rgb_px(l, a * k, b * k);
+                    r.max(g).max(bl) <= limit
+                };
+                if !fits(1.0) {
+                    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+                    for _ in 0..12 {
+                        let mid = 0.5 * (lo + hi);
+                        if fits(mid) { lo = mid } else { hi = mid }
+                    }
+                    a *= lo;
+                    b *= lo;
+                }
+                let (r, g, bl) = kit::oklab_to_rgb_px(l, a, b);
+                *px = [r.clamp(0.0, limit), g.clamp(0.0, limit), bl.clamp(0.0, limit)];
+                capped += 1;
+            }
+        }
+        (capped, lifted)
+    }
+}
+
+/// The brightest a held pixel's channels may come out, display-linear: code
+/// 253 of 255.
+const HELD_TOP_RGB: f32 = 0.98;
+/// The darkest a seen pixel's luminance may come out, display-linear: code 10
+/// of 255, clear of the 8 that counts as crushed.
+const SEEN_FLOOR_Y: f32 = 0.003;
+
+/// Where `filmic` brings a held highlight's brightest channel at most, and how
+/// far below that the roll-off toward it starts, in stops.
+const HELD_TOP_DISPLAY: f32 = 0.9;
+const HELD_KNEE_STOPS: f32 = 1.5;
+
+/// A roll-off, in log2 of the brightest channel, toward the scene level
+/// `filmic` shows at `HELD_TOP_DISPLAY`: untouched below the knee, smooth
+/// through it, and never reaching the top.
+struct HeldCeiling {
+    knee: f32,
+    room: f32,
+}
+
+impl HeldCeiling {
+    fn new() -> HeldCeiling {
+        // The scene level the curve takes to the top: the positive root of
+        // (t C - A) x² + (t D - B) x + t E = 0.
+        let [a, b, c, d, e] = FILMIC;
+        let t = HELD_TOP_DISPLAY;
+        let (qa, qb, qc) = (t * c - a, t * d - b, t * e);
+        let x = (-qb - (qb * qb - 4.0 * qa * qc).sqrt()) / (2.0 * qa);
+        let top = x.log2();
+        HeldCeiling { knee: top - HELD_KNEE_STOPS, room: HELD_KNEE_STOPS }
+    }
+
+    fn apply(&self, level: f32) -> f32 {
+        if level <= self.knee {
+            level
+        } else {
+            self.knee + self.room * ((level - self.knee) / self.room).tanh()
+        }
     }
 }
 
@@ -963,9 +1130,17 @@ pub fn apply_perceptual(img: &Image, s: &Settings, p: &Preset, noise: f32, sharp
         for (v, px) in peak.d.iter_mut().zip(img.px()) {
             *v = px[0].max(px[1]).max(px[2]).max(0.0).cbrt();
         }
-        let (black, white, info) =
+        let (black, mut white, mut info) =
             analyze::auto_levels(&measured(&lightness, stats_rect),
                                  &measured(&peak, stats_rect), p.levels_strength, 0.15);
+        // A merged bracket was shot so that nothing at the top is lost: a
+        // white point below one would push its brightest percentile, which
+        // the dark frames held, to white. Measured on the preview, it would
+        // push still more of the export there, whose peaks are sharper.
+        if p.keep_highlights && white < 1.0 {
+            white = 1.0;
+            info = with(info, json!({"white": 1.0, "white_held": true}));
+        }
         let levels_applied = info.get("applied").and_then(|v| v.as_bool()).unwrap_or(false);
         if s.on("levels") && levels_applied {
             report.add("levels", info);
@@ -1262,6 +1437,10 @@ pub struct ProcessArgs<'a> {
     pub decided: Option<Decisions>,
     /// The sky and subject masks the filters may follow, over the framed picture.
     pub masks: &'a crate::masks::Masks,
+    /// For a merged bracket, `Vouched::marks` taken before the lens and the
+    /// framing and put through them with the frame; measured on the frame
+    /// itself when none are given.
+    pub vouched: Option<Vouched>,
     pub progress: Option<&'a mut dyn FnMut(f32, &str)>,
 }
 
@@ -1288,6 +1467,10 @@ pub fn process(mut img: Image, settings: &Settings, args: ProcessArgs, report: &
     };
 
     let measure = |img: &Image, rect: Option<Rect>| kit::thumbnail(&stats_view_img(img, rect), 1024);
+    let vouched = match args.vouched {
+        Some(v) => Some(v),
+        None => Vouched::measure(&img, &p),
+    };
 
     step(&mut progress, &mut mark);
     // One thumbnail for every scene-linear measurement, carried through the
@@ -1309,7 +1492,8 @@ pub fn process(mut img: Image, settings: &Settings, args: ProcessArgs, report: &
     apply_dehaze(&mut img, &mut thumb, settings, long_edge, &mut d, frozen, report);
 
     step(&mut progress, &mut mark);
-    apply_local_tone_map(&mut img, &thumb, settings, &p, long_edge, &mut d, frozen, report);
+    apply_local_tone_map(&mut img, &thumb, settings, &p, long_edge, &mut d, frozen,
+                         vouched.as_ref().map(|v| v.held.as_slice()), report);
     // Local filters on the light as it will be shown, before the shoulder
     // rolls it off; see `local` for why not earlier.
     crate::local::apply_filters(&mut img, &settings.filters, frame, args.masks);
@@ -1317,8 +1501,12 @@ pub fn process(mut img: Image, settings: &Settings, args: ProcessArgs, report: &
     step(&mut progress, &mut mark);
     filmic(&mut img);
     step(&mut progress, &mut mark);
-    let out = apply_perceptual(&img, settings, &p, noise, args.sharpen_sigma, args.focus_sigma, args.render_scale, long_edge, &mut d, frozen,
+    let mut out = apply_perceptual(&img, settings, &p, noise, args.sharpen_sigma, args.focus_sigma, args.render_scale, long_edge, &mut d, frozen,
                                report, args.stats_rect);
+    if let Some(v) = &vouched {
+        let (capped, lifted) = v.enforce(&mut out);
+        report.add("bracket bounds", json!({"capped": capped, "lifted": lifted}));
+    }
     step(&mut progress, &mut mark);
     (out, d)
 }
@@ -1329,6 +1517,45 @@ mod tests {
 
     /// A merged bracket's shoulder leaves the shadows and midtones where the
     /// exposure put them and brings the highlights down to its top, smoothly.
+    /// The bounds a merged bracket's frames set: a held pixel is brought
+    /// under white, a seen one over black, and a pixel clear of both, or one
+    /// no frame vouched for, is left exactly as it was.
+    #[test]
+    fn what_the_frames_vouched_for_is_kept_and_nothing_else_moves() {
+        let mut img = Image::new(4, 1);
+        img.px_mut().copy_from_slice(&[[1.0, 0.9, 0.2], [0.0002, 0.0001, 0.0003],
+                                       [0.3, 0.2, 0.1], [1.0, 1.0, 1.0]]);
+        let before = img.clone();
+        let v = Vouched { w: 4, held: vec![255, 0, 255, 0], seen: vec![0, 255, 255, 0] };
+        let (capped, lifted) = v.enforce(&mut img);
+        assert_eq!((capped, lifted), (1, 1));
+        let [held, seen, clear, unvouched] = [0, 1, 2, 3].map(|i| img.px()[i]);
+        assert!(held.iter().all(|c| *c <= HELD_TOP_RGB + 1e-4), "{held:?}");
+        assert!(held[0] > held[1] && held[1] > held[2], "the colour kept its order: {held:?}");
+        assert!(kit::luminance_px(&seen) >= SEEN_FLOOR_Y * 0.999, "{seen:?}");
+        let spread = |p: [f32; 3]| p[0].max(p[1]).max(p[2]) - p[0].min(p[1]).min(p[2]);
+        assert!((spread(seen) - spread(before.px()[1])).abs() < 1e-6,
+                "the noise was lifted, not amplified: {seen:?}");
+        assert_eq!(clear, before.px()[2]);
+        assert_eq!(unvouched, before.px()[3], "blown in every frame, white it may stay");
+        let piece = v.crop(1, 0, 2, 1);
+        assert_eq!((piece.held, piece.seen), (vec![0, 255], vec![255, 255]));
+    }
+
+    /// The roll-off toward a held highlight's ceiling leaves what is below its
+    /// knee alone, bends without a kink, and never arrives.
+    #[test]
+    fn the_held_ceiling_bends_without_a_kink_and_never_arrives() {
+        let c = HeldCeiling::new();
+        assert_eq!(c.apply(c.knee - 1.0), c.knee - 1.0);
+        let slope = (c.apply(c.knee + 1e-3) - c.knee) / 1e-3;
+        assert!((slope - 1.0).abs() < 0.01, "a kink at the knee: {slope}");
+        let top = c.knee + c.room;
+        assert!(c.apply(top + 2.0) < top - 0.01, "short of the top a little over it");
+        assert!(c.apply(top + 20.0) <= top, "and never past it");
+        assert!((curve(top.exp2()) - HELD_TOP_DISPLAY).abs() < 1e-3);
+    }
+
     #[test]
     fn the_shoulder_fits_the_highlights_and_leaves_the_rest() {
         let s = Shoulder::fitting(2.0).expect("two stops over white needs one");
@@ -1592,7 +1819,7 @@ mod tests {
             let mut img = src.clone();
             let mut report = Report::new();
             apply_local_tone_map(&mut img, &src.clone(), &s, &Preset::default(), src.w.max(src.h),
-                                 &mut Decisions::default(), false, &mut report);
+                                 &mut Decisions::default(), false, None, &mut report);
             fine_structure(&img)
         };
         let (soft, plain, crisp) = (run(-1.0), run(0.0), run(1.0));

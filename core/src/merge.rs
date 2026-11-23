@@ -941,7 +941,7 @@ fn search(a: &kit::Plane, b: &kit::Plane, around: (i32, i32), r: (i32, i32),
         }
     }
     let (at, d) = best?;
-    all.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    all.sort_by(f32::total_cmp);
     Some((at, d, all[all.len() / 2]))
 }
 
@@ -1050,8 +1050,11 @@ fn align_light(anchor: &LightPyramid, other: &LightPyramid) -> Option<Warp> {
                 let (u, v) = warp.map(*cx, *cy);
                 (k, (u - sx).hypot(v - sy))
             })
-            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            .max_by(|a, b| a.1.total_cmp(&b.1));
         match worst {
+            // Tiles on one line, or nearly, pin no turn down: the fit runs off
+            // to infinity along the other direction.
+            Some((_, miss)) if !miss.is_finite() => break,
             Some((k, miss)) if miss > TILE_OUTLIER_PX => keep[k] = false,
             _ => {
                 turned = believable(&warp, fw, fh).then_some(warp);
@@ -1064,7 +1067,7 @@ fn align_light(anchor: &LightPyramid, other: &LightPyramid) -> Option<Warp> {
     let kept: Vec<_> = found.iter().zip(&keep).filter(|(_, k)| **k || turned.is_none())
         .map(|(f, _)| *f).collect();
     let middle = |mut v: Vec<f32>| {
-        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        v.sort_by(f32::total_cmp);
         v[v.len() / 2]
     };
     let dx = middle(kept.iter().map(|f| f.2 - f.0).collect());
@@ -1148,13 +1151,16 @@ fn fit_homography(found: &[(f32, f32, f32, f32)], keep: &[bool]) -> Option<Warp>
     }
     let m = [full[0][0], full[0][1], full[0][2], full[1][0], full[1][1], full[1][2],
              full[2][0], full[2][1]].map(|v| (v / z) as f32);
-    Some(Warp { m })
+    m.iter().all(|v| v.is_finite()).then_some(Warp { m })
 }
 
 /// Solve an 8×8 linear system by elimination with partial pivoting.
 fn solve8(mut a: [[f64; 8]; 8], mut b: [f64; 8]) -> Option<[f64; 8]> {
     for col in 0..8 {
-        let pivot = (col..8).max_by(|i, j| a[*i][col].abs().partial_cmp(&a[*j][col].abs()).unwrap())?;
+        let pivot = (col..8).max_by(|i, j| a[*i][col].abs().total_cmp(&a[*j][col].abs()))?;
+        if !a[pivot][col].is_finite() {
+            return None;
+        }
         if a[pivot][col].abs() < 1e-12 {
             return None;
         }
@@ -1459,6 +1465,19 @@ mod tests {
 
     /// And turns as it drifts, which a single shift cannot put back at the
     /// corners.
+    /// Tiles found along one line pin no turn down; the fit says so rather
+    /// than hand back a map gone to infinity, which once brought the whole
+    /// merge down.
+    #[test]
+    fn tiles_on_one_line_fit_no_turn() {
+        let found: Vec<_> = (0..8).map(|i| {
+            let x = 100.0 + 200.0 * i as f32;
+            (x, 500.0, x + 4.0 + 0.3 * (i % 3) as f32, 490.0 + 0.2 * (i % 2) as f32)
+        }).collect();
+        let fit = fit_homography(&found, &vec![true; found.len()]);
+        assert!(fit.is_none_or(|w| w.m.iter().all(|v| v.is_finite())), "{:?}", fit.map(|w| w.m));
+    }
+
     #[test]
     fn a_turned_frame_is_put_back_corner_to_corner() {
         let reference = handheld(0.0, (0.0, 0.0), 0.0);

@@ -1515,8 +1515,6 @@ pub fn process(mut img: Image, settings: &Settings, args: ProcessArgs, report: &
 mod tests {
     use super::*;
 
-    /// A merged bracket's shoulder leaves the shadows and midtones where the
-    /// exposure put them and brings the highlights down to its top, smoothly.
     /// The bounds a merged bracket's frames set: a held pixel is brought
     /// under white, a seen one over black, and a pixel clear of both, or one
     /// no frame vouched for, is left exactly as it was.
@@ -1556,6 +1554,8 @@ mod tests {
         assert!((curve(top.exp2()) - HELD_TOP_DISPLAY).abs() < 1e-3);
     }
 
+    /// A merged bracket's shoulder leaves the shadows and midtones where the
+    /// exposure put them and brings the highlights down to its top, smoothly.
     #[test]
     fn the_shoulder_fits_the_highlights_and_leaves_the_rest() {
         let s = Shoulder::fitting(2.0).expect("two stops over white needs one");

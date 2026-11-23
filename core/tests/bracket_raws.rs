@@ -36,10 +36,21 @@ fn settings() -> Settings {
     s
 }
 
+/// A folder as given, or, when relative, from the repository's root rather
+/// than from `core/`, where cargo runs the test.
+fn within_repo(dir: String) -> std::path::PathBuf {
+    let path = std::path::PathBuf::from(&dir);
+    if path.is_absolute() {
+        path
+    } else {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(path)
+    }
+}
+
 fn dump(img: &Image, name: &str) {
-    if let Ok(dir) = std::env::var("LUMIRAW_DUMP") {
+    if let Ok(dir) = std::env::var("LUMIRAW_DUMP").map(within_repo) {
         let bytes = lumiraw_core::output::save(img, "png8", 90, &[], None).expect("png");
-        std::fs::write(format!("{dir}/{name}.png"), bytes).expect("written");
+        std::fs::write(dir.join(format!("{name}.png")), bytes).expect("written");
     }
 }
 
@@ -51,7 +62,7 @@ fn report(name: &str, img: &Image) {
 #[test]
 #[ignore = "needs LUMIRAW_BRACKET pointing at a folder holding one bracket"]
 fn a_merged_bracket_neither_blows_nor_crushes() {
-    let dir = std::env::var("LUMIRAW_BRACKET").expect("set LUMIRAW_BRACKET");
+    let dir = within_repo(std::env::var("LUMIRAW_BRACKET").expect("set LUMIRAW_BRACKET"));
     let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap()
         .filter_map(|e| e.ok().map(|e| e.path())).collect();
     files.sort();

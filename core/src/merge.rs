@@ -1003,10 +1003,10 @@ fn align_light(anchor: &LightPyramid, other: &LightPyramid) -> Option<Warp> {
         shift = search(a, &other.levels[level], shift, (1, 1), whole(a))?.0;
         if level == start {
             at_start = shift;
-            if correlation(a, &other.levels[level], shift) < MIN_CORRELATION {
-                return None;
-            }
         }
+    }
+    if correlation(&anchor.levels[start], &other.levels[start], at_start) < MIN_CORRELATION {
+        return None;
     }
     // The pyramid starts at half size.
     let fallback = Warp::shift((shift.0 * 2, shift.1 * 2));
@@ -1114,11 +1114,27 @@ fn believable(warp: &Warp, w: f32, h: f32) -> bool {
     })
 }
 
+/// Whether tiles pin a turn down in both directions: two rows of the grid
+/// with two tiles each, and two columns. Tiles along one row, and a stray or
+/// two off it, leave the tilt across that row to the stray and its noise,
+/// and a fit to them matches the tiles perfectly and the rest of the frame
+/// not at all.
+fn spread(tiles: &[(f32, f32, f32, f32)]) -> bool {
+    let lines = |at: fn(&(f32, f32, f32, f32)) -> f32| {
+        let mut count = std::collections::HashMap::new();
+        for t in tiles {
+            *count.entry(at(t).to_bits()).or_insert(0) += 1;
+        }
+        count.values().filter(|n| **n >= 2).count() >= 2
+    };
+    lines(|t| t.1) && lines(|t| t.0)
+}
+
 /// The homography that best carries the tiles' centres to where they were
 /// found, by least squares; none if the tiles kept cannot pin one down.
 fn fit_homography(found: &[(f32, f32, f32, f32)], keep: &[bool]) -> Option<Warp> {
     let kept: Vec<_> = found.iter().zip(keep).filter(|(_, k)| **k).map(|(f, _)| *f).collect();
-    if kept.len() < MIN_TILES {
+    if kept.len() < MIN_TILES || !spread(&kept) {
         return None;
     }
     // In coordinates centred on the tiles and about a unit across, for a
@@ -1486,8 +1502,7 @@ mod tests {
                      (3182.7, 2270.0, 3186.7, 2262.0), (4092.0, 2270.0, 4098.0, 2262.0),
                      (5001.3, 2270.0, 5009.3, 2264.0), (454.7, 3178.0, 460.7, 3166.0)];
         let keep = [false, true, false, false, false, true, true, true, true, true, true, false];
-        let fit = fit_homography(&found, &keep).expect("seven tiles");
-        assert!(!fit.in_front(5456.0, 3632.0), "{:?}", fit.m);
+        assert!(fit_homography(&found, &keep).is_none(), "one row and a stray");
         let (turned, _) = fit_turn(&found, 5456.0, 3632.0);
         assert!(turned.is_none(), "{:?}", turned.map(|w| w.m));
     }

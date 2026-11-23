@@ -820,6 +820,14 @@ impl Warp {
         Some((sx as usize, sy as usize))
     }
 
+    /// Whether the whole of a `w`×`h` frame stays on this side of the
+    /// horizon the map has, as anything a camera moved to does: its
+    /// denominator, which is linear, positive at all four corners.
+    pub fn in_front(&self, w: f32, h: f32) -> bool {
+        let q = |x: f32, y: f32| self.m[6] * x + self.m[7] * y + 1.0;
+        [(0.0, 0.0), (w, 0.0), (0.0, h), (w, h)].iter().all(|(x, y)| q(*x, *y) > 0.0)
+    }
+
     /// How far the frame is moved at the middle of a `w`×`h` frame.
     pub fn centre_shift(&self, w: usize, h: usize) -> (i32, i32) {
         let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
@@ -1039,29 +1047,7 @@ fn align_light(anchor: &LightPyramid, other: &LightPyramid) -> Option<Warp> {
     if found.is_empty() {
         return Some(fallback);
     }
-    // Fitted, and fitted again without the tile it fits worst, for as long as
-    // that tile is out of line: a tile on something that moved, or on a
-    // repeating pattern, is wrong in its own way.
-    let mut keep = vec![true; found.len()];
-    let mut turned = None;
-    while let Some(warp) = fit_homography(&found, &keep) {
-        let worst = found.iter().enumerate().filter(|(k, _)| keep[*k])
-            .map(|(k, (cx, cy, sx, sy))| {
-                let (u, v) = warp.map(*cx, *cy);
-                (k, (u - sx).hypot(v - sy))
-            })
-            .max_by(|a, b| a.1.total_cmp(&b.1));
-        match worst {
-            // Tiles on one line, or nearly, pin no turn down: the fit runs off
-            // to infinity along the other direction.
-            Some((_, miss)) if !miss.is_finite() => break,
-            Some((k, miss)) if miss > TILE_OUTLIER_PX => keep[k] = false,
-            _ => {
-                turned = believable(&warp, fw, fh).then_some(warp);
-                break;
-            }
-        }
-    }
+    let (turned, keep) = fit_turn(&found, fw, fh);
     // Where the tiles agree the frame moved, which is the middle of what they
     // say: the same tiles the turn was fitted to, when it was.
     let kept: Vec<_> = found.iter().zip(&keep).filter(|(_, k)| **k || turned.is_none())
@@ -1087,6 +1073,33 @@ fn align_light(anchor: &LightPyramid, other: &LightPyramid) -> Option<Warp> {
     };
     let (by_shift, by_turn) = (miss(&shifted), miss(&turned));
     Some(if by_shift > TURN_WORTH_PX && by_turn < TURN_WORTH_SHARE * by_shift { turned } else { shifted })
+}
+
+/// The turn and tilt the tiles (centre x, centre y, source x, source y) say a
+/// `w`×`h` frame made, if they say one, and which tiles it was fitted to.
+/// Fitted, and fitted again without the tile it fits worst, for as long as
+/// that tile is out of line: a tile on something that moved, or on a
+/// repeating pattern, is wrong in its own way.
+fn fit_turn(found: &[(f32, f32, f32, f32)], w: f32, h: f32) -> (Option<Warp>, Vec<bool>) {
+    let mut keep = vec![true; found.len()];
+    while let Some(warp) = fit_homography(found, &keep) {
+        // Tiles on one line, but for a stray, pin no turn down, and the fit
+        // that matches them best sends that line off to infinity.
+        if !warp.in_front(w, h) {
+            break;
+        }
+        let worst = found.iter().enumerate().filter(|(k, _)| keep[*k])
+            .map(|(k, (cx, cy, sx, sy))| {
+                let (u, v) = warp.map(*cx, *cy);
+                (k, (u - sx).hypot(v - sy))
+            })
+            .max_by(|a, b| a.1.total_cmp(&b.1));
+        match worst {
+            Some((k, miss)) if miss > TILE_OUTLIER_PX => keep[k] = false,
+            _ => return (believable(&warp, w, h).then_some(warp), keep),
+        }
+    }
+    (None, keep)
 }
 
 /// Whether a fitted map is something a hand holding a camera could have done:
@@ -1158,9 +1171,6 @@ fn fit_homography(found: &[(f32, f32, f32, f32)], keep: &[bool]) -> Option<Warp>
 fn solve8(mut a: [[f64; 8]; 8], mut b: [f64; 8]) -> Option<[f64; 8]> {
     for col in 0..8 {
         let pivot = (col..8).max_by(|i, j| a[*i][col].abs().total_cmp(&a[*j][col].abs()))?;
-        if !a[pivot][col].is_finite() {
-            return None;
-        }
         if a[pivot][col].abs() < 1e-12 {
             return None;
         }
@@ -1463,21 +1473,27 @@ mod tests {
         assert!(miss < 2.5, "should read the frame where it moved to, missed by {miss} px");
     }
 
-    /// And turns as it drifts, which a single shift cannot put back at the
-    /// corners.
-    /// Tiles found along one line pin no turn down; the fit says so rather
-    /// than hand back a map gone to infinity, which once brought the whole
-    /// merge down.
+    /// Six tiles along one row and one stray, as two frames of a real
+    /// bracket left them: the homography that fits them best sends that row
+    /// off to infinity, which once brought the whole merge down. No turn is
+    /// read from them, and the frame is lined up by its shift.
     #[test]
-    fn tiles_on_one_line_fit_no_turn() {
-        let found: Vec<_> = (0..8).map(|i| {
-            let x = 100.0 + 200.0 * i as f32;
-            (x, 500.0, x + 4.0 + 0.3 * (i % 3) as f32, 490.0 + 0.2 * (i % 2) as f32)
-        }).collect();
-        let fit = fit_homography(&found, &vec![true; found.len()]);
-        assert!(fit.is_none_or(|w| w.m.iter().all(|v| v.is_finite())), "{:?}", fit.map(|w| w.m));
+    fn tiles_along_one_row_say_no_turn() {
+        let found = [(454.7, 454.0, 344.7, 564.0), (1364.0, 454.0, 1270.0, 564.0),
+                     (454.7, 1362.0, 466.7, 1336.0), (1364.0, 1362.0, 1366.0, 1352.0),
+                     (2273.3, 1362.0, 2277.3, 1352.0), (454.7, 2270.0, 460.7, 2258.0),
+                     (1364.0, 2270.0, 1368.0, 2260.0), (2273.3, 2270.0, 2277.3, 2260.0),
+                     (3182.7, 2270.0, 3186.7, 2262.0), (4092.0, 2270.0, 4098.0, 2262.0),
+                     (5001.3, 2270.0, 5009.3, 2264.0), (454.7, 3178.0, 460.7, 3166.0)];
+        let keep = [false, true, false, false, false, true, true, true, true, true, true, false];
+        let fit = fit_homography(&found, &keep).expect("seven tiles");
+        assert!(!fit.in_front(5456.0, 3632.0), "{:?}", fit.m);
+        let (turned, _) = fit_turn(&found, 5456.0, 3632.0);
+        assert!(turned.is_none(), "{:?}", turned.map(|w| w.m));
     }
 
+    /// And turns as it drifts, which a single shift cannot put back at the
+    /// corners.
     #[test]
     fn a_turned_frame_is_put_back_corner_to_corner() {
         let reference = handheld(0.0, (0.0, 0.0), 0.0);

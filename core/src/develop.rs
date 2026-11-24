@@ -12,6 +12,11 @@ use crate::straighten;
 use serde_json::{json, Map, Value};
 use std::borrow::Cow;
 
+/// A corrected and framed frame, by what it was made for (`corrected_key`),
+/// with what was measured on the way and, for a merged bracket, what its
+/// frames vouched for (`grade::Vouched`).
+type Corrected = (String, Image, Option<Rect>, Map<String, Value>, Option<grade::Vouched>);
+
 pub struct Development {
     pub filename: String,
     pub linear: Image,
@@ -28,13 +33,13 @@ pub struct Development {
     pub lens_match: Option<LensMatch>,
     /// The camera and its mount's calibrated lenses, to choose a lens from.
     lenses: Option<Database>,
-    cache: Vec<(String, Image, Option<Rect>, Map<String, Value>)>,
+    cache: Vec<Corrected>,
     /// The last "before" rendered, with the settings, size and 3D table it
     /// was rendered from.
     baseline: Option<(Settings, Option<usize>, u64, Image)>,
     /// The whole frame at full size, corrected, framed and healed, while
     /// regions of it are being looked at.
-    full_frame: Option<(String, Vec<crate::local::Spot>, Image)>,
+    full_frame: Option<(String, Vec<crate::local::Spot>, Image, Option<grade::Vouched>)>,
     /// The last preview as it stood before `finish`, with what it was
     /// developed from, so that moving a wheel, a curve or the mixer develops only
     /// the end of the pipeline again; see `Graded`.
@@ -221,11 +226,11 @@ impl Development {
     /// Lens-corrected linear image at the requested size.
     fn corrected(&mut self, s: &Settings, long_edge: Option<usize>, crop: bool,
                  progress: &mut Option<&mut dyn FnMut(f32, &str)>)
-                 -> (Image, Map<String, Value>, Option<Rect>) {
+                 -> (Image, Map<String, Value>, Option<Rect>, Option<grade::Vouched>) {
         let key = corrected_key(s, long_edge, crop);
         // The measurements travel with the cached proxy.
-        if let Some((_, img, rect, infos)) = self.cache.iter().find(|(k, _, _, _)| *k == key) {
-            return (img.clone(), infos.clone(), *rect);
+        if let Some((_, img, rect, infos, marks)) = self.cache.iter().find(|c| c.0 == key) {
+            return (img.clone(), infos.clone(), *rect, marks.clone());
         }
         let mut infos: Map<String, Value> = Map::new();
 
@@ -235,6 +240,11 @@ impl Development {
             None => Cow::Borrowed(&self.linear),
             Some(e) => Cow::Owned(kit::thumbnail(&self.linear, e)),
         };
+        // What a merged bracket's frames vouched for, read off its own values
+        // before the lens moves them, and then moved with them.
+        let preset = profile::tune(&s.preset_obj(), &self.profile);
+        let mut marks = (preset.keep_highlights && preset.bracket_floor > 0.0)
+            .then(|| grade::Vouched::marks(&src, preset.bracket_floor));
         if let Some(m) = &self.lens_for(s) {
             if s.on("lens_vignetting") {
                 if let Some(cb) = progress.as_mut() {
@@ -250,6 +260,9 @@ impl Development {
                 let (out, geo) = lensdb::apply_geometry(&src, m, s.on("lens_distortion"),
                                                         s.on("lens_tca"));
                 src = Cow::Owned(out);
+                if let Some(mk) = marks.as_mut() {
+                    *mk = lensdb::apply_geometry(mk, m, s.on("lens_distortion"), s.on("lens_tca")).0;
+                }
                 infos.insert("distortion".into(), geo.clone());
                 infos.insert("chromatic aberration".into(), geo);
             }
@@ -271,15 +284,19 @@ impl Development {
         };
         if !s.framing.is_identity() {
             src = Cow::Owned(geometry::apply(&src, &s.framing, crop));
+            if let Some(mk) = marks.as_mut() {
+                *mk = geometry::apply(mk, &s.framing, crop);
+            }
         }
         let src = src.into_owned();
+        let marks = marks.map(|mk| grade::Vouched::from_marks(&mk));
         if long_edge.is_some() {
             if self.cache.len() > 6 {
                 self.cache.clear();
             }
-            self.cache.push((key, src.clone(), eff, infos.clone()));
+            self.cache.push((key, src.clone(), eff, infos.clone(), marks.clone()));
         }
-        (src, infos, eff)
+        (src, infos, eff, marks)
     }
 
     /// Develop the picture.
@@ -305,7 +322,7 @@ impl Development {
                           masks.get(crate::masks::Kind::Subject).is_some());
         let upstream = before_finish(settings);
         let mut report = Report::new();
-        let (src, lens_info, eff_crop) = self.corrected(settings, long_edge, crop, &mut progress);
+        let (src, lens_info, eff_crop, marks) = self.corrected(settings, long_edge, crop, &mut progress);
         self.report_lens(settings, &lens_info, &mut report);
 
         // Of the whole frame, not of what the framing kept of it.
@@ -325,6 +342,7 @@ impl Development {
             focus_sigma: self.focus_sigma_at((native as f32 * scale).round() as usize),
             decided,
             progress: graded_progress.as_mut().map(|f| &mut **f as &mut dyn FnMut(f32, &str)),
+            vouched: marks,
             ..self.process_args(settings, &masks, Window::whole(&src))
         };
         let (rgb, decided) = grade::process(src, settings, args, &mut report);
@@ -397,6 +415,7 @@ impl Development {
             window,
             decided: None,
             masks,
+            vouched: None,
             progress: None,
         }
     }
@@ -435,14 +454,14 @@ impl Development {
     pub fn render_region(&mut self, settings: &Settings, centre: (f32, f32), want: (usize, usize),
                          mut progress: Option<&mut dyn FnMut(f32, &str)>) -> Region {
         let key = corrected_key(settings, None, true);
-        let fresh = !matches!(&self.full_frame, Some((k, spots, _)) if *k == key && *spots == settings.spots);
+        let fresh = !matches!(&self.full_frame, Some((k, spots, _, _)) if *k == key && *spots == settings.spots);
         if fresh {
             self.full_frame = None;
-            let (mut full, _, _) = self.corrected(settings, None, true, &mut progress);
+            let (mut full, _, _, marks) = self.corrected(settings, None, true, &mut progress);
             crate::local::heal(&mut full, &settings.spots, None);
-            self.full_frame = Some((key, settings.spots.clone(), full));
+            self.full_frame = Some((key, settings.spots.clone(), full, marks));
         }
-        let (key, spots, full) = self.full_frame.take().expect("made above");
+        let (key, spots, full, marks) = self.full_frame.take().expect("made above");
         // Healed above, on the whole frame.
         let healed = Settings { spots: Vec::new(), ..settings.clone() };
         let decided = self.decide(settings);
@@ -456,7 +475,8 @@ impl Development {
         let (x0, y0) = (x.saturating_sub(margin), y.saturating_sub(margin));
         let (x1, y1) = ((x + w + margin).min(fw), (y + h + margin).min(fh));
         let piece = full.crop(x0, y0, x1 - x0, y1 - y0);
-        self.full_frame = Some((key, spots, full));
+        let piece_marks = marks.as_ref().map(|v| v.crop(x0, y0, x1 - x0, y1 - y0));
+        self.full_frame = Some((key, spots, full, marks));
 
         let window = Window { x: x0, y: y0, w: fw, h: fh };
         let masks = self.masks_for(settings);
@@ -466,6 +486,7 @@ impl Development {
             focus_sigma: self.focus_sigma_at(self.linear.w.max(self.linear.h)),
             decided: Some(decided),
             progress: graded_progress.as_mut().map(|f| &mut **f as &mut dyn FnMut(f32, &str)),
+            vouched: piece_marks,
             ..self.process_args(settings, &masks, window)
         };
         let (rgb, _) = grade::process(piece, &healed, args, &mut report);
